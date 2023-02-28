@@ -1,36 +1,29 @@
-use hwloc::{Topology, CPUBIND_PROCESS, TopologyObject, ObjectType};
-use crate::transaction::TransactionType;
-use std::fmt::Display;
+// use crate::transaction::TransactionType;
+use crate::config::Config;
 
-#[derive(Debug)]
-pub struct Config {
-    pub rate: u32, // in ops/s
-    pub batch_size: u32, // in ops
-    pub nb_nodes: Option<usize>, // None => all available
-    pub address_space_size: usize, // in byte, will be split between NUMA regions
-    pub transaction_type: TransactionType,
+use hwloc::{Topology, ObjectType};
+// use hwloc::{Topology, CPUBIND_PROCESS, TopologyObject, ObjectType};
+use anyhow::{self, Result};
+
+
+fn check(condition: bool, ctx: &str) -> Result<()> {
+
+    if condition {
+        Ok(())
+    } else {
+        let error_msg = anyhow::anyhow!("Host not compatible. {} not supported", ctx);
+        Err(error_msg)
+    }
 }
 
-fn compatible(topo: &Topology) -> bool {
-    let checks = [
-        // Check if Process Binding for CPUs is supported
-        ("CPU Binding (current process)", topo.support().cpu().set_current_process()),
-        ("CPU Binding (any process)", topo.support().cpu().set_process()),
-        // Check if Thread Binding for CPUs is supported
-        ("CPU Binding (current thread)", topo.support().cpu().set_current_thread()),
-        ("CPU Binding (any thread)", topo.support().cpu().set_thread()),
-    ];
+fn compatible(topo: &Topology) -> Result<()> {
 
-    let mut res = true;
+    check(topo.support().cpu().set_current_process(), "CPU Binding (current process)")?;
+    check(topo.support().cpu().set_process(), "CPU Binding (any process)")?;
+    check(topo.support().cpu().set_current_thread(), "CPU Binding (current thread)")?;
+    check(topo.support().cpu().set_thread(), "CPU Binding (any thread)")?;
 
-    for check in checks {
-        if !check.1 {
-            println!("{} not supported", check.0);
-            res = false;
-        }
-    }
-
-    return res;
+    Ok(())
 }
 
 pub fn get_nb_cores(topo: &Topology) -> usize {
@@ -39,26 +32,28 @@ pub fn get_nb_cores(topo: &Topology) -> usize {
     return all_cores.len();
 }
 
-pub fn benchmark(config: Config) {
+pub fn benchmark(config: Config) -> Result<()> {
     let topo = Topology::new();
 
-    if !compatible(&topo) {
-        return;
-    }
+    // Check compatibility with core pinning
+    compatible(&topo)?;
 
+    // Determine number of cores to use
     let nb_cores = get_nb_cores(&topo);
     let nb_nodes  = match config.nb_nodes {
         Some(nb_nodes) if nb_nodes > nb_cores => {
-            eprintln!("Not enough cores to run benchmark. {} cores requested but only {} cores available", nb_nodes, nb_cores);
-            return;
+            let error_msg = anyhow::anyhow!(
+                "Not enough cores to run benchmark. {} requested but only {} available",
+                nb_nodes, nb_cores);
+            return Err(error_msg);
         },
         Some(nb_nodes) => nb_nodes,
         None => nb_cores
     };
-
     let share = config.address_space_size / nb_nodes;
 
     println!("Benchmarking!");
+
     // Allocate "VM address space" (split per NUMA region?)
     // Create nodes (represent NUMA regions?)
         // Set memory policy so that memory is allocated locally to each core
@@ -66,4 +61,17 @@ pub fn benchmark(config: Config) {
     // Create Backlog
     // Create dispatcher (will send the transactions to the different regions)
     // Create client (will generate transactions)
+
+
+    config.save("config.json")
+    // let mut file = File::open("text.json").unwrap();
+    // let object = config.clone();
+    // let str = serde_json::to_string(&object).unwrap();
+    // println!("{}", str);
+    //
+    // let reconstructed: Config = serde_json::from_str(&str).unwrap();
+    // println!("{:?}", reconstructed);
+
+    // let the_file = /* ... */;
+    // let person: Person = serde_json::from_str(the_file).expect("JSON was not well-formatted");
 }

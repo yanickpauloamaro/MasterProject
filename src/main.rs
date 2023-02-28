@@ -2,24 +2,25 @@ mod client;
 mod benchmark;
 mod transaction;
 mod node;
+mod config;
 
 extern crate hwloc;
+extern crate anyhow;
 
-use crate::transaction::TransactionType;
-use crate::benchmark::{benchmark, Config};
+use crate::benchmark::benchmark;
+use crate::config::Config;
 
-fn main() {
+use anyhow::{Result, Context};
+
+fn main() -> Result<()>{
     println!("Hello, world!");
 
-    let config = Config{
-        rate: 10,
-        batch_size: 10,
-        nb_nodes: Some(10),
-        address_space_size: 32,
-        transaction_type: TransactionType::Transfer
-    };
+    let config = Config::new("config.json")
+        .context("Unable to create benchmark config")?;
 
-    benchmark(config);
+    benchmark(config)?;
 
-    println!("See you, world!")
+    println!("See you, world!");
+
+    Ok(())
 }

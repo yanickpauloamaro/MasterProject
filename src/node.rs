@@ -1,5 +1,3 @@
-use hwloc::{Topology, CPUBIND_PROCESS, TopologyObject, ObjectType};
-
 pub trait Node {
 
     fn process() {
@@ -16,7 +14,7 @@ impl Node for BasicNode {
 }
 
 impl BasicNode {
-    pub fn new() {
-
-    }
+    // pub fn new() {
+    //
+    // }
 }
