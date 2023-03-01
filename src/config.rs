@@ -10,6 +10,7 @@ pub struct Config {
     pub nb_nodes: Option<usize>, // None => all available
     pub address_space_size: usize, // in byte, will be split between NUMA regions
     pub transaction_type: TransactionType,
+    // pub seed: u64;
 }
 
 impl Config {

@@ -1,10 +1,11 @@
-// use crate::transaction::TransactionType;
 use crate::config::Config;
+use crate::wip;
 
 use hwloc::{Topology, ObjectType};
 // use hwloc::{Topology, CPUBIND_PROCESS, TopologyObject, ObjectType};
-use anyhow::{self, Result};
-
+use anyhow::{self, Result, Context};
+use tokio::sync::mpsc::{channel, Sender};
+use tokio::sync::{broadcast, oneshot};
 
 fn check(condition: bool, ctx: &str) -> Result<()> {
 
@@ -52,8 +53,6 @@ pub fn benchmark(config: Config) -> Result<()> {
     };
     let share = config.address_space_size / nb_nodes;
 
-    println!("Benchmarking!");
-
     // Allocate "VM address space" (split per NUMA region?)
     // Create nodes (represent NUMA regions?)
         // Set memory policy so that memory is allocated locally to each core
@@ -62,16 +61,72 @@ pub fn benchmark(config: Config) -> Result<()> {
     // Create dispatcher (will send the transactions to the different regions)
     // Create client (will generate transactions)
 
+    const CHANNEL_CAPACITY: usize = 20;
+    let (tx_generator, rx_rate) = channel(CHANNEL_CAPACITY);
+    let (tx_rate, rx_client) = channel(CHANNEL_CAPACITY);
 
-    config.save("config.json")
-    // let mut file = File::open("text.json").unwrap();
-    // let object = config.clone();
-    // let str = serde_json::to_string(&object).unwrap();
-    // println!("{}", str);
-    //
-    // let reconstructed: Config = serde_json::from_str(&str).unwrap();
-    // println!("{:?}", reconstructed);
+    let generator = wip::TransactionGenerator{
+        tx: tx_generator
+    };
+    let rate_limiter = wip::RateLimiter{
+        rx: rx_rate,
+        tx: tx_rate
+    };
 
-    // let the_file = /* ... */;
-    // let person: Person = serde_json::from_str(the_file).expect("JSON was not well-formatted");
+    let mut client = wip::Client{
+        rx_block: rx_client,
+        tx_jobs: vec!(),
+        rx_results: vec!(),
+    };
+
+    let mut workers: Vec<wip::Worker> = vec!();
+    let mut rx_logs: Vec<oneshot::Receiver<Vec<wip::Log>>> = vec!();
+
+    for w in 0..nb_nodes {
+        let (tx_job, rx_job) = channel(CHANNEL_CAPACITY);
+        let (tx_result, rx_result) = channel(CHANNEL_CAPACITY);
+        let (tx_log, rx_log) = oneshot::channel();
+
+        client.tx_jobs.push(tx_job);
+        client.rx_results.push(rx_result);
+
+        let mut worker = wip::Worker{
+            rx_job,
+            backlog: vec!(),
+            log: vec!(),
+            tx_result,
+            tx_log,
+        };
+
+        workers.push(worker);
+        rx_logs.push(rx_log);
+    }
+
+    let (tx_stop, rx_stop) = broadcast::channel(0);
+    // Spawn them in reverse order (workers, client, rate limiter and then generator)
+    for w in workers {
+        // TODO Spawn each worker on a specific core
+        w.spawn(tx_stop.subscribe());
+    }
+    client.spawn(tx_stop.subscribe());
+    rate_limiter.spawn(tx_stop.subscribe());
+
+    println!("Benchmarking!");
+    generator.spawn(tx_stop.subscribe());
+
+    tx_stop.send(());
+    println!("Done benchmarking");
+
+    for rx_log in rx_logs {
+        match rx_log.blocking_recv() {
+            Ok(mut log) => {
+                // TODO use histogram form hotmic
+            },
+            Err(e) => {
+                eprintln!("Failed to receive log from a worker");
+            }
+        }
+    }
+
+    Ok(())
 }
