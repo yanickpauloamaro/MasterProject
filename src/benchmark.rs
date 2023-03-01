@@ -6,6 +6,9 @@ use hwloc::{Topology, ObjectType};
 use anyhow::{self, Result, Context};
 use tokio::sync::mpsc::{channel, Sender};
 use tokio::sync::{broadcast, oneshot};
+use std::thread::sleep;
+use std::time::Duration;
+use wip::parse_logs;
 
 fn check(condition: bool, ctx: &str) -> Result<()> {
 
@@ -33,7 +36,14 @@ pub fn get_nb_cores(topo: &Topology) -> usize {
     return all_cores.len();
 }
 
-pub fn benchmark(config: Config) -> Result<()> {
+// Allocate "VM address space" (split per NUMA region?)
+// Create nodes (represent NUMA regions?)
+// Set memory policy so that memory is allocated locally to each core
+// TODO Check how to send transaction to each node
+// Create Backlog
+// Create dispatcher (will send the transactions to the different regions)
+// Create client (will generate transactions)
+pub async fn benchmark(config: Config) -> Result<()> {
     let topo = Topology::new();
 
     // Check compatibility with core pinning
@@ -53,15 +63,7 @@ pub fn benchmark(config: Config) -> Result<()> {
     };
     let share = config.address_space_size / nb_nodes;
 
-    // Allocate "VM address space" (split per NUMA region?)
-    // Create nodes (represent NUMA regions?)
-        // Set memory policy so that memory is allocated locally to each core
-        // TODO Check how to send transaction to each node
-    // Create Backlog
-    // Create dispatcher (will send the transactions to the different regions)
-    // Create client (will generate transactions)
-
-    const CHANNEL_CAPACITY: usize = 20;
+    const CHANNEL_CAPACITY: usize = 200;
     let (tx_generator, rx_rate) = channel(CHANNEL_CAPACITY);
     let (tx_rate, rx_client) = channel(CHANNEL_CAPACITY);
 
@@ -93,7 +95,7 @@ pub fn benchmark(config: Config) -> Result<()> {
         let mut worker = wip::Worker{
             rx_job,
             backlog: vec!(),
-            log: vec!(),
+            logs: vec!(),
             tx_result,
             tx_log,
         };
@@ -102,7 +104,7 @@ pub fn benchmark(config: Config) -> Result<()> {
         rx_logs.push(rx_log);
     }
 
-    let (tx_stop, rx_stop) = broadcast::channel(0);
+    let (tx_stop, rx_stop) = broadcast::channel(1);
     // Spawn them in reverse order (workers, client, rate limiter and then generator)
     for w in workers {
         // TODO Spawn each worker on a specific core
@@ -111,22 +113,115 @@ pub fn benchmark(config: Config) -> Result<()> {
     client.spawn(tx_stop.subscribe());
     rate_limiter.spawn(tx_stop.subscribe());
 
-    println!("Benchmarking!");
-    generator.spawn(tx_stop.subscribe());
+    let handle = tokio::spawn(async move {
+        let duration = 5;
+        println!("Benchmarking for {}s!", duration);
+        generator.spawn(tx_stop.subscribe());
+        tokio::time::sleep(Duration::from_secs(duration)).await;
 
-    tx_stop.send(());
-    println!("Done benchmarking");
+        tx_stop.send(());
 
-    for rx_log in rx_logs {
-        match rx_log.blocking_recv() {
-            Ok(mut log) => {
-                // TODO use histogram form hotmic
-            },
-            Err(e) => {
-                eprintln!("Failed to receive log from a worker");
+        println!("\nDone benchmarking! Waiting for tasks to finish (3s)");
+        tokio::time::sleep(Duration::from_secs(3)).await;
+        let mut processed: u64 = 0;
+
+        println!();
+        println!("Collecting logs from workers:");
+        for (i, rx) in rx_logs.iter_mut().enumerate() {
+            println!("Worker {}:", i);
+            match rx.await {
+                Ok(block_logs) => {
+                    println!("\tProcessed {} blocks", block_logs.len());
+                    for (id, creation, logs) in block_logs {
+                        // println!("Block {}", id);
+                        for completion in logs {
+                            // println!("\tA tx took {:?}", completion - creation);
+                            processed += 1;
+                        }
+                    }
+                }
+                Err(e) => println!("Failed to receive log from worker: {:?}", e)
             }
         }
-    }
+
+        println!();
+        println!("Processed {} tx in {} s", processed, duration);
+        println!("Throughput is {} tx/s", processed/duration);
+    });
+
+    handle.await;
+    println!();
+
+    // parse_logs(tx_stop, rx_logs);
+
+    // tokio::spawn(aync move {
+    // let duration = 10;
+    // println!("Benchmarking for {}s!", duration);
+    // generator.spawn(tx_stop.subscribe());
+    //
+    // tokio::time::sleep(Duration::from_secs(duration));
+    //
+    // tx_stop.send(());
+    // println!("Done benchmarking");
+    //
+    // for rx_log in rx_logs {
+    //     match rx_log.blocking_recv() {
+    //         Ok(logs) => {
+    //             // TODO use histogram form hotmic
+    //             for (id, creation, log) in logs {
+    //                 println!("Block {}", id);
+    //                 for completion in log {
+    //                     println!("Took {:?}", completion - creation);
+    //                 }
+    //             }
+    //         },
+    //         Err(e) => {
+    //             eprintln!("Failed to receive log from a worker");
+    //         }
+    //     }
+    // }
+    // });
 
     Ok(())
 }
+
+// pub fn test() {
+//     let inputs = vec![Some("First"), None, Some("Last")];
+//     // let inputs = vec![0, 1, 2];
+//     let (tx, mut rx) = channel(3);
+//
+//     let (send, mut receive) = channel(2);
+//
+//     tokio::spawn(async move {
+//         for _ in 0..3 {
+//             println!("Trying...");
+//             tokio::select! {
+//                 Some(value) = rx.recv() => {
+//                     println!("Received {:?}", value);
+//                 },
+//                 _ = receive.recv() => {
+//                     println!("Quitting");
+//                 }
+//             }
+//         }
+//
+//         println!("Receiver done");
+//
+//     });
+//
+//     tokio::spawn(async move {
+//         for input in inputs {
+//             println!("Sending {:?}", input);
+//             tx.send(input).await;
+//         }
+//
+//         println!("Sender done");
+//
+//         tokio::time::sleep(Duration::from_secs(3));
+//         println!("Asking receiver to stop");
+//         send.send(()).await;
+//     });
+//
+//     sleep(Duration::from_secs(6));
+//     println!("Done");
+// }

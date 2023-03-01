@@ -11,17 +11,20 @@ extern crate tokio;
 extern crate either;
 
 use crate::benchmark::benchmark;
+// use crate::benchmark::test;
 use crate::config::Config;
 
 use anyhow::{Result, Context};
 
-fn main() -> Result<()>{
+#[tokio::main]
+async fn main() -> Result<()>{
     println!("Hello, world!");
 
     let config = Config::new("config.json")
         .context("Unable to create benchmark config")?;
 
-    benchmark(config)?;
+    benchmark(config).await?;
+    // test();
 
     println!("See you, world!");
 

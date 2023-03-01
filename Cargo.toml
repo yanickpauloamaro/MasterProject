@@ -14,3 +14,4 @@ tokio = { version = "1.1.0", features = ["time", "macros", "net", "rt-multi-thre
 tokio-util = { version = "0.6.2", features = ["codec"] }
 hotmic = "0.8.2"
 either = "1.8.1"
+metrics = "0.20.1"
