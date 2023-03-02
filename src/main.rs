@@ -11,6 +11,7 @@ use testbench::config::Config;
 use testbench::benchmark::benchmark;
 
 use anyhow::{Result, Context};
+use testbench::benchmark_vm;
 
 #[tokio::main]
 async fn main() -> Result<()>{
@@ -19,7 +20,8 @@ async fn main() -> Result<()>{
     let config = Config::new("config.json")
         .context("Unable to create benchmark config")?;
 
-    benchmark(config).await?;
+    // benchmark(config).await?;
+    benchmark_vm(config).await?;
     // test();
 
     println!("See you, world!");

@@ -30,6 +30,10 @@ fn compatible(topo: &Topology) -> Result<()> {
     Ok(())
 }
 
+
+/*
+
+ */
 // Allocate "VM address space" (split per NUMA region?)
 // Create nodes (represent NUMA regions?)
 // Set memory policy so that memory is allocated locally to each core
