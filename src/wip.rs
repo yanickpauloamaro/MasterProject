@@ -1,46 +1,79 @@
+use crate::config::Config;
 use tokio::sync::mpsc::{Sender, Receiver};
 use tokio::sync::{broadcast, oneshot};
-// use hotmic::Receiver as MetricReceiver;
+use tokio::time::Instant;
+use anyhow::{self, Result, Context};
 use either::{Left, Right, Either};
 use std::time::Duration;
 use std::mem;
-use tokio::time::Instant;
 use std::future::Future;
+use std::path::Prefix::Verbatim;
+use hwloc::{ObjectType, Topology};
+use tokio::task::JoinHandle;
 
 type WorkerResult = Either<Vec<Transaction>, ()>;
 pub type Log = (u64, Instant, Vec<Instant>); // block id, block creation time
 
-const BLOCK_SIZE: usize = 64 * 1024;
+// const BLOCK_SIZE: usize = 64 * 1024;
+// const BLOCK_SIZE: usize = 100;
+const DEV_RATE: u32 = 100;
 
-pub fn parse_logs(
-    stop_signal: broadcast::Sender<()>,
-    rx_logs: Vec<oneshot::Receiver<Vec<Log>>>
-) {
+pub fn get_nb_cores(topo: &Topology) -> usize {
+    let core_depth = topo.depth_or_below_for_type(&ObjectType::Core).unwrap();
+    let all_cores = topo.objects_at_depth(core_depth);
+    return all_cores.len();
+}
 
-    tokio::spawn(async move {
-        let duration = 20;
-        println!("Benchmarking for {}s!", duration);
-        // generator.spawn(tx_stop.subscribe());
-        tokio::time::sleep(Duration::from_secs(duration));
+pub fn get_nb_nodes(topo: &Topology, config: &Config) -> Result<usize> {
+    let nb_cores = get_nb_cores(&topo);
+    match config.nb_nodes {
+        Some(nb_nodes) if nb_nodes > nb_cores => {
+            let error_msg = anyhow::anyhow!(
+                "Not enough cores to run benchmark. {} requested but only {} available",
+                nb_nodes, nb_cores);
+            return Err(error_msg);
+        },
+        Some(nb_nodes) => Ok(nb_nodes),
+        None => Ok(nb_cores)
+    }
+}
 
-        stop_signal.send(());
+pub async fn parse_logs(config: &Config, rx_logs: &mut Vec<oneshot::Receiver<Vec<Log>>>) {
+    let mut processed: u64 = 0;
+    let mut sum_latency = Duration::from_millis(0);
+    let mut min_latency = Duration::MAX;
+    let mut max_latency = Duration::from_nanos(0);
 
-        println!("Done benchmarking");
-
-        for rx in rx_logs {
-            match rx.await {
-                Ok(logs) => {
-                    for (id, creation, log) in logs {
-                        println!("Block {}", id);
-                        for completion in log {
-                            println!("Took {:?}", completion - creation);
-                        }
+    println!();
+    println!("Collecting logs from workers:");
+    for (i, rx) in rx_logs.iter_mut().enumerate() {
+        match rx.await {
+            Ok(block_logs) => {
+                println!("Worker {} processed {} blocks", i, block_logs.len());
+                for (block_id, block_creation, logs) in block_logs {
+                    // println!("Block {} contains {} tx", block_id, logs.len());
+                    processed += logs.len() as u64;
+                    for tx_completion in logs {
+                        let latency = tx_completion - block_creation;
+                        // println!("\tA tx took {:?}", latency);
+                        sum_latency += latency;
+                        min_latency = min_latency.min(latency);
+                        max_latency = max_latency.max(latency);
                     }
-                },
-                Err(e) => println!("Failed to receive log from worker: {:?}", e)
+                }
             }
+            Err(e) => println!("Failed to receive log from worker {}: {:?}", i, e)
         }
-    });
+    }
+
+    println!();
+    println!("Processed {} tx in {} s", processed, config.duration);
+    println!("Throughput is {} tx/s", processed/config.duration);
+    println!("Min latency is {:?}", min_latency);
+    println!("Max latency is {:?}", max_latency);
+    println!("Average latency is {:?} µs", sum_latency.as_micros() / processed as u128);
+    println!("Average latency is {:?} ms", sum_latency.as_millis() / processed as u128);
+    println!();
 }
 
 #[derive(Debug)]
@@ -56,39 +89,39 @@ pub struct TransactionGenerator {
     /* TODO Check that the generator is fast enough (Throughput > 5 millions/s)
          Otherwise, need to use multiple generators
     */
-    pub tx: Sender<Transaction>
-}
-
-async fn trigger(interval: &mut tokio::time::Interval) {
-    async {}.await;
-    // interval.tick().await;
+    pub tx: Sender<Transaction>,
 }
 
 impl TransactionGenerator {
+    async fn trigger(interval: &mut tokio::time::Interval) {
+        async {}.await;
+        // interval.tick().await;
+    }
+
     pub fn spawn(mut self, mut signal: broadcast::Receiver<()>) {
         tokio::spawn(async move {
             println!("<Transaction generator started");
-            let mut interval = tokio::time::interval(Duration::from_millis(100));
+
+            let duration = Duration::from_secs(1)
+                .checked_div(DEV_RATE)
+                .unwrap_or(Duration::from_millis(100)); // 10 tx /s
+            let mut interval = tokio::time::interval(duration);
 
             loop {
-                // println!("\tEntering generator loop");
                 tokio::select! {
                     biased;
                     _ = signal.recv() => {
                         println!(">Transaction generator stopped");
                         return;
                     },
-
-                    // _ = interval.tick() => {
-                    // _ = async {} => {
-                    _ = trigger(&mut interval) => {
-                        // Generate transactions
+                    _ = TransactionGenerator::trigger(&mut interval) => {
                         let tx = Transaction{
                             from: 0,
                             to: 1,
                             amount: 42,
                         };
-                        // let block: Vec<Transaction> = (0..BLOCK_SIZE).map(|_| tx).collect();
+                        // TODO Generate blocks of transactions to reduce overhead
+                        // let block: Vec<Transaction> = (0..batch_size).map(|_| tx).collect();
 
                         if let Err(e) = self.tx.send(tx).await {
                             eprintln!("Failed to send tx to rate limiter");
@@ -106,35 +139,42 @@ pub struct RateLimiter {
 }
 
 impl RateLimiter {
-    pub fn spawn(mut self, mut signal: broadcast::Receiver<()>) {
-        let mut acc: Vec<Transaction> = Vec::with_capacity(BLOCK_SIZE);
-
+    pub async fn spawn(mut self, mut signal: broadcast::Receiver<()>, batch_size: usize, rate: u32) {
         tokio::spawn(async move {
             println!("<Rate limiter started");
 
+            let mut acc: Vec<Transaction> = Vec::with_capacity(batch_size);
+            let duration = Duration::from_secs(1).checked_div(rate)
+                .expect("Unable to compute rate limiter interval");
+
+            let mut loop_start = Instant::now();
+
             loop {
-
                 tokio::select! {
-                _ = signal.recv() => {
-                    println!(">Rate limiter stopped");
-                    return;
-                },
+                    biased;
+                    _ = signal.recv() => {
+                        println!(">Rate limiter stopped");
+                        return;
+                    },
+                    Some(tx) = self.rx.recv() => {
+                        acc.push(tx);
 
-                Some(tx) = self.rx.recv() => {
-                    // if acc.len() < BLOCK_SIZE {
-                    //     acc.push(tx);
-                    // } else {
-                    //     let mut block = Vec::with_capacity(BLOCK_SIZE);
-                    //     mem::swap(&mut block, &mut acc);
-                    //     self.tx.send(block);
-                    // }
-                    let block = vec![tx];
-                    let creation = Instant::now();
-                    if let Err(e) = self.tx.send((creation, block)).await {
-                        eprintln!("Failed to send tx to client");
-                    }
-                },
-            }
+                        if acc.len() >= batch_size {
+                            let mut block = Vec::with_capacity(batch_size);
+                            mem::swap(&mut block, &mut acc);
+
+                            let creation = Instant::now();
+                            if let Err(e) = self.tx.send((creation, block)).await {
+                               eprintln!("Failed to send tx to client");
+                            }
+                        }
+                        // let block = vec![tx];
+                        // let creation = Instant::now();
+                        // if let Err(e) = self.tx.send((creation, block)).await {
+                        //     eprintln!("Failed to send tx to client");
+                        // }
+                    },
+                }
             }
         });
     }
@@ -232,3 +272,4 @@ impl Worker {
     //     sink.update_timing("db.gizmo_query", start, end);
     // }
 // }
+

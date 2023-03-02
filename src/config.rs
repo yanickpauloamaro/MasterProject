@@ -6,7 +6,8 @@ use anyhow::{Result, Context};
 #[derive(Debug, Serialize, Deserialize, Copy, Clone)]
 pub struct Config {
     pub rate: u32, // in ops/s
-    pub batch_size: u32, // in ops
+    pub batch_size: usize, // in ops
+    pub duration: u64, // in s
     pub nb_nodes: Option<usize>, // None => all available
     pub address_space_size: usize, // in byte, will be split between NUMA regions
     pub transaction_type: TransactionType,

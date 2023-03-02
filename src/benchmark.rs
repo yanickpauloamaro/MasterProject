@@ -30,12 +30,6 @@ fn compatible(topo: &Topology) -> Result<()> {
     Ok(())
 }
 
-pub fn get_nb_cores(topo: &Topology) -> usize {
-    let core_depth = topo.depth_or_below_for_type(&ObjectType::Core).unwrap();
-    let all_cores = topo.objects_at_depth(core_depth);
-    return all_cores.len();
-}
-
 // Allocate "VM address space" (split per NUMA region?)
 // Create nodes (represent NUMA regions?)
 // Set memory policy so that memory is allocated locally to each core
@@ -50,23 +44,14 @@ pub async fn benchmark(config: Config) -> Result<()> {
     compatible(&topo)?;
 
     // Determine number of cores to use
-    let nb_cores = get_nb_cores(&topo);
-    let nb_nodes  = match config.nb_nodes {
-        Some(nb_nodes) if nb_nodes > nb_cores => {
-            let error_msg = anyhow::anyhow!(
-                "Not enough cores to run benchmark. {} requested but only {} available",
-                nb_nodes, nb_cores);
-            return Err(error_msg);
-        },
-        Some(nb_nodes) => nb_nodes,
-        None => nb_cores
-    };
+    let nb_nodes = wip::get_nb_nodes(&topo, &config)?;
     let share = config.address_space_size / nb_nodes;
 
     const CHANNEL_CAPACITY: usize = 200;
     let (tx_generator, rx_rate) = channel(CHANNEL_CAPACITY);
     let (tx_rate, rx_client) = channel(CHANNEL_CAPACITY);
 
+    // TODO Move initialisation into spawn and use a broadcast variable to trigger the start of the benchmark
     let generator = wip::TransactionGenerator{
         tx: tx_generator
     };
@@ -111,117 +96,21 @@ pub async fn benchmark(config: Config) -> Result<()> {
         w.spawn(tx_stop.subscribe());
     }
     client.spawn(tx_stop.subscribe());
-    rate_limiter.spawn(tx_stop.subscribe());
+    rate_limiter.spawn(tx_stop.subscribe(), config.batch_size, config.rate);
 
-    let handle = tokio::spawn(async move {
-        let duration = 5;
-        println!("Benchmarking for {}s!", duration);
-        generator.spawn(tx_stop.subscribe());
-        tokio::time::sleep(Duration::from_secs(duration)).await;
+    println!("Benchmarking for {}s!", config.duration);
+    generator.spawn(tx_stop.subscribe());
+    tokio::time::sleep(Duration::from_secs(config.duration)).await;
 
-        tx_stop.send(());
-
-        println!("\nDone benchmarking! Waiting for tasks to finish (3s)");
-        tokio::time::sleep(Duration::from_secs(3)).await;
-        let mut processed: u64 = 0;
-
-        println!();
-        println!("Collecting logs from workers:");
-        for (i, rx) in rx_logs.iter_mut().enumerate() {
-            println!("Worker {}:", i);
-            match rx.await {
-                Ok(block_logs) => {
-                    println!("\tProcessed {} blocks", block_logs.len());
-                    for (id, creation, logs) in block_logs {
-                        // println!("Block {}", id);
-                        for completion in logs {
-                            // println!("\tA tx took {:?}", completion - creation);
-                            processed += 1;
-                        }
-                    }
-                }
-                Err(e) => println!("Failed to receive log from worker: {:?}", e)
-            }
-        }
-
-        println!();
-        println!("Processed {} tx in {} s", processed, duration);
-        println!("Throughput is {} tx/s", processed/duration);
-    });
-
-    handle.await;
+    tx_stop.send(()).context("Unable to send stop signal")?;
     println!();
+    println!("Done benchmarking! Waiting for tasks to finish (3s)");
+    tokio::time::sleep(Duration::from_secs(3)).await;
 
-    // parse_logs(tx_stop, rx_logs);
-
-    // tokio::spawn(aync move {
-    // let duration = 10;
-    // println!("Benchmarking for {}s!", duration);
-    // generator.spawn(tx_stop.subscribe());
-    //
-    // tokio::time::sleep(Duration::from_secs(duration));
-    //
-    // tx_stop.send(());
-    // println!("Done benchmarking");
-    //
-    // for rx_log in rx_logs {
-    //     match rx_log.blocking_recv() {
-    //         Ok(logs) => {
-    //             // TODO use histogram form hotmic
-    //             for (id, creation, log) in logs {
-    //                 println!("Block {}", id);
-    //                 for completion in log {
-    //                     println!("Took {:?}", completion - creation);
-    //                 }
-    //             }
-    //         },
-    //         Err(e) => {
-    //             eprintln!("Failed to receive log from a worker");
-    //         }
-    //     }
-    // }
-    // });
+    parse_logs(
+        &config,
+        &mut rx_logs,
+    ).await;
 
     Ok(())
 }
-
-// pub fn test() {
-//     let inputs = vec![Some("First"), None, Some("Last")];
-//     // let inputs = vec![0, 1, 2];
-//     let (tx, mut rx) = channel(3);
-//
-//     let (send, mut receive) = channel(2);
-//
-//     tokio::spawn(async move {
-//         for _ in 0..3 {
-//             println!("Trying...");
-//             tokio::select! {
-//                 Some(value) = rx.recv() => {
-//                     println!("Received {:?}", value);
-//                 },
-//                 _ = receive.recv() => {
-//                     println!("Quitting");
-//                 }
-//             }
-//         }
-//
-//         println!("Receiver done");
-//
-//     });
-//
-//     tokio::spawn(async move {
-//         for input in inputs {
-//             println!("Sending {:?}", input);
-//             tx.send(input).await;
-//         }
-//
-//         println!("Sender done");
-//
-//         tokio::time::sleep(Duration::from_secs(3));
-//         println!("Asking receiver to stop");
-//         send.send(()).await;
-//     });
-//
-//     sleep(Duration::from_secs(6));
-//     println!("Done");
-// }
