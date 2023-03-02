@@ -1,4 +1,5 @@
 use std::mem;
+use std::thread::park_timeout;
 use std::time::Duration;
 use async_trait::async_trait;
 use tokio::sync::mpsc::{channel, Receiver, Sender};
@@ -84,25 +85,40 @@ impl BasicVM {
 impl VM for BasicVM {
     async fn dispatch(&mut self, start: Instant, backlog: &mut Vec<Transaction>) -> Result<()> {
 
-        if !backlog.is_empty() {
-            let nb_workers = self.tx_jobs.len();
+        for (i, tx_job) in self.tx_jobs.iter_mut().enumerate() {
 
-            let mut worker_batches: Vec<Vec<Transaction>> = (0..nb_workers).map(|_| vec!()).collect();
-
-            for tx in backlog.drain(0..backlog.len()) {
-                worker_batches[tx.from as usize].push(tx);
+            let partition_size = backlog.partition_point(|tx| tx.from == i as u64);
+            if partition_size > 0 {
+                let batch: Vec<Transaction> = backlog.drain(..partition_size).collect();
+                tx_job.send((start, batch)).await
+                    .context("Unable to send job to worker")?;
             }
+        }
 
-            for (i, batch) in worker_batches.drain(0..nb_workers).enumerate() {
-                if !batch.is_empty() {
-                    self.tx_jobs[i].send((start, batch)).await
-                        .context("Unable to send job to worker")?;
-                }
-            }
+        if backlog.len() > 0 {
+            return Err(anyhow::anyhow!("Not all jobs where assigned to a worker!"));
         }
 
         return Ok(());
     }
+
+    // async fn dispatch(&mut self, start: Instant, input: &mut Vec<Transaction>) -> Result<()> {
+    //
+    //     let mut backlog: Vec<Transaction> = input.drain(0..input.len()).collect();
+    //     for (i, tx_job) in self.tx_jobs.iter_mut().enumerate() {
+    //         let (batch, rest) = backlog.into_iter().partition(|tx| tx.from == i as u64);
+    //         backlog = rest;
+    //         if batch.len() > 0 {
+    //             tx_job.send((start, batch)).await
+    //                 .context("Unable to send job to worker")?;
+    //         }
+    //     }
+    //
+    //     if backlog.len() > 0 {
+    //         return Err(anyhow::anyhow!("Not all jobs where assigned to a worker!"));
+    //     }
+    //     return Ok(());
+    // }
 
     async fn collect(&mut self) -> Result<(Vec<ExecutionResult>, Vec<Transaction>)> {
 
@@ -212,13 +228,16 @@ pub async fn benchmark_vm(config: Config) -> Result<()> {
     // Benchmark -----------------------------------------------------------------------------------
     let mut batch = Vec::with_capacity(config.batch_size);
     let mut address: u64 = 0;
+    let chunks = (config.batch_size / nb_nodes) as u64;
+
     for i in 0..config.batch_size {
         let tx = Transaction{
-            from: address % nb_nodes as u64,
+            from: address / chunks,
             to: nb_nodes as u64,
             amount: i as u64,
         };
 
+        // println!("tx: {:?}", tx);
         batch.push(tx);
         address += 1;
     }
@@ -241,10 +260,14 @@ pub async fn benchmark_vm(config: Config) -> Result<()> {
 
     println!("Batch size: {}, tx processed: {}", config.batch_size, processed);
     println!("Executed {} tx in {:?}", config.batch_size, duration);
+
     let micro_throughput = config.batch_size as f64 / duration.as_micros() as f64;
+    let milli_throughput = 1000.0 * micro_throughput;
+    let throughput = 1000.0 * milli_throughput;
+
     println!("Throughput is {} tx/µs", micro_throughput);
-    println!("Throughput is {} tx/ms", micro_throughput * 1_000.0);
-    println!("Throughput is {} tx/s", micro_throughput * 1_000_1000.0);
+    println!("Throughput is {} tx/ms", milli_throughput);
+    // println!("Throughput is {} tx/s", throughput);
     println!();
     println!("Min latency is {:?}", min_latency);
     println!("Max latency is {:?}", max_latency);
