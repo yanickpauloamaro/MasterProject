@@ -1,15 +1,16 @@
 use crate::config::Config;
-use tokio::sync::mpsc::{Sender, Receiver};
+use tokio::sync::mpsc::{Receiver, Sender};
 use tokio::sync::{broadcast, oneshot};
 use tokio::time::Instant;
-use anyhow::{self, Result, Context};
-use either::{Left, Right, Either};
+use anyhow::{self, Context, Result};
+use either::{Either, Left, Right};
 use std::time::Duration;
 use std::mem;
 use std::future::Future;
 use std::path::Prefix::Verbatim;
 use hwloc::{ObjectType, Topology};
 use tokio::task::JoinHandle;
+use crate::transaction::Transaction;
 
 type WorkerResult = Either<Vec<Transaction>, ()>;
 pub type Log = (u64, Instant, Vec<Instant>); // block id, block creation time
@@ -74,15 +75,6 @@ pub async fn parse_logs(config: &Config, rx_logs: &mut Vec<oneshot::Receiver<Vec
     println!("Average latency is {:?} µs", sum_latency.as_micros() / processed as u128);
     println!("Average latency is {:?} ms", sum_latency.as_millis() / processed as u128);
     println!();
-}
-
-#[derive(Debug)]
-pub struct Transaction {
-    // pub block_creation: u64,
-    // pub completion: u64,
-    pub from: u64,
-    pub to: u64,
-    pub amount: u64,
 }
 
 pub struct TransactionGenerator {
