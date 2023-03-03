@@ -2,14 +2,9 @@ use crate::config::Config;
 use tokio::sync::mpsc::{Receiver, Sender};
 use tokio::sync::{broadcast, oneshot};
 use tokio::time::Instant;
-use anyhow::{self, Context, Result};
-use either::{Either, Left, Right};
+use either::Either;
 use std::time::Duration;
 use std::mem;
-use std::future::Future;
-use std::path::Prefix::Verbatim;
-use hwloc::{ObjectType, Topology};
-use tokio::task::JoinHandle;
 use crate::transaction::Transaction;
 
 type WorkerResult = Either<Vec<Transaction>, ()>;
@@ -18,26 +13,6 @@ pub type Log = (u64, Instant, Vec<Instant>); // block id, block creation time
 // const BLOCK_SIZE: usize = 64 * 1024;
 // const BLOCK_SIZE: usize = 100;
 const DEV_RATE: u32 = 100;
-
-pub fn get_nb_cores(topo: &Topology) -> usize {
-    let core_depth = topo.depth_or_below_for_type(&ObjectType::Core).unwrap();
-    let all_cores = topo.objects_at_depth(core_depth);
-    return all_cores.len();
-}
-
-pub fn get_nb_nodes(topo: &Topology, config: &Config) -> Result<usize> {
-    let nb_cores = get_nb_cores(&topo);
-    match config.nb_nodes {
-        Some(nb_nodes) if nb_nodes > nb_cores => {
-            let error_msg = anyhow::anyhow!(
-                "Not enough cores to run benchmark. {} requested but only {} available",
-                nb_nodes, nb_cores);
-            return Err(error_msg);
-        },
-        Some(nb_nodes) => Ok(nb_nodes),
-        None => Ok(nb_cores)
-    }
-}
 
 pub async fn parse_logs(config: &Config, rx_logs: &mut Vec<oneshot::Receiver<Vec<Log>>>) {
     let mut processed: u64 = 0;
@@ -131,7 +106,7 @@ pub struct RateLimiter {
 }
 
 impl RateLimiter {
-    pub async fn spawn(mut self, mut signal: broadcast::Receiver<()>, batch_size: usize, rate: u32) {
+    pub fn spawn(mut self, mut signal: broadcast::Receiver<()>, batch_size: usize, rate: u32) {
         tokio::spawn(async move {
             println!("<Rate limiter started");
 
@@ -160,11 +135,6 @@ impl RateLimiter {
                                eprintln!("Failed to send tx to client");
                             }
                         }
-                        // let block = vec![tx];
-                        // let creation = Instant::now();
-                        // if let Err(e) = self.tx.send((creation, block)).await {
-                        //     eprintln!("Failed to send tx to client");
-                        // }
                     },
                 }
             }
@@ -193,8 +163,7 @@ impl Client {
                 },
 
                 Some((creation, block)) = self.rx_block.recv() => {
-                    // TODO Dispatch to the different workers
-                    // println!("Dispatching work");
+                    // TODO Dispatch properly
                     if let Err(e) = self.tx_jobs[i % nb_workers].send((creation, block)).await {
                         eprintln!("Failed to send jobs to worker");
                     }
@@ -227,13 +196,13 @@ impl Worker {
                     println!(">Worker stopped");
                     let nb_logs = self.logs.len();
                     if let Err(e) = self.tx_log.send(mem::take(&mut self.logs)) {
-                            eprintln!("Failed to send logs to benchmark");
-                        }
+                        eprintln!("Failed to send logs to benchmark");
+                    }
                     return;
                 },
 
                 Some((creation, block)) = self.rx_job.recv() => {
-                    // TODO optimise by pre allocating some space in either log or backlog?
+                    // TODO Take conflicts into consideration
                     // let backlog = vec!();
                     let mut log = vec!();
                     for tx in block {
@@ -250,18 +219,4 @@ impl Worker {
         });
     }
 }
-
-// impl Worker {
-    // fn new() {
-    //     let receiver = Receiver::builder().build();
-    //     let sink = receiver.get_sink();
-    //
-    //     let start = sink.clock().start();
-    //     // thread::sleep(Duration::from_millis(10));
-    //     let end = sink.clock().end();
-    //
-    //     // This would just set the timing:
-    //     sink.update_timing("db.gizmo_query", start, end);
-    // }
-// }
 

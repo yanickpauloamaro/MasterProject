@@ -1,39 +1,14 @@
 use crate::config::Config;
-use crate::wip;
+use crate::{utils, wip};
 
-use hwloc::{Topology, ObjectType};
+use hwloc::Topology;
 // use hwloc::{Topology, CPUBIND_PROCESS, TopologyObject, ObjectType};
 use anyhow::{self, Result, Context};
-use tokio::sync::mpsc::{channel, Sender};
+use tokio::sync::mpsc::channel;
 use tokio::sync::{broadcast, oneshot};
-use std::thread::sleep;
 use std::time::Duration;
 use wip::parse_logs;
 
-fn check(condition: bool, ctx: &str) -> Result<()> {
-
-    if condition {
-        Ok(())
-    } else {
-        let error_msg = anyhow::anyhow!("Host not compatible. {} not supported", ctx);
-        Err(error_msg)
-    }
-}
-
-fn compatible(topo: &Topology) -> Result<()> {
-
-    check(topo.support().cpu().set_current_process(), "CPU Binding (current process)")?;
-    check(topo.support().cpu().set_process(), "CPU Binding (any process)")?;
-    check(topo.support().cpu().set_current_thread(), "CPU Binding (current thread)")?;
-    check(topo.support().cpu().set_thread(), "CPU Binding (any thread)")?;
-
-    Ok(())
-}
-
-
-/*
-
- */
 // Allocate "VM address space" (split per NUMA region?)
 // Create nodes (represent NUMA regions?)
 // Set memory policy so that memory is allocated locally to each core
@@ -45,10 +20,10 @@ pub async fn benchmark(config: Config) -> Result<()> {
     let topo = Topology::new();
 
     // Check compatibility with core pinning
-    compatible(&topo)?;
+    utils::compatible(&topo)?;
 
     // Determine number of cores to use
-    let nb_nodes = wip::get_nb_nodes(&topo, &config)?;
+    let nb_nodes = utils::get_nb_nodes(&topo, &config)?;
     let share = config.address_space_size / nb_nodes;
 
     const CHANNEL_CAPACITY: usize = 200;
@@ -73,7 +48,7 @@ pub async fn benchmark(config: Config) -> Result<()> {
     let mut workers: Vec<wip::Worker> = vec!();
     let mut rx_logs: Vec<oneshot::Receiver<Vec<wip::Log>>> = vec!();
 
-    for w in 0..nb_nodes {
+    for _ in 0..nb_nodes {
         let (tx_job, rx_job) = channel(CHANNEL_CAPACITY);
         let (tx_result, rx_result) = channel(CHANNEL_CAPACITY);
         let (tx_log, rx_log) = oneshot::channel();
@@ -81,7 +56,7 @@ pub async fn benchmark(config: Config) -> Result<()> {
         client.tx_jobs.push(tx_job);
         client.rx_results.push(rx_result);
 
-        let mut worker = wip::Worker{
+        let worker = wip::Worker{
             rx_job,
             backlog: vec!(),
             logs: vec!(),
@@ -93,7 +68,7 @@ pub async fn benchmark(config: Config) -> Result<()> {
         rx_logs.push(rx_log);
     }
 
-    let (tx_stop, rx_stop) = broadcast::channel(1);
+    let (tx_stop, _) = broadcast::channel(1);
     // Spawn them in reverse order (workers, client, rate limiter and then generator)
     for w in workers {
         // TODO Spawn each worker on a specific core
@@ -101,6 +76,8 @@ pub async fn benchmark(config: Config) -> Result<()> {
     }
     client.spawn(tx_stop.subscribe());
     rate_limiter.spawn(tx_stop.subscribe(), config.batch_size, config.rate);
+    // tokio::time::sleep(Duration::from_secs(2)).await;
+
 
     println!("Benchmarking for {}s!", config.duration);
     generator.spawn(tx_stop.subscribe());

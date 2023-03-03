@@ -1,8 +1,7 @@
+use std::time::Duration;
 use tokio::sync::mpsc::{channel, Receiver, Sender};
-use tokio::time::Instant;
 use async_trait::async_trait;
 use anyhow::{Context, Error, Result};
-use either::{Either, Left, Right};
 use crate::transaction::{Transaction, TransactionOutput};
 use crate::vm::{CHANNEL_CAPACITY, ExecutionResult, VM, VmWorker};
 
@@ -17,20 +16,25 @@ impl VM for BasicVM {
         let (tx_result, rx_results) = channel(CHANNEL_CAPACITY);
         let mut tx_jobs = Vec::with_capacity(nb_workers);
 
-        for w in 0..nb_workers {
+        for _ in 0..nb_workers {
             let (tx_job, rx_job) = channel(CHANNEL_CAPACITY);
-            // BasicWorker::spawn3(rx_job, tx_result.clone());
             BasicWorker::spawn(rx_job, tx_result.clone());
             tx_jobs.push(tx_job);
         }
 
-        return BasicVM {
+        return Self {
             tx_jobs,
             rx_results
         };
     }
 
-    async fn dispatch(&mut self, start: Instant, backlog: &mut Vec<Transaction>) -> anyhow::Result<()> {
+    async fn prepare(&mut self) {
+        println!("Waiting for workers to be ready (2s)");
+        // TODO Implement a real way of knowing when the workers are ready...
+        tokio::time::sleep(Duration::from_secs(2)).await;
+    }
+
+    async fn dispatch(&mut self, backlog: &mut Vec<Transaction>) -> Result<()> {
 
         for (i, tx_job) in self.tx_jobs.iter_mut().enumerate() {
 
@@ -103,50 +107,4 @@ impl BasicWorker {
                 .await;
         });
     }
-
-    // pub fn start(
-    //     rx_jobs: Receiver<Vec<Transaction>>,
-    //     tx_results: Sender<(Vec<ExecutionResult>, Vec<Transaction>)>
-    // ) {
-    //     tokio::spawn(async move {
-    //
-    //         let mut worker = BasicWorker::new(rx_jobs, tx_results);
-    //
-    //         loop {
-    //             match worker.rx_jobs.recv().await {
-    //                 Some(batch) => {
-    //                     let mut results = Vec::with_capacity(batch.len());
-    //                     let mut conflicts = vec!();
-    //                     // Simulate actual work needing to be done?
-    //                     // tokio::time::sleep(Duration::from_millis(1)).await;
-    //
-    //                     let conflict = |tx: &Transaction| false; // dev
-    //                     // TODO use filter and map instead
-    //                     for tx in batch {
-    //                         if conflict(&tx) {
-    //                             conflicts.push(tx);
-    //                         } else {
-    //                             let result = ExecutionResult{
-    //                                 output: TransactionOutput{ tx },
-    //                                 execution_start: Instant::now(),
-    //                                 execution_end: Instant::now(),
-    //                             };
-    //
-    //                             results.push(result);
-    //                         }
-    //                     }
-    //
-    //                     let err = worker.tx_results.send((results, conflicts)).await;
-    //                     if err.is_err() {
-    //                         eprintln!("Unable to send execution results");
-    //                         return;
-    //                     }
-    //                 },
-    //                 None => {
-    //                     return;
-    //                 }
-    //             }
-    //         }
-    //     });
-    // }
 }
