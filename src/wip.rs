@@ -1,11 +1,19 @@
+#![allow(unused_variables)]
 use crate::config::Config;
-use tokio::sync::mpsc::{Receiver, Sender};
+use tokio::sync::mpsc::{channel, Receiver, Sender};
 use tokio::sync::{broadcast, oneshot};
 use tokio::time::Instant;
 use either::Either;
 use std::time::Duration;
 use std::mem;
+use anyhow::{self, Context, Result};
+// use leaky_bucket;
+use hwloc::Topology;
+use crate::basic_vm::BasicVM;
+
 use crate::transaction::Transaction;
+use crate::utils::{compatible, get_nb_nodes, print_metrics};
+use crate::vm::{CHANNEL_CAPACITY, VM};
 
 type WorkerResult = Either<Vec<Transaction>, ()>;
 pub type Log = (u64, Instant, Vec<Instant>); // block id, block creation time
@@ -26,7 +34,7 @@ pub async fn parse_logs(config: &Config, rx_logs: &mut Vec<oneshot::Receiver<Vec
         match rx.await {
             Ok(block_logs) => {
                 println!("Worker {} processed {} blocks", i, block_logs.len());
-                for (block_id, block_creation, logs) in block_logs {
+                for (_block_id, block_creation, logs) in block_logs {
                     // println!("Block {} contains {} tx", block_id, logs.len());
                     processed += logs.len() as u64;
                     for tx_completion in logs {
@@ -65,7 +73,7 @@ impl TransactionGenerator {
         // interval.tick().await;
     }
 
-    pub fn spawn(mut self, mut signal: broadcast::Receiver<()>) {
+    pub fn spawn(self, mut signal: broadcast::Receiver<()>) {
         tokio::spawn(async move {
             println!("<Transaction generator started");
 
@@ -114,7 +122,7 @@ impl RateLimiter {
             let duration = Duration::from_secs(1).checked_div(rate)
                 .expect("Unable to compute rate limiter interval");
 
-            let mut loop_start = Instant::now();
+            let loop_start = Instant::now();
 
             loop {
                 tokio::select! {
@@ -218,5 +226,88 @@ impl Worker {
             }
         });
     }
+}
+
+// Allocate "VM address space" (split per NUMA region?)
+// Create nodes (represent NUMA regions?)
+// Set memory policy so that memory is allocated locally to each core
+// TODO Check how to send transaction to each node
+// Create Backlog
+// Create dispatcher (will send the transactions to the different regions)
+// Create client (will generate transactions)
+pub async fn benchmark_rate(config: Config) -> Result<()> {
+
+    // Setup ---------------------------------------------------------------------------------------
+    let topo = Topology::new();
+
+    // Check compatibility with core pinning
+    compatible(&topo)?;
+
+    // Determine number of cores to use
+    let nb_nodes = get_nb_nodes(&topo, &config)?;
+    // let share = config.address_space_size / nb_nodes;
+
+    // TODO Move initialisation into spawn and use a broadcast variable to trigger the start of the benchmark
+    let (tx_generator, rx_rate) = channel(CHANNEL_CAPACITY);
+    let (tx_rate, mut rx_client) = channel(CHANNEL_CAPACITY);
+    let generator = TransactionGenerator{
+        tx: tx_generator
+    };
+    let rate_limiter = RateLimiter{
+        rx: rx_rate,
+        tx: tx_rate
+    };
+
+    let mut vm = BasicVM::new(nb_nodes);
+    // vm.prepare().await;
+
+    let (tx_stop, _) = broadcast::channel(1);
+    rate_limiter.spawn(tx_stop.subscribe(), config.batch_size, config.rate);
+    generator.spawn(tx_stop.subscribe());
+
+    return tokio::spawn(async move {
+        println!();
+        println!("Benchmarking rate {}s:", config.duration);
+        let benchmark_start = Instant::now();
+        let timer = tokio::time::sleep(Duration::from_secs(config.duration));
+        let mut batch_results = Vec::with_capacity(config.batch_size);
+        tokio::pin!(timer);
+
+        loop {
+            tokio::select! {
+                biased;
+                () = &mut timer => {
+                    tx_stop.send(()).context("Unable to send stop signal")?;
+                    break;
+                },
+                Some((creation, batch)) = rx_client.recv() => {
+                    if benchmark_start.elapsed() > Duration::from_secs(config.duration) {
+                        tx_stop.send(()).context("Unable to send stop signal")?;
+                        break;
+                    }
+
+                    let start = Instant::now();
+                    let result = vm.execute(batch).await?;
+                    let duration = start.elapsed();
+
+                    batch_results.push((result, start, duration));
+                }
+            }
+        }
+
+        let total_duration = benchmark_start.elapsed();
+        println!("Done benchmarking");
+        println!();
+        // println!("Processed {} batches of {} tx in {:?} s",
+        //          batch_processed, config.batch_size, total_duration);
+        // println!("Throughput is {} tx/s",
+        //          (batch_processed * config.batch_size as u64)/ total_duration.as_secs());
+        // println!();
+
+        print_metrics(batch_results, total_duration);
+        println!();
+
+        Ok(())
+    }).await?;
 }
 

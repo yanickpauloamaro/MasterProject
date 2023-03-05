@@ -1,6 +1,5 @@
 use anyhow::{Context, Result};
 use async_trait::async_trait;
-use std::time::Duration;
 use tokio::sync::mpsc::{Receiver, Sender};
 use tokio::time::Instant;
 
@@ -8,11 +7,11 @@ use crate::transaction::{Transaction, TransactionOutput};
 
 pub const CHANNEL_CAPACITY: usize = 200;
 
+pub type Batch = Vec<Transaction>;
+
 #[derive(Debug)]
 pub struct ExecutionResult {
-    // TODO Remove execution start
     pub output: TransactionOutput,
-    pub execution_start: Instant,
     pub execution_end: Instant,
 }
 
@@ -22,16 +21,14 @@ pub trait VM {
 
     async fn prepare(&mut self);
 
-    async fn execute(&mut self, mut backlog: Vec<Transaction>) -> Result<(Vec<ExecutionResult>, Instant, Duration)> {
+    async fn execute(&mut self, mut backlog: Vec<Transaction>) -> Result<Vec<ExecutionResult>> {
 
         let mut to_process = backlog.len();
         let mut results = Vec::with_capacity(to_process);
-        let start = Instant::now();
 
         loop {
             if to_process == 0 {
-                let duration = start.elapsed();
-                return Ok((results, start, duration));
+                return Ok(results);
             }
 
             if !backlog.is_empty() {
@@ -76,7 +73,6 @@ pub trait VmWorker {
                             Ok(output) => {
                                 let result = ExecutionResult{
                                     output,
-                                    execution_start: Instant::now(), // TODO Will be removed later
                                     execution_end: Instant::now(),
                                 };
                                 results.push(result);

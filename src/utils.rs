@@ -1,10 +1,10 @@
+use std::ops::{Div, Mul};
 use std::time::Duration;
 use anyhow::Result;
 use hwloc::{ObjectType, Topology};
 use tokio::time::Instant;
 
 use crate::config::Config;
-use crate::transaction;
 use crate::transaction::Transaction;
 use crate::vm::ExecutionResult;
 
@@ -48,18 +48,6 @@ pub fn get_nb_nodes(topo: &Topology, config: &Config) -> Result<usize> {
     }
 }
 
-pub fn create_batch(batch_size: usize) {
-    let mut batch = Vec::with_capacity(batch_size);
-    for _ in 0..batch_size {
-        let tx = transaction::Transaction {
-            from: 0,
-            to: 1,
-            amount: 42,
-        };
-        batch.push(tx);
-    }
-}
-
 pub fn create_batch_partitioned(batch_size: usize, nb_partitions: usize) -> Vec<Transaction> {
     let mut batch = Vec::with_capacity(batch_size);
     let mut address: u64 = 0;
@@ -78,32 +66,34 @@ pub fn create_batch_partitioned(batch_size: usize, nb_partitions: usize) -> Vec<
 
     return batch;
 }
+
 pub fn print_metrics(
-    batch_size: usize,
-    results: Vec<ExecutionResult>,
-    execution_start: Instant,
-    duration: Duration
+    batch_results: Vec<(Vec<ExecutionResult>, Instant, Duration)>,
+    total_duration: Duration
 ) {
 
     let mut processed: u64 = 0;
+    let nb_batches = batch_results.len();
     let mut sum_latency = Duration::from_millis(0);
     let mut min_latency = Duration::MAX;
     let mut max_latency = Duration::from_nanos(0);
 
-    for result in results {
-        let latency = result.execution_end - execution_start;
-        sum_latency += latency;
-        min_latency = min_latency.min(latency);
-        max_latency = max_latency.max(latency);
-        processed += 1;
+    for (results, execution_start, _duration) in batch_results {
+        for result in results {
+            let latency = result.execution_end - execution_start;
+            sum_latency += latency;
+            min_latency = min_latency.min(latency);
+            max_latency = max_latency.max(latency);
+            processed += 1;
+        }
     }
 
     // println!("Batch size: {}, tx processed: {}", batch_size, processed);
-    println!("Executed {} tx in {:?}", batch_size, duration);
+    println!("Processed {} batches = {} txs in {:?}", nb_batches, processed, total_duration);
 
-    let micro_throughput = batch_size as f64 / duration.as_micros() as f64;
-    let milli_throughput = 1000.0 * micro_throughput;
-    let throughput = 1000.0 * milli_throughput;
+    let micro_throughput = (processed as f64).div(total_duration.as_micros() as f64);
+    let milli_throughput = micro_throughput.mul(1000.0);
+    let throughput = milli_throughput.mul(1000.0);
 
     println!("Throughput is {} tx/µs", micro_throughput);
     println!("Throughput is {} tx/ms", milli_throughput);
