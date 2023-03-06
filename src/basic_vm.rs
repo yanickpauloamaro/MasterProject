@@ -48,7 +48,9 @@ impl VM for BasicVM {
         }
 
         if backlog.len() > 0 {
-            return Err(anyhow::anyhow!("Not all jobs where assigned to a worker!"));
+            let batch = backlog.drain(..backlog.len()).collect();
+            self.tx_jobs[0].send(batch).await
+                .context(format!("Unable to send job to worker"))?;
         }
 
         return Ok(());

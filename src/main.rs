@@ -16,13 +16,13 @@ async fn main() -> Result<()>{
     //     .context("Unable to create benchmark config")?;
     // benchmark_rate(config).await?;
 
-    // let config = Config::new("config_single_batch.json")
-    //     .context("Unable to create benchmark config")?;
-    // benchmark_latency(config, 2).await?;
-
-    let config = Config::new("config.json")
+    let config = Config::new("config_single_batch.json")
         .context("Unable to create benchmark config")?;
-    benchmark_workload(config).await?;
+    benchmark(config, 2).await?;
+
+    // let config = Config::new("config.json")
+    //     .context("Unable to create benchmark config")?;
+    // benchmark_workload(config).await?;
 
     // let duration: u64 = 300;
     // let warmup = Workload::warmup_duration(50_000_000, 64_000, duration)?;
