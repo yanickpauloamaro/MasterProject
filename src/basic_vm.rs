@@ -3,7 +3,7 @@ use tokio::sync::mpsc::{channel, Receiver, Sender};
 use async_trait::async_trait;
 use anyhow::{Context, Error, Result};
 use crate::transaction::{Transaction, TransactionOutput};
-use crate::vm::{CHANNEL_CAPACITY, ExecutionResult, VM, VmWorker};
+use crate::vm::{CHANNEL_CAPACITY, ExecutionResult, VM, VmWorker, WorkerPool};
 
 pub struct BasicVM {
     tx_jobs: Vec<Sender<Vec<Transaction>>>,
@@ -13,14 +13,8 @@ pub struct BasicVM {
 #[async_trait]
 impl VM for BasicVM {
     fn new(nb_workers: usize) -> Self {
-        let (tx_result, rx_results) = channel(CHANNEL_CAPACITY);
-        let mut tx_jobs = Vec::with_capacity(nb_workers);
 
-        for _ in 0..nb_workers {
-            let (tx_job, rx_job) = channel(CHANNEL_CAPACITY);
-            BasicWorker::spawn(rx_job, tx_result.clone());
-            tx_jobs.push(tx_job);
-        }
+        let (tx_jobs, rx_results) = BasicWorker::new_worker_pool(nb_workers);
 
         return Self {
             tx_jobs,
@@ -93,20 +87,5 @@ impl VmWorker for BasicWorker {
     fn execute(&mut self, tx: Transaction) -> Result<TransactionOutput, Transaction> {
         // TODO If it might conflict with a transaction from another worker, return the transaction
         return Ok(TransactionOutput{ tx });
-    }
-}
-
-impl BasicWorker {
-
-    pub fn spawn(
-        rx_jobs: Receiver<Vec<Transaction>>,
-        tx_results: Sender<(Vec<ExecutionResult>, Vec<Transaction>)>
-    ) {
-        tokio::spawn(async move {
-            println!("Spawning basic worker");
-            return Self::new(rx_jobs, tx_results)
-                .run()
-                .await;
-        });
     }
 }

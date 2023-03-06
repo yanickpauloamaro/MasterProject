@@ -1,6 +1,6 @@
 use anyhow::{Context, Result};
 use async_trait::async_trait;
-use tokio::sync::mpsc::{Receiver, Sender};
+use tokio::sync::mpsc::{channel, Receiver, Sender};
 use tokio::time::Instant;
 
 use crate::transaction::{Transaction, TransactionOutput};
@@ -94,4 +94,47 @@ pub trait VmWorker {
     }
 
     fn execute(&mut self, tx: Transaction) -> Result<TransactionOutput, Transaction>;
+}
+
+trait SpawnWorker{
+    fn spawn(
+        rx_jobs: Receiver<Vec<Transaction>>,
+        tx_results: Sender<(Vec<ExecutionResult>, Vec<Transaction>)>
+    );
+}
+
+impl<W> SpawnWorker for W where W: VmWorker + Send {
+    fn spawn(
+        rx_jobs: Receiver<Vec<Transaction>>,
+        tx_results: Sender<(Vec<ExecutionResult>, Vec<Transaction>)>
+    ) {
+        tokio::spawn(async move {
+            println!("Spawning basic worker");
+            return Self::new(rx_jobs, tx_results)
+                .run()
+                .await;
+        });
+    }
+}
+
+pub trait WorkerPool{
+    fn new_worker_pool(nb_workers: usize) -> (
+        Vec<Sender<Vec<Transaction>>>,
+        Receiver<(Vec<ExecutionResult>, Vec<Transaction>)>
+    );
+}
+
+impl<W> WorkerPool for W where W: VmWorker + Send {
+    fn new_worker_pool(nb_workers: usize) -> (Vec<Sender<Vec<Transaction>>>, Receiver<(Vec<ExecutionResult>, Vec<Transaction>)>) {
+        let (tx_result, rx_results) = channel(CHANNEL_CAPACITY);
+        let mut tx_jobs = Vec::with_capacity(nb_workers);
+
+        for _ in 0..nb_workers {
+            let (tx_job, rx_job) = channel(CHANNEL_CAPACITY);
+            W::spawn(rx_job, tx_result.clone());
+            tx_jobs.push(tx_job);
+        }
+
+        return (tx_jobs, rx_results);
+    }
 }
