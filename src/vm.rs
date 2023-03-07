@@ -32,20 +32,21 @@ pub trait VM {
             }
 
             if !backlog.is_empty() {
-                self.dispatch(&mut backlog).await?;
+                let mut conflicts = self.dispatch(&mut backlog).await?;
+                backlog.append(&mut conflicts);
                 // println!("Done dispatching");
             }
 
-            let (mut processed, mut conflicts) = self.collect().await?;
+            let (mut processed, mut jobs) = self.collect().await?;
             // println!("Collected results: processed {}, conflict {}, backlog length {}", processed.len(), conflicts.len(), backlog.len());
 
             to_process -= processed.len();
             results.append(&mut processed);
-            backlog.append(&mut conflicts);
+            backlog.append(&mut jobs);
         }
     }
 
-    async fn dispatch(&mut self, backlog: &mut Vec<Transaction>) -> Result<()>;
+    async fn dispatch(&mut self, backlog: &mut Vec<Transaction>) -> Result<Vec<Transaction>>;
 
     async fn collect(&mut self) -> Result<(Vec<ExecutionResult>, Vec<Transaction>)>;
 }
@@ -126,7 +127,7 @@ pub trait WorkerPool{
 
 impl<W> WorkerPool for W where W: VmWorker + Send {
     fn new_worker_pool(nb_workers: usize) -> (Vec<Sender<Vec<Transaction>>>, Receiver<(Vec<ExecutionResult>, Vec<Transaction>)>) {
-        let (tx_result, rx_results) = channel(CHANNEL_CAPACITY);
+        let (tx_result, rx_results) = channel(nb_workers);
         let mut tx_jobs = Vec::with_capacity(nb_workers);
 
         for _ in 0..nb_workers {

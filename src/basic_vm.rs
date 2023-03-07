@@ -1,9 +1,9 @@
 use std::time::Duration;
-use tokio::sync::mpsc::{channel, Receiver, Sender};
+use tokio::sync::mpsc::{Receiver, Sender};
 use async_trait::async_trait;
 use anyhow::{Context, Error, Result};
 use crate::transaction::{Transaction, TransactionOutput};
-use crate::vm::{CHANNEL_CAPACITY, ExecutionResult, VM, VmWorker, WorkerPool};
+use crate::vm::{ExecutionResult, VM, VmWorker, WorkerPool};
 
 pub struct BasicVM {
     tx_jobs: Vec<Sender<Vec<Transaction>>>,
@@ -28,7 +28,7 @@ impl VM for BasicVM {
         tokio::time::sleep(Duration::from_secs(2)).await;
     }
 
-    async fn dispatch(&mut self, backlog: &mut Vec<Transaction>) -> Result<()> {
+    async fn dispatch(&mut self, backlog: &mut Vec<Transaction>) -> Result<Vec<Transaction>> {
 
         for (i, tx_job) in self.tx_jobs.iter_mut().enumerate() {
 
@@ -47,7 +47,7 @@ impl VM for BasicVM {
                 .context(format!("Unable to send job to worker"))?;
         }
 
-        return Ok(());
+        return Ok(vec!());
     }
 
     async fn collect(&mut self) -> Result<(Vec<ExecutionResult>, Vec<Transaction>)> {
