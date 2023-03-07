@@ -8,6 +8,7 @@ use crate::transaction::{Transaction, TransactionOutput};
 pub const CHANNEL_CAPACITY: usize = 200;
 
 pub type Batch = Vec<Transaction>;
+pub type Jobs = Vec<Transaction>;
 
 #[derive(Debug)]
 pub struct ExecutionResult {
@@ -21,7 +22,7 @@ pub trait VM {
 
     async fn prepare(&mut self);
 
-    async fn execute(&mut self, mut backlog: Vec<Transaction>) -> Result<Vec<ExecutionResult>> {
+    async fn execute(&mut self, mut backlog: Jobs) -> Result<Vec<ExecutionResult>> {
 
         let mut to_process = backlog.len();
         let mut results = Vec::with_capacity(to_process);
@@ -46,21 +47,21 @@ pub trait VM {
         }
     }
 
-    async fn dispatch(&mut self, backlog: &mut Vec<Transaction>) -> Result<Vec<Transaction>>;
+    async fn dispatch(&mut self, backlog: &mut Jobs) -> Result<Jobs>;
 
-    async fn collect(&mut self) -> Result<(Vec<ExecutionResult>, Vec<Transaction>)>;
+    async fn collect(&mut self) -> Result<(Vec<ExecutionResult>, Jobs)>;
 }
 
 #[async_trait]
 pub trait VmWorker {
 
     fn new(
-        rx_jobs: Receiver<Vec<Transaction>>,
-        tx_results: Sender<(Vec<ExecutionResult>, Vec<Transaction>)>
+        rx_jobs: Receiver<Jobs>,
+        tx_results: Sender<(Vec<ExecutionResult>, Jobs)>
     ) -> Self;
 
-    async fn get_jobs(&mut self) -> Option<Vec<Transaction>>;
-    async fn send_results(&mut self, results: Vec<ExecutionResult>, conflicts: Vec<Transaction>) -> Result<()>;
+    async fn get_jobs(&mut self) -> Option<Jobs>;
+    async fn send_results(&mut self, results: Vec<ExecutionResult>, conflicts: Jobs) -> Result<()>;
 
     async fn run(&mut self) -> Result<()> {
         loop {
@@ -99,15 +100,15 @@ pub trait VmWorker {
 
 trait SpawnWorker{
     fn spawn(
-        rx_jobs: Receiver<Vec<Transaction>>,
-        tx_results: Sender<(Vec<ExecutionResult>, Vec<Transaction>)>
+        rx_jobs: Receiver<Jobs>,
+        tx_results: Sender<(Vec<ExecutionResult>, Jobs)>
     );
 }
 
 impl<W> SpawnWorker for W where W: VmWorker + Send {
     fn spawn(
-        rx_jobs: Receiver<Vec<Transaction>>,
-        tx_results: Sender<(Vec<ExecutionResult>, Vec<Transaction>)>
+        rx_jobs: Receiver<Jobs>,
+        tx_results: Sender<(Vec<ExecutionResult>, Jobs)>
     ) {
         tokio::spawn(async move {
             println!("Spawning basic worker");
@@ -119,14 +120,14 @@ impl<W> SpawnWorker for W where W: VmWorker + Send {
 }
 
 pub trait WorkerPool{
-    fn new_worker_pool(nb_workers: usize) -> (
-        Vec<Sender<Vec<Transaction>>>,
-        Receiver<(Vec<ExecutionResult>, Vec<Transaction>)>
-    );
+    fn new_worker_pool(nb_workers: usize)
+        -> (Vec<Sender<Jobs>>, Receiver<(Vec<ExecutionResult>, Jobs)>);
 }
 
 impl<W> WorkerPool for W where W: VmWorker + Send {
-    fn new_worker_pool(nb_workers: usize) -> (Vec<Sender<Vec<Transaction>>>, Receiver<(Vec<ExecutionResult>, Vec<Transaction>)>) {
+    fn new_worker_pool(nb_workers: usize)
+        -> (Vec<Sender<Jobs>>, Receiver<(Vec<ExecutionResult>, Jobs)>)
+    {
         let (tx_result, rx_results) = channel(nb_workers);
         let mut tx_jobs = Vec::with_capacity(nb_workers);
 
