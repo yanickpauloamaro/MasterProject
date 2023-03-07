@@ -6,10 +6,12 @@ pub enum TransactionType {
     SmartContract,
 }
 
+pub type TransactionAddress = u64;
+
 #[derive(Debug)]
 pub struct Transaction {
-    pub from: u64,
-    pub to: u64,
+    pub from: TransactionAddress,
+    pub to: TransactionAddress,
     pub amount: u64,
 }
 

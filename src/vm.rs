@@ -18,7 +18,7 @@ pub struct ExecutionResult {
 
 #[async_trait]
 pub trait VM {
-    fn new(nb_workers: usize) -> Self;
+    fn new(nb_workers: usize, batch_size: usize) -> Self;
 
     async fn prepare(&mut self);
 

@@ -1,64 +1,199 @@
 #![allow(unused_variables)]
-use crate::config::Config;
 use tokio::sync::mpsc::{channel, Receiver, Sender};
 use tokio::sync::{broadcast, oneshot};
 use tokio::time::Instant;
 use either::Either;
 use std::time::Duration;
 use std::mem;
-use anyhow::{self, Context, Result};
-// use leaky_bucket;
+use anyhow::{self, Context, Error, Result};
+use async_trait::async_trait;
+use bloomfilter::Bloom;
 use hwloc::Topology;
-use crate::basic_vm::BasicVM;
 
-use crate::transaction::Transaction;
+use crate::basic_vm::{BasicVM, BasicWorker};
+use crate::transaction::{Transaction, TransactionAddress};
+use crate::config::Config;
+use crate::{debug, debugging};
 use crate::utils::{compatible, get_nb_nodes, print_metrics};
-use crate::vm::{CHANNEL_CAPACITY, VM};
+use crate::vm::{Batch, CHANNEL_CAPACITY, ExecutionResult, Jobs, VM, WorkerPool};
 
+struct BloomFilter {
+    filter: Bloom<TransactionAddress>
+}
+
+impl BloomFilter {
+    pub fn new(expected_size: usize, false_positive: f64) -> Self {
+        Self{ filter: Bloom::new_for_fp_rate(expected_size, false_positive) }
+    }
+    pub fn has(&self, tx: &Transaction) -> bool {
+        return self.filter.check(&tx.from) || self.filter.check(&tx.to)
+    }
+
+    pub fn insert(&mut self, tx: &Transaction) {
+        self.filter.set(&tx.from);
+        self.filter.set(&tx.to);
+    }
+
+    pub fn clear(&mut self) {
+        self.filter.clear();
+    }
+}
+
+pub struct BloomVM {
+    nb_workers: usize,
+    batch_size: usize,
+    filters: Vec<BloomFilter>,
+    tx_jobs: Vec<Sender<Jobs>>,
+    rx_results: Receiver<(Vec<ExecutionResult>, Jobs)>
+}
+
+impl BloomVM {
+    // TODO Is there a way to call the original trait implementation?
+    async fn execute(&mut self, mut backlog: Jobs) -> Result<Vec<ExecutionResult>> {
+        debug!("Clearing bloom filters");
+        self.clear_filters();
+        return VM::execute(self, backlog).await;
+    }
+
+    fn clear_filters(&mut self) {
+        for filter in self.filters.iter_mut() {
+            filter.clear();
+        }
+    }
+}
+
+#[async_trait]
+impl VM for BloomVM {
+    fn new(nb_workers: usize, batch_size: usize) -> Self {
+        let false_positive: f64 = 0.1;  // 10%?
+        let (tx_jobs, rx_results) = BasicWorker::new_worker_pool(nb_workers);
+        let filters = (0..nb_workers).map(|_| BloomFilter::new(batch_size, false_positive)).collect();
+
+        return Self {
+            nb_workers,
+            batch_size,
+            filters,
+            tx_jobs,
+            rx_results
+        };
+    }
+
+    async fn prepare(&mut self) {
+        println!("Waiting for workers to be ready (2s)");
+        // TODO Implement a real way of knowing when the workers are ready...
+        tokio::time::sleep(Duration::from_secs(2)).await;
+    }
+
+    async fn dispatch(&mut self, backlog: &mut Jobs) -> Result<Jobs> {
+        debug!("Dispatch =======================");
+        // TODO once we have mini transactions, we should not reset the filters in dispatch, only in execute
+        // TODO Maybe we can partially clear the Bloom ? i.e. only clear the receivers
+        self.clear_filters();
+
+        let mut worker_jobs: Vec<Jobs> = (0..self.nb_workers).map(|_| vec!()).collect();
+        let mut conflicting_jobs: Jobs = vec!();
+        let mut next_worker = 0;
+
+        for tx in backlog.drain(..backlog.len()) {
+            // Find which worker is responsible for the addresses in this transaction
+            let mut assigned_workers = vec!();
+            for w in 0..self.nb_workers {
+                if self.filters[w].has(&tx) {
+                    assigned_workers.push(w);
+                }
+            }
+
+            let assignee = match assigned_workers[..] {
+                [] => {
+                    // No worker is responsible for this tx, so pick the next one
+                    debug!("{:?} -> Assigned to {}", tx, next_worker);
+                    let worker = next_worker;
+                    next_worker = (next_worker + 1) % self.nb_workers;
+                    worker
+                },
+                [worker] => {
+                    // A worker is responsible for this tx
+                    debug!("{:?} -> Claimed by {}", tx, worker);
+                    worker
+                },
+                _ => {
+                    // There might be a conflict among workers
+                    // Possible reasons:
+                    //  - the bloom filter returned a false positive for some worker(s)
+                    //  - the tx accesses addresses that are from assigned to different workers
+                    debug!("{:?} -> Conflict between {:?}", tx, assigned_workers);
+                    conflicting_jobs.push(tx);
+                    continue;
+                }
+            };
+
+            // Assign the transaction to the worker
+            self.filters[assignee].insert(&tx);
+            worker_jobs[assignee].push(tx);
+        }
+
+        // Send jobs to each worker
+        debug!("Sending jobs to workers...");
+        for (worker, jobs) in worker_jobs.into_iter().enumerate() {
+            // N.B: Must send to worker even if the jobs contains no transaction because ::collect
+            // expects all workers to send a result
+            self.tx_jobs[worker].send(jobs).await
+                .context(format!("Unable to send job to worker"))?;
+        }
+
+        debug!();
+
+        Ok(conflicting_jobs)
+    }
+
+    async fn collect(&mut self) -> Result<(Vec<ExecutionResult>, Jobs)> {
+
+        let mut collected_results = Vec::with_capacity(self.batch_size);
+        let mut collected_jobs = Vec::with_capacity(self.batch_size);
+
+        debug!("Collecting responses...");
+        // Wait for all workers to give a response
+        for _ in 0..self.nb_workers {
+            let (mut results, mut jobs) = self.rx_results.recv().await
+                .ok_or(anyhow::anyhow!("Unable to receive results from workers"))?;
+
+            collected_results.append(&mut results);
+            collected_jobs.append(&mut jobs);
+        }
+        debug!("Got all responses");
+        debug!();
+
+        return Ok((collected_results, collected_jobs));
+    }
+}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+// =================================================================================================
 type WorkerResult = Either<Vec<Transaction>, ()>;
 pub type Log = (u64, Instant, Vec<Instant>); // block id, block creation time
 
 // const BLOCK_SIZE: usize = 64 * 1024;
 // const BLOCK_SIZE: usize = 100;
 const DEV_RATE: u32 = 100;
-
-pub async fn parse_logs(config: &Config, rx_logs: &mut Vec<oneshot::Receiver<Vec<Log>>>) {
-    let mut processed: u64 = 0;
-    let mut sum_latency = Duration::from_millis(0);
-    let mut min_latency = Duration::MAX;
-    let mut max_latency = Duration::from_nanos(0);
-
-    println!();
-    println!("Collecting logs from workers:");
-    for (i, rx) in rx_logs.iter_mut().enumerate() {
-        match rx.await {
-            Ok(block_logs) => {
-                println!("Worker {} processed {} blocks", i, block_logs.len());
-                for (_block_id, block_creation, logs) in block_logs {
-                    // println!("Block {} contains {} tx", block_id, logs.len());
-                    processed += logs.len() as u64;
-                    for tx_completion in logs {
-                        let latency = tx_completion - block_creation;
-                        // println!("\tA tx took {:?}", latency);
-                        sum_latency += latency;
-                        min_latency = min_latency.min(latency);
-                        max_latency = max_latency.max(latency);
-                    }
-                }
-            }
-            Err(e) => println!("Failed to receive log from worker {}: {:?}", i, e)
-        }
-    }
-
-    println!();
-    println!("Processed {} tx in {} s", processed, config.duration);
-    println!("Throughput is {} tx/s", processed/config.duration);
-    println!("Min latency is {:?}", min_latency);
-    println!("Max latency is {:?}", max_latency);
-    println!("Average latency is {:?} µs", sum_latency.as_micros() / processed as u128);
-    println!("Average latency is {:?} ms", sum_latency.as_millis() / processed as u128);
-    println!();
-}
 
 pub struct TransactionGenerator {
     /* TODO Check that the generator is fast enough (Throughput > 5 millions/s)
@@ -258,7 +393,7 @@ pub async fn benchmark_rate(config: Config) -> Result<()> {
         tx: tx_rate
     };
 
-    let mut vm = BasicVM::new(nb_nodes);
+    let mut vm = BasicVM::new(nb_nodes, config.batch_size);
     // vm.prepare().await;
 
     let (tx_stop, _) = broadcast::channel(1);

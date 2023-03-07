@@ -12,7 +12,7 @@ pub struct BasicVM {
 
 #[async_trait]
 impl VM for BasicVM {
-    fn new(nb_workers: usize) -> Self {
+    fn new(nb_workers: usize, _batch_size: usize) -> Self {
 
         let (tx_jobs, rx_results) = BasicWorker::new_worker_pool(nb_workers);
 

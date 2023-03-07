@@ -18,7 +18,7 @@ async fn main() -> Result<()>{
 
     let config = Config::new("config_single_batch.json")
         .context("Unable to create benchmark config")?;
-    benchmark(config, 2).await?;
+    benchmark(config, 1).await?;
 
     // let config = Config::new("config.json")
     //     .context("Unable to create benchmark config")?;

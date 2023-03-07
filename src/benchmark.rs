@@ -11,6 +11,7 @@ use crate::utils::{compatible, create_batch_partitioned, get_nb_nodes, print_met
 use crate::vm::{Batch, VM};
 use crate::config::Config;
 use crate::transaction::Transaction;
+use crate::wip::BloomVM;
 
 pub async fn benchmark(config: Config, nb_iter: usize) -> Result<()> {
 
@@ -23,7 +24,9 @@ pub async fn benchmark(config: Config, nb_iter: usize) -> Result<()> {
     let nb_nodes = get_nb_nodes(&topo, &config)?;
     // let share = config.address_space_size / nb_nodes;
 
-    let mut vm = BasicVM::new(nb_nodes);
+    // let mut vm = BasicVM::new(nb_nodes, config.batch_size);
+    let mut vm = BloomVM::new(nb_nodes, config.batch_size);
+
     // vm.prepare().await;
 
     // Benchmark -----------------------------------------------------------------------------------
@@ -65,7 +68,7 @@ pub async fn benchmark_workload(config: Config) -> Result<()> {
         nb_nodes as u64, config.batch_size
     );
 
-    let mut vm = BasicVM::new(nb_nodes);
+    let mut vm = BasicVM::new(nb_nodes, config.batch_size);
     // vm.prepare().await;
 
     return tokio::spawn(async move {

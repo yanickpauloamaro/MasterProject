@@ -8,6 +8,29 @@ use crate::config::Config;
 use crate::transaction::Transaction;
 use crate::vm::ExecutionResult;
 
+// const DEBUG: bool = false;
+#[macro_export]
+macro_rules! debugging {
+    () => {
+        false
+    };
+}
+
+#[macro_export]
+macro_rules! debug {
+    () => {
+        if debugging!() {
+            println!();
+        }
+    };
+    ($($arg:tt)*) => {{
+        if debugging!() {
+            print!("**");
+            println!($($arg)*);
+        }
+    }};
+}
+
 pub fn check(condition: bool, ctx: &str) -> Result<()> {
 
     if condition {
@@ -50,18 +73,16 @@ pub fn get_nb_nodes(topo: &Topology, config: &Config) -> Result<usize> {
 
 pub fn create_batch_partitioned(batch_size: usize, nb_partitions: usize) -> Vec<Transaction> {
     let mut batch = Vec::with_capacity(batch_size);
-    let mut address: u64 = 0;
     let chunks = (batch_size / nb_partitions) as u64;
 
     for i in 0..batch_size {
-        let tx = Transaction{
-            from: address / chunks,
-            to: nb_partitions as u64,
+        let mut tx = Transaction{
+            from: i as u64 / chunks,
+            to: ((nb_partitions + i) % (2 * nb_partitions)) as u64,
             amount: i as u64,
         };
 
         batch.push(tx);
-        address += 1;
     }
 
     return batch;
