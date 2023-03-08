@@ -5,7 +5,7 @@ use hwloc::{ObjectType, Topology};
 use tokio::time::Instant;
 
 use crate::config::Config;
-use crate::transaction::Transaction;
+use crate::transaction::{Instruction, Transaction, TransactionAddress};
 use crate::vm::ExecutionResult;
 
 // const DEBUG: bool = false;
@@ -71,15 +71,59 @@ pub fn get_nb_nodes(topo: &Topology, config: &Config) -> Result<usize> {
     }
 }
 
+pub fn account_creation_batch(batch_size: usize, nb_accounts: usize, amount: u64) -> Vec<Transaction> {
+    let mut batch = Vec::with_capacity(batch_size);
+    for i in 0..nb_accounts {
+        let create = Instruction::CreateAccount(i as u64, amount);
+        let tx = Transaction {
+            from: u64::MAX,
+            to: u64::MAX,
+            instructions: vec!(create),
+            // parameters: vec!()
+        };
+        batch.push(tx);
+    }
+
+    return batch;
+}
+
+fn transfer(from: TransactionAddress, to: TransactionAddress, amount: u64) -> Vec<Instruction> {
+    return vec!(
+        Instruction::Decrement(from, amount),
+        Instruction::Increment(to, amount),
+    );
+}
+
+pub fn transaction_loop(batch_size: usize, nb_account: usize) -> Vec<Transaction> {
+
+    let mut batch = Vec::with_capacity(batch_size);
+    for account in 0..(nb_account-1) {
+        let i = account as u64;
+        let next = (i + 1) % nb_account as u64;
+        let tx = Transaction {
+            from: account as u64,
+            to: next,
+            instructions: transfer(i, next, i),
+            // parameters: vec!()
+        };
+        batch.push(tx);
+    }
+
+    return batch;
+}
+
 pub fn create_batch_partitioned(batch_size: usize, nb_partitions: usize) -> Vec<Transaction> {
     let mut batch = Vec::with_capacity(batch_size);
     let chunks = (batch_size / nb_partitions) as u64;
 
     for i in 0..batch_size {
-        let mut tx = Transaction{
-            from: i as u64 / chunks,
-            to: ((nb_partitions + i) % (2 * nb_partitions)) as u64,
-            amount: i as u64,
+        let from = i as u64 / chunks;
+        let to = ((nb_partitions + i) % (2 * nb_partitions)) as u64;
+        let amount = 2 as u64;
+        let tx = Transaction{
+            from,
+            to,
+            instructions: transfer(from, to, amount),
         };
 
         batch.push(tx);
@@ -110,18 +154,23 @@ pub fn print_metrics(
     }
 
     // println!("Batch size: {}, tx processed: {}", batch_size, processed);
-    println!("Processed {} batches = {} txs in {:?}", nb_batches, processed, total_duration);
+    print_throughput(nb_batches, processed as usize, total_duration);
+    println!();
+    println!("Min latency is {:?}", min_latency);
+    println!("Max latency is {:?}", max_latency);
+    // println!("Average latency is {:?} µs", sum_latency.as_micros() / processed as u128);
+    println!("Average latency is {:?} ms", sum_latency.as_millis() / processed as u128);
+}
 
-    let micro_throughput = (processed as f64).div(total_duration.as_micros() as f64);
+pub fn print_throughput(nb_batches: usize, nb_transactions: usize, duration: Duration) {
+    println!("Processed {} batches = {} txs in {:?}",
+             nb_batches, nb_transactions, duration);
+
+    let micro_throughput = (nb_transactions as f64).div(duration.as_micros() as f64);
     let milli_throughput = micro_throughput.mul(1000.0);
     let throughput = milli_throughput.mul(1000.0);
 
     println!("Throughput is {} tx/µs", micro_throughput);
     println!("Throughput is {} tx/ms", milli_throughput);
     println!("Throughput is {} tx/s", throughput);
-    println!();
-    println!("Min latency is {:?}", min_latency);
-    println!("Max latency is {:?}", max_latency);
-    // println!("Average latency is {:?} µs", sum_latency.as_micros() / processed as u128);
-    println!("Average latency is {:?} ms", sum_latency.as_millis() / processed as u128);
 }

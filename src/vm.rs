@@ -1,14 +1,16 @@
+use std::collections::{HashMap, VecDeque};
 use anyhow::{Context, Result};
 use async_trait::async_trait;
 use tokio::sync::mpsc::{channel, Receiver, Sender};
 use tokio::time::Instant;
 
-use crate::transaction::{Transaction, TransactionOutput};
+use crate::transaction::{Instruction, Transaction, TransactionAddress, TransactionOutput};
 
 pub const CHANNEL_CAPACITY: usize = 200;
 
 pub type Batch = Vec<Transaction>;
 pub type Jobs = Vec<Transaction>;
+pub type BatchResult = Vec<TransactionOutput>;
 
 #[derive(Debug)]
 pub struct ExecutionResult {
@@ -18,7 +20,7 @@ pub struct ExecutionResult {
 
 #[async_trait]
 pub trait VM {
-    fn new(nb_workers: usize, batch_size: usize) -> Self;
+    fn new(nb_workers: usize, batch_size: usize) -> Self where Self: Sized;
 
     async fn prepare(&mut self);
 
@@ -138,5 +140,50 @@ impl<W> WorkerPool for W where W: VmWorker + Send {
         }
 
         return (tx_jobs, rx_results);
+    }
+}
+
+pub struct CPU;
+impl CPU{
+    pub fn execute(
+        instruction: &Instruction,
+        stack: &mut VecDeque<u64>,
+        memory: &mut  HashMap<TransactionAddress, u64>,
+    ) {
+        match instruction {
+            Instruction::CreateAccount(addr, balance) => {
+                memory.insert(*addr, *balance);
+            },
+            Instruction::Increment(addr, amount) => {
+                *memory.get_mut(&addr).unwrap() += amount;
+            },
+            Instruction::Decrement(addr, amount) => {
+                *memory.get_mut(&addr).unwrap() -= amount;
+            },
+            Instruction::Read(addr) => {
+                let value = *memory.get(&addr).unwrap();
+                stack.push_back(value);
+            },
+            Instruction::Write(addr) => {
+                let value = stack.pop_back().unwrap();
+                *memory.get_mut(&addr).unwrap() = value;
+            },
+            Instruction::Add() => {
+                let a = stack.pop_back().unwrap();
+                let b = stack.pop_back().unwrap();
+                stack.push_front(a + b);
+            },
+            Instruction::Sub() => {
+                let a = stack.pop_back().unwrap();
+                let b = stack.pop_back().unwrap();
+                stack.push_front(a - b);
+            },
+            Instruction::Push(amount) => {
+                stack.push_back(*amount);
+            },
+            Instruction::Pop() => {
+                stack.pop_back();
+            }
+        }
     }
 }

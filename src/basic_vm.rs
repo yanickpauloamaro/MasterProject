@@ -1,9 +1,10 @@
+use std::collections::{HashMap, VecDeque};
 use std::time::Duration;
 use tokio::sync::mpsc::{Receiver, Sender};
 use async_trait::async_trait;
 use anyhow::{Context, Error, Result};
-use crate::transaction::{Transaction, TransactionOutput};
-use crate::vm::{ExecutionResult, VM, VmWorker, WorkerPool};
+use crate::transaction::{Transaction, TransactionAddress, TransactionOutput};
+use crate::vm::{CPU, ExecutionResult, VM, VmWorker, WorkerPool};
 
 pub struct BasicVM {
     tx_jobs: Vec<Sender<Vec<Transaction>>>,
@@ -63,7 +64,8 @@ impl VM for BasicVM {
 // -------------------------------------------------------------------------------------------------
 pub struct BasicWorker {
     rx_jobs: Receiver<Vec<Transaction>>,
-    tx_results: Sender<(Vec<ExecutionResult>, Vec<Transaction>)>
+    tx_results: Sender<(Vec<ExecutionResult>, Vec<Transaction>)>,
+    pub data: HashMap<TransactionAddress , u64>
 }
 
 #[async_trait]
@@ -72,7 +74,8 @@ impl VmWorker for BasicWorker {
         rx_jobs: Receiver<Vec<Transaction>>,
         tx_results: Sender<(Vec<ExecutionResult>, Vec<Transaction>)>
     ) -> Self {
-        return BasicWorker{ rx_jobs, tx_results};
+        let data = HashMap::new();
+        return BasicWorker{ rx_jobs, data, tx_results};
     }
 
     async fn get_jobs(&mut self) -> Option<Vec<Transaction>> {
@@ -86,6 +89,12 @@ impl VmWorker for BasicWorker {
 
     fn execute(&mut self, tx: Transaction) -> Result<TransactionOutput, Transaction> {
         // TODO If it might conflict with a transaction from another worker, return the transaction
+
+        let mut stack = VecDeque::new();
+        for instr in tx.instructions.iter() {
+            CPU::execute(instr, &mut stack, &mut self.data);
+        }
+
         return Ok(TransactionOutput{ tx });
     }
 }
