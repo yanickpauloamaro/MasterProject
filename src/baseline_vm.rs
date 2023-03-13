@@ -31,7 +31,7 @@ impl VM for SerialVM {
                 CPU::execute(instr, &mut stack, &mut self.data);
             }
             let output = TransactionOutput{ tx };
-            let result = ExecutionResult{ output, execution_end: Instant::now()};
+            let result = ExecutionResult::Output;
             results.push(result);
         }
 

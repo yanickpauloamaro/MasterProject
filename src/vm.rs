@@ -5,6 +5,7 @@ use tokio::sync::mpsc::{channel, Receiver, Sender};
 use tokio::time::Instant;
 
 use crate::transaction::{Instruction, Transaction, TransactionAddress, TransactionOutput};
+use crate::wip::{Word, WorkerInput};
 
 pub const CHANNEL_CAPACITY: usize = 200;
 
@@ -12,10 +13,28 @@ pub type Batch = Vec<Transaction>;
 pub type Jobs = Vec<Transaction>;
 pub type BatchResult = Vec<TransactionOutput>;
 
+// #[derive(Debug)]
+// pub struct ExecutionResult {
+//     pub output: TransactionOutput,
+//     pub execution_end: Instant,
+// }
+
 #[derive(Debug)]
-pub struct ExecutionResult {
-    pub output: TransactionOutput,
-    pub execution_end: Instant,
+pub enum ExecutionResult {
+    Output,
+    Transaction(Transaction)
+}
+
+impl ExecutionResult {
+    pub fn todo() -> Self {
+        return ExecutionResult::Output;
+    }
+    pub fn is_done(&self) -> bool {
+        match self {
+            ExecutionResult::Output => true,
+            _ => false,
+        }
+    }
 }
 
 #[async_trait]
@@ -75,10 +94,7 @@ pub trait VmWorker {
                     for tx in batch {
                         match self.execute(tx) {
                             Ok(output) => {
-                                let result = ExecutionResult{
-                                    output,
-                                    execution_end: Instant::now(),
-                                };
+                                let result = ExecutionResult::Output;
                                 results.push(result);
                             },
                             Err(conflict) => {
@@ -148,13 +164,16 @@ impl CPU{
     pub fn execute(
         instruction: &Instruction,
         stack: &mut VecDeque<u64>,
-        memory: &mut  HashMap<TransactionAddress, u64>,
+        memory: &mut HashMap<TransactionAddress, u64>,
     ) {
         match instruction {
             Instruction::CreateAccount(addr, balance) => {
                 memory.insert(*addr, *balance);
             },
             Instruction::Increment(addr, amount) => {
+                if memory.get_mut(&addr).is_none() {
+                    println!("Addr = {}", addr);
+                }
                 *memory.get_mut(&addr).unwrap() += amount;
             },
             Instruction::Decrement(addr, amount) => {
@@ -167,6 +186,51 @@ impl CPU{
             Instruction::Write(addr) => {
                 let value = stack.pop_back().unwrap();
                 *memory.get_mut(&addr).unwrap() = value;
+            },
+            Instruction::Add() => {
+                let a = stack.pop_back().unwrap();
+                let b = stack.pop_back().unwrap();
+                stack.push_front(a + b);
+            },
+            Instruction::Sub() => {
+                let a = stack.pop_back().unwrap();
+                let b = stack.pop_back().unwrap();
+                stack.push_front(a - b);
+            },
+            Instruction::Push(amount) => {
+                stack.push_back(*amount);
+            },
+            Instruction::Pop() => {
+                stack.pop_back();
+            }
+        }
+    }
+
+    pub fn execute_array(
+        instruction: &Instruction,
+        stack: &mut VecDeque<u64>,
+        memory: &mut Vec<Word>,
+    ) {
+        match instruction {
+            Instruction::CreateAccount(addr, amount) => {
+                if memory.get_mut(*addr as usize).is_none() {
+                    println!("Address {}, memory size = ", addr);
+                }
+                *memory.get_mut(*addr as usize).unwrap() = *amount;
+            },
+            Instruction::Increment(addr, amount) => {
+                *memory.get_mut(*addr as usize).unwrap() += amount;
+            },
+            Instruction::Decrement(addr, amount) => {
+                *memory.get_mut(*addr as usize).unwrap() -= amount;
+            },
+            Instruction::Read(addr) => {
+                let value = *memory.get(*addr as usize).unwrap();
+                stack.push_back(value);
+            },
+            Instruction::Write(addr) => {
+                let value = stack.pop_back().unwrap();
+                *memory.get_mut(*addr as usize).unwrap() = value;
             },
             Instruction::Add() => {
                 let a = stack.pop_back().unwrap();

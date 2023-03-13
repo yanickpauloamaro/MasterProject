@@ -8,7 +8,7 @@ pub enum TransactionType {
 
 pub type TransactionAddress = u64;
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Transaction {
     pub from: TransactionAddress,
     pub to: TransactionAddress,
@@ -20,7 +20,7 @@ type ContractValue = u64;
 type Amount = u64;
 type Variable = u64;
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum Instruction {
     CreateAccount(TransactionAddress, Amount),
     Increment(TransactionAddress, Amount),

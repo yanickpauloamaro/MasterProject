@@ -1,3 +1,282 @@
+        // let to_process = batch.len();
+        // let mut transactions = Arc::new(batch);
+        // let mut results = Vec::with_capacity(batch.len());
+        //
+        // const CONFLICT: usize = usize::MAX;
+        // const DONE: usize = CONFLICT - 1;
+        // const NONE: usize = CONFLICT - 2;
+        //
+        // let mut next_worker = 0;
+        // let mut processed = 0;
+        //
+        // let mut next_transactions = Vec::with_capacity(transactions.len());
+        // let mut memory = &mut self.memory;
+        //
+        // loop {
+        //     let mut assigned_workers = vec![NONE; memory.len()];
+        //
+        //     // Assign addresses to workers
+        //     for tx in transactions.iter() {
+        //         let worker_from = assigned_workers[tx.from];
+        //         let worker_to = assigned_workers[tx.to];
+        //
+        //         let assigned = match (worker_from, worker_to) {
+        //             (NONE, NONE) => {
+        //                 let worker = next_worker;
+        //                 next_worker = (next_worker + 1) % self.nb_workers;
+        //                 assigned_workers[tx.from] = worker;
+        //                 assigned_workers[tx.to] = worker;
+        //                 worker
+        //             },
+        //             (NONE, worker) => {
+        //                 assigned_workers[tx.from] = worker;
+        //                 worker
+        //             },
+        //             (worker, NONE) => {
+        //                 assigned_workers[tx.to] = worker;
+        //                 worker
+        //             },
+        //             (a, b) if a == b => a,
+        //             (a, b) => CONFLICT,
+        //         };
+        //
+        //         if assigned == CONFLICT {
+        //             next_transactions.push(tx.clone());
+        //         } else {
+        //             // TODO Need to give access to memory to assigned worker
+        //         }
+        //     }
+        //
+        //     // Start workers
+        //     let mut handles = Vec::with_capacity(self.nb_workers);
+        //     for i in 0..self.nb_workers {
+        //         let handle = tokio::spawn(async {
+        //             let mut outputs = vec!();
+        //             let mut rest = vec!();
+        //             for tx in transactions.iter() {
+        //                if assigned_workers[tx.from] == i && assigned_workers[tx.to] == i {
+        //                    println!("Worker {} is handling {:?}", i, tx);
+        //                    let res = ExecutionResult::todo();
+        //                    match res {
+        //                        ExecutionResult::Output => outputs.push(res),
+        //                        ExecutionResult::Transaction(tx) => rest.push(tx)
+        //                    }
+        //                }
+        //            }
+        //
+        //             (outputs, rest)
+        //         });
+        //
+        //         handles.push(handle);
+        //     }
+        //
+        //     // Collect results
+        //     for handle in handles {
+        //         let (mut res, mut rest) = handle.await?;
+        //         results.append(&mut res);
+        //         next_transactions.append(&mut rest);
+        //     }
+        // }
+        //
+        // return Ok(results);
+{
+// let mut handles = Vec::with_capacity(self.nb_workers);
+// for i in 0..self.nb_workers {
+//
+//     // TODO Send to already running worker instead
+//     // TODO can create an Arc for the batch?
+//     let handle = tokio::spawn(async {
+//         let i = i;
+//         let mut worker_output = vec!();
+//         let mut worker_backlog = vec!();
+//         for tx in batch.iter() {
+//             if assigned_workers[tx.from as usize] == i &&
+//                 assigned_workers[tx.to as usize] == i {
+//                 println!("Worker {} is handling {:?}", i, tx);
+//                 let res = ExecutionResult::todo();
+//                 match res {
+//                     ExecutionResult::Output => worker_output.push(res),
+//                     ExecutionResult::Transaction(next_tx) => worker_backlog.push(next_tx)
+//                 }
+//             }
+//         }
+//
+//         (worker_output, worker_backlog)
+//     });
+//
+//     handles.push(handle);
+// }
+
+            // // Collect results -------------------------------------------------------------------------
+            // for handle in handles {
+            //     let (mut worker_output, mut worker_backlog) = handle.await?;
+            //     results.append(&mut worker_output);
+            //     backlog.append(&mut worker_backlog);
+            // }
+        }
+
+loop {
+// Assign transactions to workers ------------------------------------------------------
+for (index, tx) in transactions.iter().enumerate() {
+if self.assignment[index] == done {
+continue;
+}
+
+                if self.bloom_set.has(tx) {
+                    self.assignment[index] = conflict;
+                } else {
+                    self.bloom_set.insert(tx);
+                    self.assignment[index] = next_worker;
+                    next_worker += 1;
+                }
+            }
+
+            // Start parallel execution ------------------------------------------------------------
+            let assignments = Arc::new(self.assignment.clone());
+            for worker in self.tx_jobs.iter() {
+                let message = (self.memory.clone(), assignments.clone(), transactions.clone());
+            }
+
+            // Synchronize results -----------------------------------------------------------------
+            for _ in 0..self.nb_workers {
+                // TODO tx created during exec should be added to backlog somehow
+                let (mut result, _next_jobs) = self.rx_results.recv().await
+                    .ok_or(anyhow!("Unable to receive results from workers"))?;
+                processed += result.len();
+                self.results.append(&mut result);
+            }
+
+            for assignment in self.assignment.iter_mut() {
+                if *assignment != done && *assignment != conflict {
+                    *assignment = done;
+                }
+            }
+
+            if processed == to_process {
+                break;
+            }
+
+            // Clear conflicts for next iteration
+            self.bloom_set.clear();
+        }
+
+        // Reset the assignment for the next execution
+        self.assignment.fill(0);
+
+        let results = self.results
+            .drain(..self.results.len())
+            .collect();
+
+pub fn print_children(topo: &Topology, obj: &TopologyObject, depth: usize) {
+let padding = std::iter::repeat(" ").take(depth).collect::<String>();
+println!("{}{}: #{}", padding, obj, obj.os_index());
+
+    for i in 0..obj.arity() {
+        print_children(topo, obj.children()[i as usize], depth + 1);
+    }
+}
+fn print_tree_rec(topo: &Topology, obj: &TopologyObject, current_depth: u32, max_depth: u32) {
+if current_depth > max_depth {
+return;
+}
+let padding = std::iter::repeat(" ").take(current_depth as usize).collect::<String>();
+println!("{}{}: #{}", padding, obj, obj.os_index());
+// obj.first_child()
+}
+pub fn print_tree(topo: &Topology) {
+// eprintln!("Hello 1?");
+// let padding = std::iter::repeat(" ").take(depth).collect::<String>();
+// eprintln!("Hello 2?");
+// println!("{}{}: #{}", padding, obj, obj.os_index());
+// eprintln!("Hello 3?");
+// println!("Arity = {}", obj.arity());
+// for i in 0..obj.arity() {
+//     eprintln!("Hello {}?", 3 + i);
+//     print_children(topo, obj.children()[i as usize], depth + 1);
+// }
+
+    // let core_depth = topo.depth_or_below_for_type(&ObjectType::Core).unwrap();
+    // let vec = topo.objects_at_depth(1);
+    // for o in vec {
+    //     print_tree_rec(topo, o, 1, core_depth);
+    // }
+
+    // for i in 0..topo.depth() {
+    //     println!("*** Objects at level {}", i);
+    //
+    //     for (idx, object) in topo.objects_at_depth(i).iter().enumerate() {
+    //         println!("{}: {}", idx, object);
+    //         object.logical_index();
+    //         object.parent();
+    //         object.
+    //     }
+    // }
+    // let mut all_threads = topo.objects_at_depth(thread_depth);
+    // let mut tree = all_threads.pop().unwrap();
+    //
+    // loop {
+    //
+    // }
+    DumbTree::new().print();
+}
+
+struct DumbTree {
+topo: Topology,
+// layers: Vec<Vec<&'a TopologyObject>>,
+}
+impl DumbTree {
+fn new() -> Self {
+Self {
+topo: Topology::new()
+}
+}
+fn print(&self) {
+let core_depth = self.topo.depth_or_below_for_type(&ObjectType::Core).unwrap();
+println!("Core depth = {}", core_depth);
+// for core in self.topo.objects_at_depth(core_depth) {
+//     println!("Parent is: {}", core.parent().unwrap());
+// }
+let start_depth = 3;
+let root = self.topo.objects_at_depth(start_depth);
+// println!("Depth {}", start_depth);
+// for el in root.iter() {
+//     println!("Calling print_rec on {}", el);
+// }
+for object in root.iter() {
+
+            self.print_rec(start_depth, object);
+        }
+    }
+
+    fn print_rec(&self, depth: u32, object: &TopologyObject) {
+        let padding = std::iter::repeat("*").take(depth as usize).collect::<String>();
+        println!("{}{}: #{}", padding, object, object.os_index());
+
+        let next_depth = depth + 1;
+        // println!("next depth = {}", next_depth);
+        let children = self.topo.objects_at_depth(next_depth);
+        // println!("Depth {}", next_depth);
+        // for el in children.iter() {
+        //     println!("Calling print_rec on {}", *el);
+        // }
+        for child in children.iter() {
+            // print!("\tChild {}, name {}", child, child.);
+            match child.parent() {
+                Some(parent) => {
+                    println!("Parent is {}, current obj is {}", parent, object);
+                    if parent.logical_index() == object.logical_index() {
+                        self.print_rec(next_depth, child);
+                    }
+                },
+                None => {
+                    println!(" has no parent...");
+                    continue
+                }
+            }
+        }
+    }
+}
+
 async fn execute(backlog: Jobs) -> anyhow::Result<Vec<ExecutionResult>> {
     let mut results = vec!();
     for tx in backlog {
