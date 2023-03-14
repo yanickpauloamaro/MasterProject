@@ -79,9 +79,9 @@ impl WorkerBTokio {
         let (tx_job, mut rx_job) = tokio_channel(1);
         let (mut tx_result, rx_result) = tokio_channel(1);
         tokio::spawn(async move {
-            println!("Worker {} spawned (tokio)", index);
+            // println!("Worker {} spawned (tokio)", index);
             Self::execute(rx_job, tx_result, index).await;
-            println!("Worker {} stopped (tokio)", index);
+            // println!("Worker {} stopped (tokio)", index);
         });
 
         return Self {
@@ -159,9 +159,9 @@ impl WorkerBStd {
         let (tx_job, mut rx_job) = channel();
         let (mut tx_result, rx_result) = channel();
         thread::spawn(move || {
-            println!("Worker {} spawned (std::thread)", index);
+            // println!("Worker {} spawned (std::thread)", index);
             Self::execute(rx_job, tx_result, index);
-            println!("Worker {} stopped (std::thread)", index);
+            // println!("Worker {} stopped (std::thread)", index);
         });
 
         return Self {

@@ -1,7 +1,10 @@
 use std::io::Write;
+
+use rand::thread_rng;
+use rand::seq::SliceRandom;
 use hwloc::Topology;
 // use hwloc::{Topology, CPUBIND_PROCESS, TopologyObject, ObjectType};
-use anyhow::{self, Context, Result};
+use anyhow::{anyhow, Context, Result};
 use std::time::Duration;
 use tokio::time::Instant;
 use std::mem;
@@ -106,6 +109,58 @@ impl Workload for ConflictWorkload {
 
     fn load(&mut self) -> Vec<Jobs> {
         return self.jobs.clone();
+    }
+
+    fn check(&self) -> bool {
+        return true;
+    }
+}
+
+pub struct ZipfWorkload {
+    // prep: Vec<Jobs>,
+    // jobs: Vec<Jobs>,
+    nb_conflict_transaction: usize
+    // accounts: Vec<TransactionAddress>,
+}
+
+impl Workload for ZipfWorkload {
+    fn new(config: Config) -> Result<Self> where Self: Sized {
+        // TODO Add implement conflict parameter
+        let conflict_percentage = 0.0;
+
+        if config.address_space_size < 2 * config.batch_size {
+            return Err(
+                anyhow!("Address space is not large enough. Got {} locations but {} addresses",
+                    config.address_space_size, 2 * config.batch_size)
+            );
+        }
+
+        let mut workload: Jobs = Vec::with_capacity(config.batch_size);
+        let nb_conflict_transaction = (config.batch_size as f64 * conflict_percentage).ceil() as usize;
+        for _ in 0..nb_conflict_transaction {
+            // let tx: Transaction;
+            // workload.push(tx);
+        }
+        for _ in nb_conflict_transaction..config.batch_size {
+            // let tx: Transaction;
+            // workload.push(tx);
+        }
+
+        workload.shuffle(&mut thread_rng());
+
+        return Ok(Self{
+            nb_conflict_transaction,
+            // prep: vec!(prep),
+            // jobs: vec!(jobs),
+        })
+    }
+
+    fn init(&self) -> Vec<Jobs> {
+        return vec!();
+    }
+
+    fn load(&mut self) -> Vec<Jobs> {
+        return vec!();
     }
 
     fn check(&self) -> bool {
