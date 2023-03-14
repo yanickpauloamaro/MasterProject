@@ -5,7 +5,9 @@ use tokio::sync::mpsc::{channel, Receiver, Sender};
 use tokio::time::Instant;
 
 use crate::transaction::{Instruction, Transaction, TransactionAddress, TransactionOutput};
-use crate::wip::{Word, WorkerInput};
+use crate::vm_implementation::SharedMemory;
+use crate::wip::Word;
+use crate::worker_implementation::WorkerInput;
 
 pub const CHANNEL_CAPACITY: usize = 200;
 
@@ -161,7 +163,7 @@ impl<W> WorkerPool for W where W: VmWorker + Send {
 
 pub struct CPU;
 impl CPU{
-    pub fn execute(
+    pub fn execute_from_hashmap(
         instruction: &Instruction,
         stack: &mut VecDeque<u64>,
         memory: &mut HashMap<TransactionAddress, u64>,
@@ -206,7 +208,7 @@ impl CPU{
         }
     }
 
-    pub fn execute_array(
+    pub fn execute_from_array(
         instruction: &Instruction,
         stack: &mut VecDeque<u64>,
         memory: &mut Vec<Word>,
@@ -231,6 +233,50 @@ impl CPU{
             Instruction::Write(addr) => {
                 let value = stack.pop_back().unwrap();
                 *memory.get_mut(*addr as usize).unwrap() = value;
+            },
+            Instruction::Add() => {
+                let a = stack.pop_back().unwrap();
+                let b = stack.pop_back().unwrap();
+                stack.push_front(a + b);
+            },
+            Instruction::Sub() => {
+                let a = stack.pop_back().unwrap();
+                let b = stack.pop_back().unwrap();
+                stack.push_front(a - b);
+            },
+            Instruction::Push(amount) => {
+                stack.push_back(*amount);
+            },
+            Instruction::Pop() => {
+                stack.pop_back();
+            }
+        }
+    }
+
+    pub fn execute_from_shared(
+        instruction: &Instruction,
+        stack: &mut VecDeque<u64>,
+        memory: &mut SharedMemory,
+    ) {
+        match instruction {
+            Instruction::CreateAccount(addr, amount) => {
+                memory.set(*addr as usize, *amount);
+            },
+            Instruction::Increment(addr, amount) => {
+                let balance = memory.get(*addr as usize);
+                memory.set(*addr as usize, balance + *amount);
+            },
+            Instruction::Decrement(addr, amount) => {
+                let balance = memory.get(*addr as usize);
+                memory.set(*addr as usize, balance - *amount);
+            },
+            Instruction::Read(addr) => {
+                let value = memory.get(*addr as usize);
+                stack.push_back(value);
+            },
+            Instruction::Write(addr) => {
+                let value = stack.pop_back().unwrap();
+                memory.set(*addr as usize, value);
             },
             Instruction::Add() => {
                 let a = stack.pop_back().unwrap();

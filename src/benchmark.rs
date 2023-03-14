@@ -14,15 +14,16 @@ use crate::utils::{account_creation_batch, compatible, ContentionGenerator, crea
 use crate::vm::{Batch, ExecutionResult, Jobs, VM};
 use crate::config::Config;
 use crate::transaction::{Instruction, Transaction, TransactionAddress};
-use crate::vm_implementation::VMa;
-use crate::wip::{BloomVM, Executor, VMb};
+use crate::vm_implementation::{VMa, VMb, VMc};
+use crate::wip::{BloomVM, Executor};
 
 pub enum VmWrapper {
     // Basic(BasicVM),
     // Serial(SerialVM),
     // Bloom(BloomVM),
     A(VMa),
-    Test2(VMb)
+    B(VMb),
+    C(VMc)
 }
 
 impl VmWrapper {
@@ -32,8 +33,8 @@ impl VmWrapper {
             // Self::Bloom(vm) => vm.execute(backlog).await,
             // Self::Serial(vm) => vm.execute(backlog).await,
             Self::A(vm) => vm.execute(backlog).await,
-            Self::Test2(vm) => vm.execute(backlog).await,
-
+            Self::B(vm) => vm.execute(backlog).await,
+            Self::C(vm) => vm.execute(backlog).await,
         }
     }
 
@@ -43,7 +44,8 @@ impl VmWrapper {
             // Self::Bloom(vm) => vm.init(jobs).await,
             // Self::Serial(vm) => vm.execute(jobs).await,
             Self::A(vm) => vm.execute(jobs).await,
-            Self::Test2(vm) => vm.execute(jobs).await,
+            Self::B(vm) => vm.execute(jobs).await,
+            Self::C(vm) => vm.execute(jobs).await,
         }
     }
 
@@ -54,7 +56,8 @@ impl VmWrapper {
         // let vm = VmWrapper::Serial(SerialVM::new(0, config.batch_size));
         // let vm = VmWrapper::Bloom(BloomVM::new(nb_workers, batch_size));
         // let vm = VmWrapper::A(VMa::new(config.address_space_size)?);
-        let vm = VmWrapper::Test2(VMb::new(config.address_space_size, nb_nodes, config.batch_size)?);
+        let vm = VmWrapper::B(VMb::new(config.address_space_size, nb_nodes, config.batch_size)?);
+        // let vm = VmWrapper::C(VMc::new(config.address_space_size, nb_nodes, config.batch_size)?);
 
         return Ok(vm);
     }

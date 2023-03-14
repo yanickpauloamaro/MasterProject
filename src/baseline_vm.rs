@@ -28,7 +28,7 @@ impl VM for SerialVM {
         for tx in backlog {
             let mut stack = VecDeque::new();
             for instr in tx.instructions.iter() {
-                CPU::execute(instr, &mut stack, &mut self.data);
+                CPU::execute_from_hashmap(instr, &mut stack, &mut self.data);
             }
             let output = TransactionOutput{ tx };
             let result = ExecutionResult::Output;

@@ -92,7 +92,7 @@ impl VmWorker for BasicWorker {
 
         let mut stack = VecDeque::new();
         for instr in tx.instructions.iter() {
-            CPU::execute(instr, &mut stack, &mut self.data);
+            CPU::execute_from_hashmap(instr, &mut stack, &mut self.data);
         }
 
         return Ok(TransactionOutput{ tx });

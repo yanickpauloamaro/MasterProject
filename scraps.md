@@ -1,4 +1,200 @@
-        // let to_process = batch.len();
+    fn execute_rec(&mut self,
+                         mut results: Vec<ExecutionResult>,
+                         mut batch: Jobs,
+                         mut backlog: Jobs,
+                         mut address_to_worker: Vec<usize>
+    ) -> Result<Vec<ExecutionResult>> {
+        if batch.is_empty() {
+            return Ok(results);
+        }
+
+        // Assign jobs to workers ------------------------------------------------------------------
+        address_to_worker.fill(NONE);
+        let mut tx_to_worker = assign_workers(
+            self.nb_workers,
+            &batch,
+            &mut address_to_worker,
+            &mut backlog
+        );
+
+        // Execute in parallel ----------------------------------------------------------------
+        WorkerC::crossbeam(
+            self.nb_workers,
+            &mut results,
+            &mut batch,
+            &mut backlog,
+            &mut self.memory,
+            &tx_to_worker,
+        )?;
+
+        let mut next_backlog = batch;
+        next_backlog.clear();
+
+        return self.execute_rec(results, backlog, next_backlog, address_to_worker);
+    }
+
+#[async_recursion]
+    async fn execute_rec(&mut self,
+                         mut results: Vec<ExecutionResult>,
+                         mut batch: Jobs,
+                         mut backlog: Jobs,
+                         mut address_to_worker: Vec<usize>
+    ) -> Result<Vec<ExecutionResult>> {
+        if batch.is_empty() {
+            return Ok(results);
+        }
+
+        // Assign jobs to workers ------------------------------------------------------------------
+        // TODO Check that the memory accesses are really different?
+        address_to_worker.fill(NONE);
+        let mut tx_to_worker = assign_workers(
+            self.nb_workers,
+            &batch,
+            &mut address_to_worker,
+            &mut backlog
+        );
+
+        // Start parallel execution ----------------------------------------------------------------
+        let batch_arc = Arc::new(batch);
+        let tx_to_worker_arc = Arc::new(tx_to_worker);
+
+        for worker in self.workers.iter_mut() {
+            let worker_input = WorkerInput {
+                batch: batch_arc.clone(),
+                tx_to_worker: tx_to_worker_arc.clone(),
+                memory: self.memory.get_shared()
+            };
+
+            if let Err(e) = worker.send(worker_input).await {
+                println!("VM: Failed to send work to worker {}", worker.index);
+            }
+        }
+
+        // Collect results -------------------------------------------------------------------------
+        for worker in self.workers.iter_mut() {
+            let (worker_name, accessed,
+                mut worker_output, mut worker_backlog) = worker.receive().await?;
+            results.append(&mut worker_output);
+            backlog.append(&mut worker_backlog);
+        }
+
+        let mut next_backlog = Arc::try_unwrap(batch_arc).unwrap();
+        next_backlog.clear();
+
+        return self.execute_rec(results, backlog, next_backlog, address_to_worker).await;
+    }
+// let mut tx_to_worker = vec![NONE; batch.len()];
+// let mut next_worker = 0;
+//
+// for (index, tx) in batch.iter().enumerate() {
+//     let from = tx.from as usize;
+//     let to = tx.to as usize;
+//
+//     let worker_from = address_to_worker[from];
+//     let worker_to = address_to_worker[to];
+//
+//     let assigned = match (worker_from, worker_to) {
+//         (NONE, NONE) => {
+//             // println!("Neither address is assigned: from={}, to={}", from, to);
+//             let worker = next_worker;
+//             next_worker = (next_worker + 1) % self.nb_workers;
+//             address_to_worker[from] = worker;
+//             address_to_worker[to] = worker;
+//             worker
+//         },
+//         (worker, NONE) => {
+//             // println!("First address is assigned to {}: from={}, to={}", worker, from, to);
+//             address_to_worker[to] = worker;
+//             worker
+//         },
+//         (NONE, worker) => {
+//             // println!("Second address is assigned to {}: from={}, to={}", worker, from, to);
+//             address_to_worker[from] = worker;
+//             worker
+//         },
+//         (a, b) if a == b => {
+//             // println!("Both addresses are assigned to {}: from={}, to={}", a, from, to);
+//             a
+//         },
+//         (a, b) => {
+//             // println!("Both addresses are assigned to different workers: from={}->{}, to={}->{}", from, a, to, b);
+//             CONFLICT
+//         },
+//     };
+//
+//     if assigned == CONFLICT {
+//         backlog.push(tx.clone());
+//     } else {
+//         tx_to_worker[index] = assigned;
+//     }
+// }
+
+        // // Start parallel execution ----------------------------------------------------------------
+        // let mut execution_errors = WorkerC::crossbeam(
+        //     self.nb_workers,
+        //     &mut results,
+        //     &mut batch,
+        //     &mut backlog,
+        //     &mut self.mut_memory,
+        //     &tx_to_worker,
+        // );
+        // if !execution_errors.is_empty() {
+        //     return Err(anyhow!("There where errors during execution: {:?}", execution_errors));
+        // }
+        // let mut next_backlog = batch;
+        // next_backlog.clear();
+        //
+        // return self.execute_rec(results, backlog, next_backlog, address_to_worker).await;
+{
+
+            // let mut execution_errors = vec!();
+            // thread::scope(|s| {
+            //     let mut memory = self.mut_memory.get_shared();
+            //     let mut handles = Vec::with_capacity(self.nb_workers);
+            //
+            //     for (worker_index, _) in self.workers.iter().enumerate() {
+            //         let assignment = batch.iter().zip(tx_to_worker.iter());
+            //
+            //         handles.push(s.spawn(move |_| {
+            //             let mut accessed = vec![0; assignment.len()];
+            //             let worker_name = format!("Worker {}", worker_index);
+            //
+            //             let mut stack: VecDeque<Word> = VecDeque::new();
+            //             let mut worker_output = vec!();
+            //             let mut worker_backlog = vec!();
+            //
+            //             for (tx_index, (tx, assigned_worker)) in assignment.clone().enumerate() {
+            //                 if *assigned_worker == worker_index {
+            //                     stack.clear();
+            //                     for instr in tx.instructions.iter() {
+            //                         CPU::execute_from_shared(instr, &mut stack, &mut memory);
+            //                     }
+            //
+            //                     let result = ExecutionResult::todo();
+            //                     worker_output.push(result);
+            //                     accessed[tx_index] = 1;
+            //                 }
+            //             }
+            //
+            //             (worker_name, accessed, worker_output, worker_backlog)
+            //         }));
+            //     }
+            //
+            //     for handle in handles {
+            //         match handle.join() {
+            //             Ok((worker_name, accessed, mut worker_output, mut worker_backlog)) => {
+            //                 println!("{}: accesses: {:?}", worker_name, accessed);
+            //                 results.append(&mut worker_output);
+            //                 backlog.append(&mut worker_backlog);
+            //             },
+            //             Err(e) => {
+            //                 execution_errors.push(e);
+            //             }
+            //         }
+            //     }
+            // });
+        }
+// let to_process = batch.len();
         // let mut transactions = Arc::new(batch);
         // let mut results = Vec::with_capacity(batch.len());
         //
