@@ -11,6 +11,7 @@ use std::mem;
 use async_trait::async_trait;
 use bloomfilter::Bloom;
 use num_traits::FromPrimitive;
+use tokio::runtime::Runtime;
 use crate::baseline_vm::SerialVM;
 use crate::basic_vm::BasicVM;
 use crate::utils::{account_creation_batch, compatible, ContentionGenerator, create_batch_from_generator, create_batch_partitioned, get_nb_nodes, print_metrics, print_throughput, transaction_loop, transfer};
@@ -19,36 +20,37 @@ use crate::config::Config;
 use crate::transaction::{Instruction, Transaction, TransactionAddress};
 use crate::vm_implementation::{VMa, VMb, VMc};
 use crate::wip::{BloomVM, Executor};
+use crate::worker_implementation::WorkerBTokio;
 
 pub enum VmWrapper {
     // Basic(BasicVM),
     // Serial(SerialVM),
     // Bloom(BloomVM),
     A(VMa),
-    B(VMb),
+    B(VMb<WorkerBTokio>),
     C(VMc)
 }
 
 impl VmWrapper {
-    async fn execute(&mut self, mut backlog: Jobs) -> Result<Vec<ExecutionResult>> {
+    fn execute(&mut self, mut backlog: Jobs) -> Result<Vec<ExecutionResult>> {
         match self {
             // Self::Basic(vm) => vm.execute(backlog).await,
             // Self::Bloom(vm) => vm.execute(backlog).await,
             // Self::Serial(vm) => vm.execute(backlog).await,
-            Self::A(vm) => vm.execute(backlog).await,
-            Self::B(vm) => vm.execute(backlog).await,
-            Self::C(vm) => vm.execute(backlog).await,
+            Self::A(vm) => vm.execute(backlog),
+            Self::B(vm) => vm.execute(backlog),
+            Self::C(vm) => vm.execute(backlog),
         }
     }
 
-    async fn init(&mut self, mut jobs: Jobs) -> Result<Vec<ExecutionResult>> {
+    fn init(&mut self, mut jobs: Jobs) -> Result<Vec<ExecutionResult>> {
         match self {
             // Self::Basic(vm) => Ok(vec!()),
             // Self::Bloom(vm) => vm.init(jobs).await,
             // Self::Serial(vm) => vm.execute(jobs).await,
-            Self::A(vm) => vm.execute(jobs).await,
-            Self::B(vm) => vm.execute(jobs).await,
-            Self::C(vm) => vm.execute(jobs).await,
+            Self::A(vm) => vm.execute(jobs),
+            Self::B(vm) => vm.execute(jobs),
+            Self::C(vm) => vm.execute(jobs),
         }
     }
 
@@ -58,6 +60,7 @@ impl VmWrapper {
         let nb_nodes = get_nb_nodes(&topo, config)?;
         // let vm = VmWrapper::Serial(SerialVM::new(0, config.batch_size));
         // let vm = VmWrapper::Bloom(BloomVM::new(nb_workers, batch_size));
+
         // let vm = VmWrapper::A(VMa::new(config.address_space_size)?);
         let vm = VmWrapper::B(VMb::new(config.address_space_size, nb_nodes, config.batch_size)?);
         // let vm = VmWrapper::C(VMc::new(config.address_space_size, nb_nodes, config.batch_size)?);
@@ -278,58 +281,54 @@ impl Workload for ContentionWorkload {
     }
 }
 
-#[async_trait]
 pub trait Benchmark {
-    async fn run(config: Config, nb_iter: usize) -> Result<()>;
+    fn run(config: Config, nb_iter: usize) -> Result<()>;
 }
 
-#[async_trait]
 impl<L: 'static> Benchmark for L where L: Workload + Send  {
     // TODO Include VM choice as parameter in config
-    async fn run(config: Config, nb_iter: usize) -> Result<()>
+    fn run(config: Config, nb_iter: usize) -> Result<()>
     {
         // Setup ---------------------------------------------------------------------------------------
         let mut vm = VmWrapper::new_vm(&config)?;
 
         let mut workload = L::new(config)?;
 
-        return tokio::spawn(async move {
-            // Preparation -----------------------------------------------------------------------------
-            print!("Preparing workload...");
-            let prep_start = Instant::now();
-            let prep = workload.init();
-            for batch in prep {
-                // vm.execute(batch).await?;
-                vm.init(batch).await?;
-            }
-            println!("Done. Took {:?}", prep_start.elapsed());
+        // Preparation -----------------------------------------------------------------------------
+        print!("Preparing workload...");
+        let prep_start = Instant::now();
+        let prep = workload.init();
+        for batch in prep {
+            // vm.execute(batch).await?;
+            vm.init(batch)?;
+        }
+        println!("Done. Took {:?}", prep_start.elapsed());
 
-            // Benchmark ---------------------------------------------------------------------------
+        // Benchmark ---------------------------------------------------------------------------
+        println!();
+        println!("Benchmarking:");
+        for iter in 0..nb_iter {
+            println!("Iteration {}:", iter);
+            let load = workload.load();
+            let nb_batches = load.len();
+            let mut nb_transactions = 0;
+
+            let start = Instant::now();
+            for batch in load {
+                nb_transactions += batch.len();
+
+                let result = vm.execute(batch)?;
+            }
+            let duration = start.elapsed();
+
+            if workload.check() {
+                print_throughput(nb_batches, nb_transactions, duration);
+            } else {
+                println!("Incorrect benchmark result");
+            }
             println!();
-            println!("Benchmarking:");
-            for iter in 0..nb_iter {
-                println!("Iteration {}:", iter);
-                let load = workload.load();
-                let nb_batches = load.len();
-                let mut nb_transactions = 0;
+        }
 
-                let start = Instant::now();
-                for batch in load {
-                    nb_transactions += batch.len();
-
-                    let result = vm.execute(batch).await?;
-                }
-                let duration = start.elapsed();
-
-                if workload.check() {
-                    print_throughput(nb_batches, nb_transactions, duration);
-                } else {
-                    println!("Incorrect benchmark result");
-                }
-                println!();
-            }
-
-            Ok(())
-        }).await?;
+        Ok(())
     }
 }

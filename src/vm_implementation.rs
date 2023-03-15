@@ -7,7 +7,7 @@ use async_recursion::async_recursion;
 use crate::transaction::TransactionOutput;
 use crate::vm::{CPU, ExecutionResult, Jobs};
 use crate::wip::{assign_workers, Executor, NONE, Word};
-use crate::worker_implementation::{WorkerBStd, WorkerBTokio, WorkerC, WorkerInput};
+use crate::worker_implementation::{WorkerB, WorkerBStd, WorkerBTokio, WorkerC, WorkerInput};
 
 //region VM memory =================================================================================
 #[derive(Debug)]
@@ -79,9 +79,8 @@ impl VMa {
     }
 }
 
-#[async_trait]
 impl Executor for VMa {
-    async fn execute(&mut self, mut backlog: Jobs) -> anyhow::Result<Vec<ExecutionResult>> {
+    fn execute(&mut self, mut backlog: Jobs) -> Result<Vec<ExecutionResult>> {
         let mut results = Vec::with_capacity(backlog.len());
         let mut stack = VecDeque::new();
         for tx in backlog {
@@ -99,28 +98,25 @@ impl Executor for VMa {
 }
 //endregion
 
-//region Parallel VM tokio/std =====================================================================
-pub struct VMb {
+//region Parallel VM with background workers =======================================================
+pub struct VMb<W> where W: WorkerB + Send + Sized {
     memory: VmMemory,
     nb_workers: usize,
-    workers: Vec<WorkerBTokio>,
-    // workers: Vec<WorkerBStd>,
+    workers: Vec<W>,
 }
 
-impl VMb {
+impl<W: WorkerB + Send + Sized> VMb<W> {
     pub fn new(memory_size: usize, nb_workers: usize, batch_size: usize) -> anyhow::Result<Self> {
         let memory = VmMemory::new(memory_size);
         let mut workers = Vec::with_capacity(nb_workers);
-        for index in 0..nb_workers { workers.push(WorkerBTokio::new(index)); }
-        // for index in 0..nb_workers { workers.push(WorkerBStd::new(index)); }
+        for index in 0..nb_workers { workers.push(W::new(index)); }
         let vm = Self{ memory, nb_workers, workers };
         return Ok(vm);
     }
 }
 
-#[async_trait]
-impl Executor for VMb {
-    async fn execute(&mut self, mut batch: Jobs) -> anyhow::Result<Vec<ExecutionResult>> {
+impl<W: WorkerB + Send + Sized> Executor for VMb<W> {
+    fn execute(&mut self, mut batch: Jobs) -> anyhow::Result<Vec<ExecutionResult>> {
         let mut results = Vec::with_capacity(batch.len());
         let mut backlog = Vec::with_capacity(batch.len());
         let mut address_to_worker = vec![usize::MAX; self.memory.len()];
@@ -152,15 +148,14 @@ impl Executor for VMb {
                     memory: self.memory.get_shared()
                 };
 
-                if let Err(e) = worker.send(worker_input).await {
-                    println!("VM: Failed to send work to worker {}: {:?}", worker.index, e);
+                if let Err(e) = worker.send(worker_input) {
+                    println!("VM: Failed to send work to worker {}: {:?}", worker.get_index(), e);
                 }
             }
 
             // Collect results -------------------------------------------------------------------------
-            for worker in self.workers.iter_mut() {
-                let (worker_name, accessed,
-                    mut worker_output, mut worker_backlog) = worker.receive().await?;
+            for (worker_index, worker) in self.workers.iter_mut().enumerate() {
+                let (accessed, mut worker_output, mut worker_backlog) = worker.receive()?;
                 results.append(&mut worker_output);
                 backlog.append(&mut worker_backlog);
             }
@@ -188,9 +183,8 @@ impl VMc {
     }
 }
 
-#[async_trait]
 impl Executor for VMc {
-    async fn execute(&mut self, mut batch: Jobs) -> Result<Vec<ExecutionResult>> {
+    fn execute(&mut self, mut batch: Jobs) -> Result<Vec<ExecutionResult>> {
         let mut results = Vec::with_capacity(batch.len());
         let mut backlog = Vec::with_capacity(batch.len());
         let mut address_to_worker = vec![usize::MAX; self.memory.len()];

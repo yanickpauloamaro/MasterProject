@@ -32,9 +32,8 @@ pub const CONFLICT: usize = usize::MAX;
 pub const DONE: usize = CONFLICT - 1;
 pub const NONE: usize = CONFLICT - 2;
 
-#[async_trait]
 pub trait Executor {
-    async fn execute(&mut self, mut backlog: Jobs) -> Result<Vec<ExecutionResult>> {
+    fn execute(&mut self, mut backlog: Jobs) -> Result<Vec<ExecutionResult>> {
         todo!();
     }
 }

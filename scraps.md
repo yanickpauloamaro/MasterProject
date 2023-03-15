@@ -1,4 +1,153 @@
-    fn execute_rec(&mut self,
+
+// #[tokio::main]
+pub fn benchmark_name(c: &mut Criterion) {
+// let batch_size: usize = 64000;
+// let nb_senders: usize = 4;
+// c.bench_function("batch creation 64000 4", |b|
+//     b.iter(|| create_batch_partitioned(black_box(batch_size), black_box(nb_senders)))
+// );
+
+    // b.iter_batched(|| {
+    //     let mut mf : Vec<Vec<u8>> = (0..*h).map(|_| iter::repeat(EMPTY).take(*w).collect::<Vec<_>>()).collect();
+    //     plant_mines(&mut mf, &mut rng);
+    //     mf
+    // }, |mf| annotate(&mf), BatchSize::SmallInput);
+
+    const PARTITION_SIZE: usize = 4;
+
+    {
+        // let batch_size = 128;
+        // let memory_size = 2 * batch_size;
+        // let cores: Vec<usize> = vec![1, 2];
+        // let conflict_rate = 0.0;
+        //
+        // let mut group = c.benchmark_group("benchmark_name");
+        //
+        // let rt = Runtime::new().unwrap();
+        // let _guard = rt.enter();
+        //
+        // for nb_cores in cores.iter() {
+        //     group.throughput(Throughput::Elements(batch_size as u64));
+        //     // One time setup: ---------------------------------------------------------------------
+        //     let vm = RefCell::new(
+        //         VMb::<WorkerBTokio>::new(memory_size, *nb_cores, batch_size).unwrap()
+        //     );
+        //
+        //     group.bench_function(
+        //         BenchmarkId::from_parameter(nb_cores), |b| {
+        //             // Per sample setup (might be multiple iteration) ------------------------------
+        //
+        //             b.to_async(&rt).iter_batched(
+        //                 || {
+        //                     // Input creation (per iteration?)
+        //                     // TODO vm.clear()?
+        //                     // TODO use conflict rate to generate input
+        //                     create_batch_partitioned(batch_size, PARTITION_SIZE)
+        //                 },
+        //                 |input| async {
+        //                     // Measured code (includes the time needed to drop the result)
+        //                     let _ = vm.borrow_mut().execute(input);
+        //                     ()
+        //                 },
+        //                 BatchSize::SmallInput
+        //             )
+        //         }
+        //     );
+        // }
+        // group.finish();
+    }
+
+    // Test number of core =========================================================================
+    {
+        // let batch_size = 128;
+        // let memory_size = 2 * batch_size;
+        // let cores: Vec<usize> = vec![1, 2];
+        // let conflict_rate = 0.0;
+        //
+        // let mut group = c.benchmark_group("benchmark_name");
+        // for nb_cores in cores.iter() {
+        //     group.throughput(Throughput::Elements(batch_size as u64));
+        //     group.bench_function(
+        //         BenchmarkId::from_parameter(nb_cores), |b| {
+        //             let tokio_runtime = Runtime::new().unwrap();
+        //             b.to_async(tokio_runtime).iter_batched(
+        //                 || -> (VMb<WorkerBTokio>, Vec<Transaction>) {
+        //                     // TODO test for different vms (use VmWrapper)
+        //                     let vm = VMb::new(memory_size, *nb_cores, batch_size).unwrap();
+        //                     // TODO use conflict rate to generate input
+        //                     let batch = create_batch_partitioned(batch_size, PARTITION_SIZE);
+        //
+        //                     (vm, batch)
+        //                 },
+        //                 |(mut vm, input)| async move { vm.execute(input).await; () },
+        //                 BatchSize::SmallInput
+        //             )
+        //         }
+        //     );
+        // }
+        // group.finish();
+    }
+
+    // Test batch size =============================================================================
+    {
+        // let batch_sizes: Vec<usize> = vec![128, 256, 512];
+        // let nb_cores = 4;
+        // let conflict_rate = 0.0;
+        //
+        // let mut group = c.benchmark_group("benchmark_name");
+        // for batch_size in batch_sizes.iter() {
+        //     let memory_size = 2 * batch_size;
+        //     // TODO test for different vms (use VmWrapper)
+        //     let mut vm = VMb::new(memory_size, nb_cores, *batch_size).unwrap();
+        //
+        //     group.throughput(Throughput::Elements(*batch_size as u64));
+        //     group.bench_function(
+        //         BenchmarkId::from_parameter(nb_cores), |b| {
+        //             b.iter_batched(
+        //                 || -> Vec<Transaction> {
+        //                     // TODO use conflict rate to generate input
+        //                     create_batch_partitioned(*batch_size, PARTITION_SIZE)
+        //                 },
+        //                 |input| { vm.execute(input); () },
+        //                 BatchSize::SmallInput
+        //             )
+        //         }
+        //     );
+        // }
+        // group.finish();
+    }
+
+    // Test conflict rate ==========================================================================
+    {
+        // let batch_size = 128;
+        // let memory_size = 2 * batch_size;
+        // let nb_cores = 4;
+        // let conflict_rates = vec![0.0, 0.01, 0.1, 0.5];
+        //
+        // let mut group = c.benchmark_group("benchmark_name");
+        // // TODO test for different vms (use VmWrapper)
+        // let mut vm = VMb::new(memory_size, nb_cores, batch_size).unwrap();
+        // for conflict_rate in conflict_rates.iter() {
+        //
+        //     group.throughput(Throughput::Elements(batch_size as u64));
+        //     group.bench_function(
+        //         BenchmarkId::from_parameter(nb_cores), |b| {
+        //             b.iter_batched(
+        //                 || -> Vec<Transaction> {
+        //                     // TODO use conflict rate to generate input
+        //                     create_batch_partitioned(batch_size, PARTITION_SIZE)
+        //                 },
+        //                 |input| { vm.execute(input); () },
+        //                 BatchSize::SmallInput
+        //             )
+        //         }
+        //     );
+        // }
+        // group.finish();
+    }
+}
+
+fn execute_rec(&mut self,
                          mut results: Vec<ExecutionResult>,
                          mut batch: Jobs,
                          mut backlog: Jobs,

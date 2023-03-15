@@ -7,6 +7,8 @@ use crossbeam_utils::thread as crossbeam;
 
 use std::collections::VecDeque;
 use anyhow::{anyhow, Context, Result};
+use async_trait::async_trait;
+use tokio::runtime::Handle;
 use crate::transaction::Transaction;
 use crate::vm::{CPU, ExecutionResult, Jobs};
 use crate::vm_implementation::{SharedMemory, VmMemory};
@@ -19,7 +21,48 @@ pub struct WorkerInput {
     pub memory: SharedMemory,
 }
 
-pub type WorkerOutput = (String, Vec<usize>, Vec<ExecutionResult>, Vec<Transaction>);
+pub type WorkerOutput = (Vec<usize>, Vec<ExecutionResult>, Vec<Transaction>);
+
+pub trait WorkerB {
+
+    fn new(index: usize) -> Self;
+
+    fn get_index(&self) -> usize;
+
+    fn send(&mut self, jobs: WorkerInput) -> Result<()>;
+
+    fn receive(&mut self) -> Result<WorkerOutput>;
+
+    fn process_job(job: WorkerInput, worker_index: usize) -> WorkerOutput {
+
+        let mut shared_memory = job.memory;
+        let batch = job.batch;
+        let tx_to_worker = job.tx_to_worker;
+
+        let assignment = batch.iter().zip(tx_to_worker.iter());
+
+        let mut accessed = vec![0; assignment.len()];
+        let worker_name = format!("Worker {}", worker_index);
+
+        let mut stack: VecDeque<Word> = VecDeque::new();
+        let mut worker_output = vec!();
+        let mut worker_backlog = vec!();
+
+        for (tx_index, (tx, assigned_worker)) in assignment.enumerate() {
+            if *assigned_worker == worker_index {
+                stack.clear();
+                for instr in tx.instructions.iter() {
+                    CPU::execute_from_shared(instr, &mut stack, &mut shared_memory);
+                }
+                let result = ExecutionResult::todo();
+                worker_output.push(result);
+                accessed[tx_index] = 1;
+            }
+        }
+
+        return (accessed, worker_output, worker_backlog);
+    }
+}
 
 //region tokio vm worker ===========================================================================
 pub struct WorkerBTokio {
@@ -29,39 +72,14 @@ pub struct WorkerBTokio {
 }
 
 impl WorkerBTokio {
-
-    pub async fn execute(mut rx_job: TokioReceiver<WorkerInput>, tx_result: TokioSender<WorkerOutput>, index: usize) {
+    pub async fn execute(mut rx_job: TokioReceiver<WorkerInput>, tx_result: TokioSender<WorkerOutput>, worker_index: usize) {
         loop {
             match rx_job.recv().await {
                 Some(job) => {
-                    let mut shared_memory = job.memory;
-                    let batch = job.batch;
-                    let tx_to_worker = job.tx_to_worker;
+                    let result = Self::process_job(job, worker_index);
 
-                    let assignment = batch.iter().zip(tx_to_worker.iter());
-
-                    let mut accessed = vec![0; assignment.len()];
-                    let worker_name = format!("Worker {}", index);
-
-                    let mut stack: VecDeque<Word> = VecDeque::new();
-                    let mut worker_output = vec!();
-                    let mut worker_backlog = vec!();
-
-                    for (tx_index, (tx, assigned_worker)) in assignment.enumerate() {
-                        if *assigned_worker == index {
-                            stack.clear();
-                            for instr in tx.instructions.iter() {
-                                CPU::execute_from_shared(instr, &mut stack, &mut shared_memory);
-                            }
-                            let result = ExecutionResult::todo();
-                            worker_output.push(result);
-                            accessed[tx_index] = 1;
-                        }
-                    }
-
-                    let result = (worker_name, accessed, worker_output, worker_backlog);
                     if let Err(e) = tx_result.send(result).await {
-                        println!("Worker {} can't send result: {}", index, e);
+                        println!("Worker {} can't send result: {}", worker_index, e);
                         return;
                     }
                 },
@@ -71,7 +89,10 @@ impl WorkerBTokio {
             }
         }
     }
-    pub fn new(
+}
+
+impl WorkerB for WorkerBTokio {
+    fn new(
         index: usize,
     ) -> Self {
 
@@ -91,12 +112,16 @@ impl WorkerBTokio {
         };
     }
 
-    pub async fn send(&mut self, jobs: WorkerInput) -> Result<()> {
-        self.tx_job.send(jobs).await.context("Failed to send job to tokio worker")
+    fn get_index(&self) -> usize {
+        return self.index;
     }
 
-    pub async fn receive(&mut self) -> Result<WorkerOutput> {
-        self.rx_result.recv().await.context("Failed to receive result from tokio worker")
+    fn send(&mut self, jobs: WorkerInput) -> Result<()> {
+        self.tx_job.blocking_send(jobs).context("Failed to send job to tokio worker")
+    }
+
+    fn receive(&mut self) -> Result<WorkerOutput> {
+        self.rx_result.blocking_recv().context("Failed to receive result from tokio worker")
     }
 }
 //endregion
@@ -109,39 +134,14 @@ pub struct WorkerBStd {
 }
 
 impl WorkerBStd {
-
-    pub fn execute(mut rx_job: Receiver<WorkerInput>, tx_result: Sender<WorkerOutput>, index: usize) {
+    pub fn execute(mut rx_job: Receiver<WorkerInput>, tx_result: Sender<WorkerOutput>, worker_index: usize) {
         loop {
             match rx_job.recv() {
                 Ok(job) => {
-                    let mut shared_memory = job.memory;
-                    let batch = job.batch;
-                    let tx_to_worker = job.tx_to_worker;
+                    let result = Self::process_job(job, worker_index);
 
-                    let assignment = batch.iter().zip(tx_to_worker.iter());
-
-                    let mut accessed = vec![0; assignment.len()];
-                    let worker_name = format!("Worker {}", index);
-
-                    let mut stack: VecDeque<Word> = VecDeque::new();
-                    let mut worker_output = vec!();
-                    let mut worker_backlog = vec!();
-
-                    for (tx_index, (tx, assigned_worker)) in assignment.enumerate() {
-                        if *assigned_worker == index {
-                            stack.clear();
-                            for instr in tx.instructions.iter() {
-                                CPU::execute_from_shared(instr, &mut stack, &mut shared_memory);
-                            }
-                            let result = ExecutionResult::todo();
-                            worker_output.push(result);
-                            accessed[tx_index] = 1;
-                        }
-                    }
-
-                    let result = (worker_name, accessed, worker_output, worker_backlog);
                     if let Err(e) = tx_result.send(result) {
-                        println!("Worker {} can't send result: {}", index, e);
+                        println!("Worker {} can't send result: {}", worker_index, e);
                         return;
                     }
                 },
@@ -151,7 +151,10 @@ impl WorkerBStd {
             }
         }
     }
-    pub fn new(
+}
+
+impl WorkerB for WorkerBStd {
+    fn new(
         index: usize,
     ) -> Self {
 
@@ -171,11 +174,15 @@ impl WorkerBStd {
         };
     }
 
-    pub async fn send(&mut self, jobs: WorkerInput) -> Result<()> {
+    fn get_index(&self) -> usize {
+        return self.index;
+    }
+
+    fn send(&mut self, jobs: WorkerInput) -> Result<()> {
         self.tx_job.send(jobs).context("Failed to send")
     }
 
-    pub async fn receive(&mut self) -> Result<WorkerOutput> {
+    fn receive(&mut self) -> Result<WorkerOutput> {
         self.rx_result.recv().context("Failed to receive")
     }
 }
@@ -223,13 +230,13 @@ impl WorkerC {
                         }
                     }
 
-                    (worker_name, accessed, worker_output, worker_backlog)
+                    (accessed, worker_output, worker_backlog)
                 }));
             }
 
-            for handle in handles {
+            for (worker_index, handle) in handles.into_iter().enumerate() {
                 match handle.join() {
-                    Ok((worker_name, accessed, mut worker_output, mut worker_backlog)) => {
+                    Ok((accessed, mut worker_output, mut worker_backlog)) => {
                         results.append(&mut worker_output);
                         backlog.append(&mut worker_backlog);
                     },
@@ -238,13 +245,13 @@ impl WorkerC {
                     }
                 }
             }
-        });
+        }).or(Err(anyhow!("Unable to join crossbeam scope")))?;
 
         if execution_errors.is_empty() {
             return Ok(());
         }
 
-        return Err(anyhow!("Some error occurred during crossbeam execution: {:?}", execution_errors));
+        return Err(anyhow!("Some error occurred during parallel execution: {:?}", execution_errors));
     }
 }
 //endregion
