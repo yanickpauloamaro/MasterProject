@@ -22,8 +22,8 @@ fn main() -> Result<()>{
     // let core_ids = core_affinity::get_core_ids().unwrap();
     // println!("Core ids: {:?}", core_ids);
 
-    let rt = Runtime::new().unwrap();
-    let _guard = rt.enter();
+    // let rt = Runtime::new().unwrap();
+    // let _guard = rt.enter();
 
     // let _ = BasicWorkload::run(config, 1).await;
     // let _ = ContentionWorkload::run(config, 1).await;

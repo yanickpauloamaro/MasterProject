@@ -27,7 +27,7 @@ pub enum VmWrapper {
     // Serial(SerialVM),
     // Bloom(BloomVM),
     A(VMa),
-    B(VMb<WorkerBStd>),
+    B(VMb<WorkerBTokio>),
     C(VMc)
 }
 

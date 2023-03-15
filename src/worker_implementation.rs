@@ -8,7 +8,7 @@ use core_affinity::{CoreId};
 use std::collections::VecDeque;
 use anyhow::{anyhow, Context, Result};
 use async_trait::async_trait;
-use tokio::runtime::Handle;
+use tokio::runtime::{Handle, Runtime};
 use crate::transaction::Transaction;
 use crate::vm::{CPU, ExecutionResult, Jobs};
 use crate::vm_implementation::{SharedMemory, VmMemory};
@@ -25,7 +25,7 @@ pub type WorkerOutput = (Vec<usize>, Vec<ExecutionResult>, Vec<Transaction>);
 
 pub trait WorkerB {
 
-    fn new(index: usize) -> Self;
+    fn new(index: usize, handle: &Handle) -> Self;
 
     fn get_index(&self) -> usize;
 
@@ -93,12 +93,13 @@ impl WorkerBTokio {
 impl WorkerB for WorkerBTokio {
     fn new(
         index: usize,
+        handle: &Handle
     ) -> Self {
 
         // TODO Pin thread to a core
         let (tx_job, mut rx_job) = tokio_channel(1);
         let (mut tx_result, rx_result) = tokio_channel(1);
-        tokio::spawn(async move {
+        handle.spawn(async move {
             // println!("Worker {} spawned (tokio)", index);
             Self::execute(rx_job, tx_result, index).await;
             // println!("Worker {} stopped (tokio)", index);
@@ -155,6 +156,7 @@ impl WorkerBStd {
 impl WorkerB for WorkerBStd {
     fn new(
         index: usize,
+        _handle: &Handle
     ) -> Self {
 
         // TODO Pin thread to a core using core_affinity

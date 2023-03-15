@@ -4,6 +4,7 @@ use std::mem;
 use std::sync::Arc;
 use anyhow::{self, Result};
 use async_recursion::async_recursion;
+use tokio::runtime::{EnterGuard, Handle, Runtime};
 use crate::transaction::TransactionOutput;
 use crate::vm::{CPU, ExecutionResult, Jobs};
 use crate::wip::{assign_workers, Executor, NONE, Word};
@@ -142,14 +143,27 @@ pub struct VMb<W> where W: WorkerB + Send + Sized {
     memory: VmMemory,
     nb_workers: usize,
     workers: Vec<W>,
+
+    runtime_keep_alive: Option<Runtime>,
+    handle: Handle,
 }
 
 impl<W: WorkerB + Send + Sized> VMb<W> {
     pub fn new(memory_size: usize, nb_workers: usize, batch_size: usize) -> anyhow::Result<Self> {
         let memory = VmMemory::new(memory_size);
+        let (runtime_keep_alive, handle) = match Handle::try_current() {
+            Ok(h) => (None, h),
+            Err(_) => {
+                let rt = Runtime::new().unwrap();
+                let handle = rt.handle().clone();
+                (Some(rt), handle)
+            },
+        };
+
         let mut workers = Vec::with_capacity(nb_workers);
-        for index in 0..nb_workers { workers.push(W::new(index)); }
-        let vm = Self{ memory, nb_workers, workers };
+        for index in 0..nb_workers { workers.push(W::new(index, &handle)); }
+
+        let vm = Self{ memory, nb_workers, workers, runtime_keep_alive, handle };
         return Ok(vm);
     }
 }

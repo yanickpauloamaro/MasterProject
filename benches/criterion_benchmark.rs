@@ -31,8 +31,8 @@ pub fn manual_benchmark(c: &mut Criterion) {
         format!("manual")
     );
 
-    let rt = Runtime::new().unwrap();
-    let _guard = rt.enter();
+    // let rt = Runtime::new().unwrap();
+    // let _guard = rt.enter();
     bench_with_parameter(
         &mut group,
         &vm_type,
@@ -58,8 +58,8 @@ pub fn benchmark_vmb_tokio(c: &mut Criterion) {
     // let factory = Box::new(FactoryBTokio);//VMb::<WorkerBTokio>::factory();
     let vm_type = VmType::BTokio;
 
-    let rt = Runtime::new().unwrap();
-    let _guard = rt.enter();
+    // let rt = Runtime::new().unwrap();
+    // let _guard = rt.enter();
 
     benchmark_core_scaling(c, &vm_type, "parallel_tokio");
     // benchmark_batch_size_scaling(c, &vm_type, "parallel_tokio");
