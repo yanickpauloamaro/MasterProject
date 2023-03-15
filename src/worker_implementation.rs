@@ -3,7 +3,7 @@ use std::thread;
 use std::sync::mpsc::{channel, Receiver, Sender};
 use std::sync::{Arc, mpsc};
 use crossbeam_utils::thread as crossbeam;
-
+use core_affinity::{CoreId};
 
 use std::collections::VecDeque;
 use anyhow::{anyhow, Context, Result};
@@ -42,7 +42,6 @@ pub trait WorkerB {
         let assignment = batch.iter().zip(tx_to_worker.iter());
 
         let mut accessed = vec![0; assignment.len()];
-        let worker_name = format!("Worker {}", worker_index);
 
         let mut stack: VecDeque<Word> = VecDeque::new();
         let mut worker_output = vec!();
@@ -162,6 +161,12 @@ impl WorkerB for WorkerBStd {
         let (tx_job, mut rx_job) = channel();
         let (mut tx_result, rx_result) = channel();
         thread::spawn(move || {
+
+            let res = core_affinity::set_for_current(CoreId{ id: index});
+            if !res {
+               println!("Failed to attach worker to core {}", index);
+            }
+
             // println!("Worker {} spawned (std::thread)", index);
             Self::execute(rx_job, tx_result, index);
             // println!("Worker {} stopped (std::thread)", index);

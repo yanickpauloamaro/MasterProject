@@ -20,14 +20,14 @@ use crate::config::Config;
 use crate::transaction::{Instruction, Transaction, TransactionAddress};
 use crate::vm_implementation::{VMa, VMb, VMc};
 use crate::wip::{BloomVM, Executor};
-use crate::worker_implementation::WorkerBTokio;
+use crate::worker_implementation::{WorkerBStd, WorkerBTokio};
 
 pub enum VmWrapper {
     // Basic(BasicVM),
     // Serial(SerialVM),
     // Bloom(BloomVM),
     A(VMa),
-    B(VMb<WorkerBTokio>),
+    B(VMb<WorkerBStd>),
     C(VMc)
 }
 

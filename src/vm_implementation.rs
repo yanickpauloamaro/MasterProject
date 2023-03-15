@@ -9,6 +9,37 @@ use crate::vm::{CPU, ExecutionResult, Jobs};
 use crate::wip::{assign_workers, Executor, NONE, Word};
 use crate::worker_implementation::{WorkerB, WorkerBStd, WorkerBTokio, WorkerC, WorkerInput};
 
+pub enum VmType {
+    A,
+    BTokio,
+    BStd,
+    C
+}
+
+impl VmType {
+    pub fn name(&self) -> String {
+        match self {
+            VmType::A => String::from("VmA"),
+            VmType::BTokio => String::from("VmB_Tokio"),
+            VmType::BStd => String::from("VmB_Std"),
+            VmType::C => String::from("VmC"),
+        }
+    }
+}
+
+pub struct VmFactory;
+impl VmFactory {
+    pub fn new_vm(tpe: &VmType, memory_size: usize, nb_cores: usize, batch_size: usize) -> Box<dyn Executor> {
+        match tpe {
+            VmType::A => Box::new(VMa::new(memory_size).unwrap()),
+            VmType::BTokio => Box::new(VMb::<WorkerBTokio>::new(memory_size, nb_cores, batch_size).unwrap()),
+            VmType::BStd => Box::new(VMb::<WorkerBStd>::new(memory_size, nb_cores, batch_size).unwrap()),
+            VmType::C => Box::new(VMc::new(memory_size, nb_cores, batch_size).unwrap()),
+        }
+    }
+}
+
+
 //region VM memory =================================================================================
 #[derive(Debug)]
 pub struct VmMemory {
@@ -39,6 +70,10 @@ impl VmMemory {
 
     pub fn get_shared(&self) -> SharedMemory {
         return self.shared;
+    }
+
+    pub fn set_memory(&mut self, value: Word) {
+        self.content.fill(value);
     }
 }
 
@@ -94,6 +129,10 @@ impl Executor for VMa {
         }
 
         return Ok(results);
+    }
+
+    fn set_memory(&mut self, value: Word) {
+        self.memory.fill(value);
     }
 }
 //endregion
@@ -166,6 +205,10 @@ impl<W: WorkerB + Send + Sized> Executor for VMb<W> {
             backlog.clear();
         }
     }
+
+    fn set_memory(&mut self, value: Word) {
+        self.memory.set_memory(value);
+    }
 }
 //endregion
 
@@ -219,6 +262,10 @@ impl Executor for VMc {
             mem::swap(&mut batch, &mut backlog);
             backlog.clear();
         }
+    }
+
+    fn set_memory(&mut self, value: Word) {
+        self.memory.set_memory(value);
     }
 }
 //endregion

@@ -26,7 +26,8 @@ use crate::config::Config;
 use crate::{debug, debugging};
 use crate::utils::{compatible, get_nb_nodes, print_metrics};
 use crate::vm::{Batch, CHANNEL_CAPACITY, CPU, ExecutionResult, Jobs, VM, WorkerPool};
-use crate::vm_implementation::VMb;
+use crate::vm_implementation::{VMa, VMb, VMc, VmType};
+use crate::worker_implementation::{WorkerB, WorkerBStd, WorkerBTokio};
 
 pub const CONFLICT: usize = usize::MAX;
 pub const DONE: usize = CONFLICT - 1;
@@ -36,6 +37,8 @@ pub trait Executor {
     fn execute(&mut self, mut backlog: Jobs) -> Result<Vec<ExecutionResult>> {
         todo!();
     }
+
+    fn set_memory(&mut self, value: Word);
 }
 
 pub type Word = u64;
