@@ -1,0 +1,15 @@
+{
+  "vm_types": [
+    "A"
+  ],
+  "nb_cores": [
+    1, 2
+  ],
+  "batch_sizes": [
+    65536
+  ],
+  "conflict_rates": [
+    0.0
+  ],
+  "repetitions": 1
+}

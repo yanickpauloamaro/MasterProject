@@ -5,11 +5,14 @@ use std::sync::Arc;
 use anyhow::{self, Result};
 use async_recursion::async_recursion;
 use tokio::runtime::{EnterGuard, Handle, Runtime};
+use serde::{Serialize, Deserialize};
+
 use crate::transaction::TransactionOutput;
 use crate::vm::{CPU, ExecutionResult, Jobs};
 use crate::wip::{assign_workers, Executor, NONE, Word};
 use crate::worker_implementation::{WorkerB, WorkerBStd, WorkerBTokio, WorkerC, WorkerInput};
 
+#[derive(Debug, Serialize, Deserialize, Copy, Clone)]
 pub enum VmType {
     A,
     BTokio,
@@ -74,6 +77,8 @@ impl VmMemory {
     }
 
     pub fn set_memory(&mut self, value: Word) {
+        // let total = self.content.iter().fold(0, |left, right| left + right);
+        // println!("Memory total: {}", total);
         self.content.fill(value);
     }
 }
@@ -209,6 +214,8 @@ impl<W: WorkerB + Send + Sized> Executor for VMb<W> {
             // Collect results -------------------------------------------------------------------------
             for (worker_index, worker) in self.workers.iter_mut().enumerate() {
                 let (accessed, mut worker_output, mut worker_backlog) = worker.receive()?;
+
+                println!("Worker {} accesses: {:?}", worker_index, accessed);
                 results.append(&mut worker_output);
                 backlog.append(&mut worker_backlog);
             }
