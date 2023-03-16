@@ -2,7 +2,7 @@ use std::cell::RefCell;
 use std::ops::Deref;
 use std::rc::Rc;
 use criterion::{BatchSize, BenchmarkGroup, BenchmarkId, black_box, Criterion, criterion_group, criterion_main, Throughput};
-use testbench::utils::create_batch_partitioned;
+use testbench::utils::{batch_with_conflicts, create_batch_partitioned};
 use testbench::vm_implementation::{VMa, VMb, VMc, VmFactory, VmType};
 use testbench::wip::Executor;
 use criterion::async_executor::FuturesExecutor;
@@ -91,10 +91,10 @@ fn benchmark_vm_scaling(c: &mut Criterion) {
     let conflict_rate = 0.0;
 
     let vm_types = vec![
-        VmType::A,
+        // VmType::A,
         VmType::BTokio,
         VmType::BStd,
-        VmType::C
+        // VmType::C
     ];
 
     let mut group = c.benchmark_group(
@@ -190,7 +190,6 @@ fn bench_with_parameter<P: ::std::fmt::Display>(
     // One time setup: ---------------------------------------------------------------------
     let vm = RefCell::new(
         VmFactory::new_vm(vm_type, memory_size, nb_core, batch_size)
-        // factory.new(memory_size, nb_core, batch_size)
     );
 
     group.bench_function(
@@ -203,8 +202,7 @@ fn bench_with_parameter<P: ::std::fmt::Display>(
                     vm.borrow_mut().set_memory(100);
 
                     // TODO use conflict rate to generate input
-                    const PARTITION_SIZE: usize = 4;
-                    create_batch_partitioned(batch_size, PARTITION_SIZE)
+                    batch_with_conflicts(batch_size, conflict_rate)
                 },
                 |input| {
                     // Measured code (includes the time needed to drop the result)

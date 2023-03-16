@@ -14,12 +14,12 @@ use num_traits::FromPrimitive;
 use tokio::runtime::Runtime;
 use crate::baseline_vm::SerialVM;
 use crate::basic_vm::BasicVM;
-use crate::utils::{account_creation_batch, compatible, ContentionGenerator, create_batch_from_generator, create_batch_partitioned, get_nb_nodes, print_metrics, print_throughput, transaction_loop, transfer};
+use crate::utils::{account_creation_batch, batch_with_conflicts, compatible, ContentionGenerator, create_batch_from_generator, create_batch_partitioned, get_nb_nodes, print_conflict_rate, print_metrics, print_throughput, transaction_loop, transfer};
 use crate::vm::{Batch, ExecutionResult, Jobs, VM};
 use crate::config::Config;
 use crate::transaction::{Instruction, Transaction, TransactionAddress};
 use crate::vm_implementation::{VMa, VMb, VMc};
-use crate::wip::{BloomVM, Executor};
+use crate::wip::{BloomVM, Executor, Word};
 use crate::worker_implementation::{WorkerBStd, WorkerBTokio};
 
 pub enum VmWrapper {
@@ -67,6 +67,17 @@ impl VmWrapper {
 
         return Ok(vm);
     }
+
+    fn set_memory(&mut self, value: Word) {
+        match self {
+            // Self::Basic(vm) => Ok(vec!()),
+            // Self::Bloom(vm) => vm.init(jobs).await,
+            // Self::Serial(vm) => vm.execute(jobs).await,
+            Self::A(vm) => vm.set_memory(value),
+            Self::B(vm) => vm.set_memory(value),
+            Self::C(vm) => vm.set_memory(value),
+        }
+    }
 }
 
 pub struct ConflictWorkload {
@@ -78,30 +89,12 @@ pub struct ConflictWorkload {
 impl Workload for ConflictWorkload {
     fn new(config: Config) -> Result<Self> where Self: Sized {
         // TODO Add implement conflict parameter
-        let conflict_percentage = 0.0;
-        let mut prep = Vec::with_capacity(config.batch_size);
-        let mut jobs = Vec::with_capacity(config.batch_size);
-        let amount = 100;
+        let conflict_percentage = 0.5;
 
-        for i in 0..(config.batch_size) {
-            let from = i as u64;
-            let to = (config.batch_size + i) as u64;
-            // println!("from: {}, to: {}", from, to);
-
-            let code = Instruction::CreateAccount(from, amount);
-            let tx = Transaction { from: 0, to: 0, instructions: vec!(code) };
-            prep.push(tx);
-
-            let code = Instruction::CreateAccount(to, amount);
-            let tx = Transaction { from: 0, to: 0, instructions: vec!(code) };
-            prep.push(tx);
-
-            let tx = Transaction { from, to, instructions: transfer(from, to, 20) };
-            jobs.push(tx);
-        }
-
+        let jobs = batch_with_conflicts(config.batch_size, conflict_percentage);
+        print_conflict_rate(&jobs);
         return Ok(Self{
-            prep: vec!(prep),
+            prep: vec!(),
             jobs: vec!(jobs),
         })
     }
@@ -294,10 +287,13 @@ impl<L: 'static> Benchmark for L where L: Workload + Send  {
 
         let mut workload = L::new(config)?;
 
+        let default_balance = 200;
+
         // Preparation -----------------------------------------------------------------------------
-        print!("Preparing workload...");
+        println!("Preparing workload...");
         let prep_start = Instant::now();
         let prep = workload.init();
+        vm.set_memory(default_balance);
         for batch in prep {
             // vm.execute(batch).await?;
             vm.init(batch)?;
@@ -307,6 +303,7 @@ impl<L: 'static> Benchmark for L where L: Workload + Send  {
         // Benchmark ---------------------------------------------------------------------------
         println!();
         println!("Benchmarking:");
+        let benchmark_start = Instant::now();
         for iter in 0..nb_iter {
             println!("Iteration {}:", iter);
             let load = workload.load();
@@ -322,12 +319,15 @@ impl<L: 'static> Benchmark for L where L: Workload + Send  {
             let duration = start.elapsed();
 
             if workload.check() {
+                // println!("Expected memory total: {}", config.address_space_size as u64 * default_balance);
+                vm.set_memory(default_balance);
                 print_throughput(nb_batches, nb_transactions, duration);
             } else {
                 println!("Incorrect benchmark result");
             }
             println!();
         }
+        println!("Total benchmark duration: {:?}", benchmark_start.elapsed());
 
         Ok(())
     }

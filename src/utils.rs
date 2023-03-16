@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::ops::{Add, Div, Mul};
 use std::time::Duration;
 use anyhow::{anyhow, Result};
@@ -113,6 +114,124 @@ pub fn transaction_loop(batch_size: usize, nb_account: usize) -> Vec<Transaction
 
     return batch;
 }
+
+pub fn batch_with_conflicts(batch_size: usize, conflict_rate: f64) -> Jobs {
+
+    let nb_conflict = (conflict_rate * batch_size as f64).ceil() as usize;
+
+    let mut receiver_occurrences: HashMap<u64, u64> = HashMap::new();
+    let mut batch = Vec::with_capacity(batch_size);
+
+    // Create non-conflicting transactions
+    for i in 0..batch_size {
+        let amount = 2;
+        let from = i as u64;
+        let mut to = i as u64;
+
+        // Ensure senders and receivers don't conflict. Otherwise, would need to count conflicts
+        // between senders and receivers
+        to += batch_size as u64;
+
+        receiver_occurrences.insert(to, 1);
+
+        let instructions = transfer(from, to, amount);
+        let tx = Transaction{ from, to, instructions};
+        batch.push(tx);
+    }
+
+    //
+    let indices: Vec<usize> = (0..batch_size).collect();
+
+    let mut conflict_counter = 0;
+    while conflict_counter < nb_conflict {
+        let i = *indices.choose(&mut rand::thread_rng()).unwrap();
+        let j = *indices.choose(&mut rand::thread_rng()).unwrap();
+
+        if batch[i].to != batch[j].to {
+
+            let freq_i = *receiver_occurrences.get(&batch[i].to).unwrap();
+            let freq_j = *receiver_occurrences.get(&batch[j].to).unwrap();
+
+            if freq_j != 2 {
+                if freq_j == 1 { conflict_counter += 1; }
+                if freq_i == 1 { conflict_counter += 1; }
+
+                receiver_occurrences.insert(batch[i].to, freq_i + 1);
+                receiver_occurrences.insert(batch[j].to, freq_j - 1);
+
+                batch[j].to = batch[i].to;
+            }
+        }
+    }
+
+    batch
+}
+
+pub fn print_conflict_rate(batch: &Vec<Transaction>) {
+
+    let mut nb_addresses = 0;
+
+    let mut conflicts = HashMap::new();
+    let mut nb_conflicts = 0;
+    let mut nb_conflicting_addr = 0;
+
+    for tx in batch.iter() {
+        // The 'from' address is always different
+        nb_addresses += 1;
+
+        // TODO Make this computation work for arbitrary transfer graphs
+        // if addresses.insert(tx.from) {
+        //     nb_addresses += 1;
+        // }
+        // if addresses.insert(tx.to) {
+        //     nb_addresses += 1;
+        // }
+
+        match conflicts.get_mut(&tx.to) {
+            None => {
+                conflicts.insert(tx.to, 1);
+                nb_addresses += 1;
+            },
+            Some(occurrence) if *occurrence == 1 => {
+                *occurrence += 1;
+                nb_conflicts += 2;
+                nb_conflicting_addr += 1;
+                // println!("** {} is appearing for the 2nd time", tx.to);
+
+            },
+            Some(occurrence) => {
+                *occurrence += 1;
+                nb_conflicts += 1;
+                // println!("** {} is appearing for the {}-th time", tx.to, *occurrence);
+            },
+        }
+    }
+
+    // Manual check
+    // let mut actual_conflicts = 0;
+    // let mut actual_nb_conflicting_addr = 0;
+    // for (addr, freq) in conflicts {
+    //     // println!("{} appears {} times", addr, freq);
+    //     if freq > 1 {
+    //         actual_nb_conflicting_addr += 1;
+    //         actual_conflicts += freq;
+    //         println!("** {} appears {} times", addr, freq);
+    //     }
+    // }
+    // println!("Other calculation: nb conflicts {}", actual_conflicts);
+    // println!("Other calculation: nb conflict address {}", actual_nb_conflicting_addr);
+    // println!();
+
+    let conflict_rate = (nb_conflicts as f64) / (batch.len() as f64);
+    let conflict_addr_rate = (nb_conflicting_addr as f64) / (nb_addresses as f64);
+
+    println!("Nb of conflicts: {}/{}", nb_conflicts, batch.len());
+    println!("Conflict rate: {:.2}%",  100.0 * conflict_rate);
+    println!("Nb conflicting addresses: {}/{}", nb_conflicting_addr, nb_addresses);
+    println!("Ratio of conflicting addresses: {:.2}%",  100.0 * conflict_addr_rate);
+    println!();
+}
+
 
 pub trait AddressGenerator {
     fn next(&mut self) -> TransactionAddress;
