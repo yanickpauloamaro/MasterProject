@@ -40,3 +40,53 @@ fn main() -> Result<()>{
 
     Ok(())
 }
+
+fn profiling() -> Result<()> {
+    let config = BenchmarkConfig::new("benchmark_config.json")
+        .context("Unable to create benchmark config")?;
+
+    let start = Instant::now();
+    let batch_size = config.batch_sizes[0];
+    let memory_size = batch_size * 2;
+    let nb_cores = config.nb_cores[0];
+    let conflict_rate = config.conflict_rates[0];
+
+    {
+        // let mut vm = VmFactory::new_vm(
+        //     &config.vm_types[0],
+        //     memory_size,
+        //     nb_cores,
+        //     batch_size
+        // );
+        //
+        // vm.set_memory(3 * nb_repetitions as u64);
+        // let batch = batch_with_conflicts(batch_size, conflict_rate);
+        //
+        // // for _ in 0..config.repetitions {
+        // vm.execute(batch);
+        // // }
+        // println!("execution latency: {:?}", elapsed.div(config.repetitions as u32));
+    }
+
+    {
+        let batch = batch_with_conflicts(batch_size, conflict_rate);
+        let mut backlog = Vec::with_capacity(batch.len());
+        let mut address_to_worker = vec![usize::MAX; memory_size];
+
+        for _ in 0..config.repetitions {
+            address_to_worker.fill(NONE);
+            let assignment = assign_workers(
+                nb_cores,
+                &batch,
+                &mut address_to_worker,
+                &mut backlog
+            );
+        }
+
+        let elapsed = start.elapsed();
+        println!("assign_workers average latency: {:?}", elapsed.div(config.repetitions as u32));
+        println!("Total {} runs: {:?}", config.repetitions, elapsed);
+    }
+
+    Ok(())
+}

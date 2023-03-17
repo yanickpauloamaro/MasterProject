@@ -123,7 +123,7 @@ pub struct BenchmarkResult {
     pub throughput_ci_low: f64,
 
     pub latency_ci_up: f64,
-    pub latency: f64,
+    pub latency: Duration,
     pub latency_ci_low: f64,
 
     // TODO Add date?

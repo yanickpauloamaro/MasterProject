@@ -2,6 +2,7 @@ use async_trait::async_trait;
 use std::collections::VecDeque;
 use std::mem;
 use std::sync::Arc;
+use std::time::Instant;
 use anyhow::{self, Result};
 use async_recursion::async_recursion;
 use tokio::runtime::{EnterGuard, Handle, Runtime};
@@ -12,6 +13,7 @@ use crate::vm::{CPU, ExecutionResult, Jobs};
 use crate::wip::{assign_workers, Executor, NONE, Word};
 use crate::worker_implementation::{WorkerB, WorkerBStd, WorkerBTokio, WorkerC, WorkerInput};
 
+//region VM Types ==================================================================================
 #[derive(Debug, Serialize, Deserialize, Copy, Clone)]
 pub enum VmType {
     A,
@@ -30,7 +32,9 @@ impl VmType {
         }
     }
 }
+//endregion
 
+//region VM Factory ================================================================================
 pub struct VmFactory;
 impl VmFactory {
     pub fn new_vm(tpe: &VmType, memory_size: usize, nb_cores: usize, batch_size: usize) -> Box<dyn Executor> {
@@ -42,7 +46,7 @@ impl VmFactory {
         }
     }
 }
-
+//endregion
 
 //region VM memory =================================================================================
 #[derive(Debug)]
@@ -122,6 +126,7 @@ impl VMa {
 
 impl Executor for VMa {
     fn execute(&mut self, mut backlog: Jobs) -> Result<Vec<ExecutionResult>> {
+// let start = Instant::now();
         let mut results = Vec::with_capacity(backlog.len());
         let mut stack = VecDeque::new();
         for tx in backlog {
@@ -133,7 +138,7 @@ impl Executor for VMa {
             results.push(result);
             stack.clear();
         }
-
+// println!("### Done serial execution in {:?}", start.elapsed());
         return Ok(results);
     }
 
@@ -152,6 +157,9 @@ pub struct VMb<W> where W: WorkerB + Send + Sized {
     runtime_keep_alive: Option<Runtime>,
     handle: Handle,
 }
+
+// TODO use WorkerIndex instead of usize for addr-to-worker and tx-to-worker
+type WorkerIndex = u8;
 
 impl<W: WorkerB + Send + Sized> VMb<W> {
     pub fn new(memory_size: usize, nb_workers: usize, batch_size: usize) -> anyhow::Result<Self> {
@@ -175,10 +183,11 @@ impl<W: WorkerB + Send + Sized> VMb<W> {
 
 impl<W: WorkerB + Send + Sized> Executor for VMb<W> {
     fn execute(&mut self, mut batch: Jobs) -> anyhow::Result<Vec<ExecutionResult>> {
+// let alloc = Instant::now();
         let mut results = Vec::with_capacity(batch.len());
         let mut backlog = Vec::with_capacity(batch.len());
         let mut address_to_worker = vec![usize::MAX; self.memory.len()];
-
+// println!("---Done allocating arrays in {:?}", alloc.elapsed());
         // return self.execute_rec(results, batch, backlog, address_to_worker).await;
 
         loop {
@@ -194,7 +203,7 @@ impl<W: WorkerB + Send + Sized> Executor for VMb<W> {
                 &mut address_to_worker,
                 &mut backlog
             );
-
+// let start = Instant::now();
             // Start parallel execution ----------------------------------------------------------------
             let batch_arc = Arc::new(batch);
             let tx_to_worker_arc = Arc::new(tx_to_worker);
@@ -215,11 +224,11 @@ impl<W: WorkerB + Send + Sized> Executor for VMb<W> {
             for (worker_index, worker) in self.workers.iter_mut().enumerate() {
                 let (accessed, mut worker_output, mut worker_backlog) = worker.receive()?;
 
-                println!("Worker {} accesses: {:?}", worker_index, accessed);
+                // println!("Worker {} accesses: {:?}", worker_index, accessed);
                 results.append(&mut worker_output);
                 backlog.append(&mut worker_backlog);
             }
-
+// println!("*** Done parallel execution in {:?}", start.elapsed());
             // Prepare next iteration --------------------------------------------------------------
             batch = Arc::try_unwrap(batch_arc).unwrap_or(vec!());
             mem::swap(&mut batch, &mut backlog);

@@ -23,6 +23,8 @@ pub struct WorkerInput {
 
 pub type WorkerOutput = (Vec<usize>, Vec<ExecutionResult>, Vec<Transaction>);
 
+//region Parallel VM worker ========================================================================
+//region trait -------------------------------------------------------------------------------------
 pub trait WorkerB {
 
     fn new(index: usize, handle: &Handle) -> Self;
@@ -62,8 +64,9 @@ pub trait WorkerB {
         return (accessed, worker_output, worker_backlog);
     }
 }
+//endregion
 
-//region tokio vm worker ===========================================================================
+//region tokio worker ------------------------------------------------------------------------------
 pub struct WorkerBTokio {
     pub index: usize,
     pub tx_job: TokioSender<WorkerInput>,
@@ -126,7 +129,7 @@ impl WorkerB for WorkerBTokio {
 }
 //endregion
 
-//region std vm worker =============================================================================
+//region std worker --------------------------------------------------------------------------------
 pub struct WorkerBStd {
     pub index: usize,
     pub tx_job: Sender<WorkerInput>,
@@ -195,7 +198,9 @@ impl WorkerB for WorkerBStd {
 }
 //endregion
 
-//region crossbeam worker ==========================================================================
+//endregion
+
+//region Crossbeam worker ==========================================================================
 pub struct WorkerC;
 
 impl WorkerC {

@@ -8,7 +8,7 @@ use hwloc::Topology;
 use anyhow::{anyhow, Context, Result};
 use std::time::{Duration, Instant};
 use std::mem;
-use std::ops::Div;
+use std::ops::{Add, Div};
 use async_trait::async_trait;
 use bloomfilter::Bloom;
 use num_traits::FromPrimitive;
@@ -91,8 +91,8 @@ fn bench_with_parameter(run: RunParameter) -> BenchmarkResult {
     let throughput_up = 0.0;
     let throughput_low = 0.0;
 
-    let mean_latency = throughput_reps.iter()
-        .fold(0.0, |a, b| a + b).div(run.repetitions as f64);
+    let mean_latency = latency_reps.iter()
+        .fold(Duration::from_micros(0), |a, b| a.add(*b)).div(run.repetitions as u32);
     let latency_up = 0.0;
     let latency_low = 0.0;
 
