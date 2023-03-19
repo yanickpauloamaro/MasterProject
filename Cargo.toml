@@ -26,6 +26,7 @@ async-recursion = "1.0.2"
 crossbeam = "0.8.2"
 crossbeam-utils = "0.8.15"
 core_affinity = "0.8.0"
+ed25519-dalek = "1.0.1"
 
 
 [dev-dependencies]

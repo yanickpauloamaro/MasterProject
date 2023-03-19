@@ -11,13 +11,13 @@ use async_trait::async_trait;
 use tokio::runtime::{Handle, Runtime};
 use crate::transaction::Transaction;
 use crate::vm::{CPU, ExecutionResult, Jobs};
-use crate::vm_implementation::{SharedMemory, VmMemory};
-use crate::wip::Word;
+use crate::vm_implementation::{SharedMemory, VmMemory, WorkerIndex};
+use crate::wip::{AssignedWorker, Word};
 
 #[derive(Debug)]
 pub struct WorkerInput {
     pub batch: Arc<Jobs>,
-    pub tx_to_worker: Arc<Vec<usize>>,
+    pub tx_to_worker: Arc<Vec<AssignedWorker>>,
     pub memory: SharedMemory,
 }
 
@@ -27,15 +27,15 @@ pub type WorkerOutput = (Vec<usize>, Vec<ExecutionResult>, Vec<Transaction>);
 //region trait -------------------------------------------------------------------------------------
 pub trait WorkerB {
 
-    fn new(index: usize, handle: &Handle) -> Self;
+    fn new(index: AssignedWorker, handle: &Handle) -> Self;
 
-    fn get_index(&self) -> usize;
+    fn get_index(&self) -> AssignedWorker;
 
     fn send(&mut self, jobs: WorkerInput) -> Result<()>;
 
     fn receive(&mut self) -> Result<WorkerOutput>;
 
-    fn process_job(job: WorkerInput, worker_index: usize) -> WorkerOutput {
+    fn process_job(job: WorkerInput, worker_index: AssignedWorker) -> WorkerOutput {
 
         let mut shared_memory = job.memory;
         let batch = job.batch;
@@ -68,13 +68,13 @@ pub trait WorkerB {
 
 //region tokio worker ------------------------------------------------------------------------------
 pub struct WorkerBTokio {
-    pub index: usize,
+    pub index: AssignedWorker,
     pub tx_job: TokioSender<WorkerInput>,
     pub rx_result: TokioReceiver<WorkerOutput>
 }
 
 impl WorkerBTokio {
-    pub async fn execute(mut rx_job: TokioReceiver<WorkerInput>, tx_result: TokioSender<WorkerOutput>, worker_index: usize) {
+    pub async fn execute(mut rx_job: TokioReceiver<WorkerInput>, tx_result: TokioSender<WorkerOutput>, worker_index: AssignedWorker) {
         loop {
             match rx_job.recv().await {
                 Some(job) => {
@@ -95,7 +95,7 @@ impl WorkerBTokio {
 
 impl WorkerB for WorkerBTokio {
     fn new(
-        index: usize,
+        index: AssignedWorker,
         handle: &Handle
     ) -> Self {
 
@@ -115,7 +115,7 @@ impl WorkerB for WorkerBTokio {
         };
     }
 
-    fn get_index(&self) -> usize {
+    fn get_index(&self) -> AssignedWorker {
         return self.index;
     }
 
@@ -131,13 +131,13 @@ impl WorkerB for WorkerBTokio {
 
 //region std worker --------------------------------------------------------------------------------
 pub struct WorkerBStd {
-    pub index: usize,
+    pub index: AssignedWorker,
     pub tx_job: Sender<WorkerInput>,
     pub rx_result: Receiver<WorkerOutput>
 }
 
 impl WorkerBStd {
-    pub fn execute(mut rx_job: Receiver<WorkerInput>, tx_result: Sender<WorkerOutput>, worker_index: usize) {
+    pub fn execute(mut rx_job: Receiver<WorkerInput>, tx_result: Sender<WorkerOutput>, worker_index: AssignedWorker) {
         loop {
             match rx_job.recv() {
                 Ok(job) => {
@@ -158,7 +158,7 @@ impl WorkerBStd {
 
 impl WorkerB for WorkerBStd {
     fn new(
-        index: usize,
+        index: AssignedWorker,
         _handle: &Handle
     ) -> Self {
 
@@ -167,7 +167,7 @@ impl WorkerB for WorkerBStd {
         let (mut tx_result, rx_result) = channel();
         thread::spawn(move || {
 
-            let res = core_affinity::set_for_current(CoreId{ id: index});
+            let res = core_affinity::set_for_current(CoreId{ id: index as usize - 1});
             if !res {
                println!("Failed to attach worker to core {}", index);
             }
@@ -184,7 +184,7 @@ impl WorkerB for WorkerBStd {
         };
     }
 
-    fn get_index(&self) -> usize {
+    fn get_index(&self) -> AssignedWorker {
         return self.index;
     }
 
@@ -210,7 +210,7 @@ impl WorkerC {
         batch: &mut Jobs,
         backlog: &mut Jobs,
         memory: &mut VmMemory,
-        tx_to_worker: &Vec<usize>
+        tx_to_worker: &Vec<AssignedWorker>
     ) -> Result<()>
     {
         let mut execution_errors: Vec<Result<()>> = vec!();
@@ -218,7 +218,8 @@ impl WorkerC {
             let mut shared_memory = memory.get_shared();
             let mut handles = Vec::with_capacity(nb_workers);
 
-            for worker_index in 0..nb_workers {
+            for i in 0..nb_workers {
+                let worker_index = i as AssignedWorker + 1;
                 let assignment = batch.iter().zip(tx_to_worker.iter());
 
                 handles.push(s.spawn(move |_| {

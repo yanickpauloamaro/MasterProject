@@ -10,7 +10,7 @@ use serde::{Serialize, Deserialize};
 
 use crate::transaction::TransactionOutput;
 use crate::vm::{CPU, ExecutionResult, Jobs};
-use crate::wip::{assign_workers, Executor, NONE, Word};
+use crate::wip::{assign_workers, assign_workers_new_impl, assign_workers_original, AssignedWorker, Executor, NONE_TEST, NONE_WIP, Word};
 use crate::worker_implementation::{WorkerB, WorkerBStd, WorkerBTokio, WorkerC, WorkerInput};
 
 //region VM Types ==================================================================================
@@ -126,7 +126,7 @@ impl VMa {
 
 impl Executor for VMa {
     fn execute(&mut self, mut backlog: Jobs) -> Result<Vec<ExecutionResult>> {
-// let start = Instant::now();
+let start = Instant::now();
         let mut results = Vec::with_capacity(backlog.len());
         let mut stack = VecDeque::new();
         for tx in backlog {
@@ -138,7 +138,7 @@ impl Executor for VMa {
             results.push(result);
             stack.clear();
         }
-// println!("### Done serial execution in {:?}", start.elapsed());
+println!("### Done serial execution in {:?}", start.elapsed());
         return Ok(results);
     }
 
@@ -159,7 +159,7 @@ pub struct VMb<W> where W: WorkerB + Send + Sized {
 }
 
 // TODO use WorkerIndex instead of usize for addr-to-worker and tx-to-worker
-type WorkerIndex = u8;
+pub type WorkerIndex = u8;
 
 impl<W: WorkerB + Send + Sized> VMb<W> {
     pub fn new(memory_size: usize, nb_workers: usize, batch_size: usize) -> anyhow::Result<Self> {
@@ -174,7 +174,10 @@ impl<W: WorkerB + Send + Sized> VMb<W> {
         };
 
         let mut workers = Vec::with_capacity(nb_workers);
-        for index in 0..nb_workers { workers.push(W::new(index, &handle)); }
+        for index in 0..nb_workers {
+            let worker = W::new(index as AssignedWorker + 1, &handle);
+            workers.push(worker);
+        }
 
         let vm = Self{ memory, nb_workers, workers, runtime_keep_alive, handle };
         return Ok(vm);
@@ -183,27 +186,30 @@ impl<W: WorkerB + Send + Sized> VMb<W> {
 
 impl<W: WorkerB + Send + Sized> Executor for VMb<W> {
     fn execute(&mut self, mut batch: Jobs) -> anyhow::Result<Vec<ExecutionResult>> {
-// let alloc = Instant::now();
+let total = Instant::now();
         let mut results = Vec::with_capacity(batch.len());
         let mut backlog = Vec::with_capacity(batch.len());
-        let mut address_to_worker = vec![usize::MAX; self.memory.len()];
-// println!("---Done allocating arrays in {:?}", alloc.elapsed());
+        let mut address_to_worker = vec![NONE_TEST; self.memory.len()];
+println!("*** Allocating arrays in {:?}", total.elapsed());
         // return self.execute_rec(results, batch, backlog, address_to_worker).await;
 
         loop {
             if batch.is_empty() {
+                println!("*** Total took {:?}", total.elapsed());
                 return Ok(results);
             }
 
             // Assign jobs to workers ------------------------------------------------------------------
-            address_to_worker.fill(NONE);
-            let mut tx_to_worker = assign_workers(
+let a = Instant::now();
+            address_to_worker.fill(NONE_TEST);
+            let mut tx_to_worker = assign_workers_new_impl(
                 self.nb_workers,
                 &batch,
                 &mut address_to_worker,
                 &mut backlog
             );
-// let start = Instant::now();
+println!("*** Work assignment took {:?}", a.elapsed());
+let start = Instant::now();
             // Start parallel execution ----------------------------------------------------------------
             let batch_arc = Arc::new(batch);
             let tx_to_worker_arc = Arc::new(tx_to_worker);
@@ -222,17 +228,25 @@ impl<W: WorkerB + Send + Sized> Executor for VMb<W> {
 
             // Collect results -------------------------------------------------------------------------
             for (worker_index, worker) in self.workers.iter_mut().enumerate() {
-                let (accessed, mut worker_output, mut worker_backlog) = worker.receive()?;
+                let (mut accessed, mut worker_output, mut worker_backlog) = worker.receive()?;
 
-                // println!("Worker {} accesses: {:?}", worker_index, accessed);
+                // let z: Vec<usize> = accessed.drain(..16).collect();
+                // println!("Worker {} accesses: {:?}", worker_index, z);
                 results.append(&mut worker_output);
                 backlog.append(&mut worker_backlog);
             }
-// println!("*** Done parallel execution in {:?}", start.elapsed());
+println!("*** Parallel execution in {:?}", start.elapsed());
+let end1 = Instant::now();
+let end2 = Instant::now();
             // Prepare next iteration --------------------------------------------------------------
             batch = Arc::try_unwrap(batch_arc).unwrap_or(vec!());
             mem::swap(&mut batch, &mut backlog);
-            backlog.clear();
+println!("*** Arc unwrap + swap {:?}", end2.elapsed());
+            // backlog.clear();    // !!!
+            unsafe {
+                backlog.set_len(0);
+            }
+println!("*** End of loop took {:?}", end1.elapsed());
         }
     }
 
@@ -250,6 +264,7 @@ pub struct VMc {
 
 impl VMc {
     pub fn new(memory_size: usize, nb_workers: usize, batch_size: usize) -> Result<Self> {
+        // assert!(nb_workers <= NONE);
         let memory = VmMemory::new(memory_size);
         let vm = Self{ memory, nb_workers };
         return Ok(vm);
@@ -260,7 +275,7 @@ impl Executor for VMc {
     fn execute(&mut self, mut batch: Jobs) -> Result<Vec<ExecutionResult>> {
         let mut results = Vec::with_capacity(batch.len());
         let mut backlog = Vec::with_capacity(batch.len());
-        let mut address_to_worker = vec![usize::MAX; self.memory.len()];
+        let mut address_to_worker = vec![NONE_TEST; self.memory.len()];
 
         // return self.execute_rec(results, batch, backlog, address_to_worker);
 
@@ -270,7 +285,7 @@ impl Executor for VMc {
             }
 
             // Assign jobs to workers ------------------------------------------------------------------
-            address_to_worker.fill(NONE);
+            address_to_worker.fill(NONE_TEST);
             let mut tx_to_worker = assign_workers(
                 self.nb_workers,
                 &batch,
