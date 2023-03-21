@@ -25,7 +25,7 @@ macro_rules! debug {
     };
     ($($arg:tt)*) => {{
         if debugging!() {
-            print!("**");
+            // print!("**");
             println!($($arg)*);
         }
     }};

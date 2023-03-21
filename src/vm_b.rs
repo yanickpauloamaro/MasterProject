@@ -4,6 +4,7 @@ use std::time::Instant;
 
 use tokio::runtime::{Handle, Runtime};
 
+use crate::{debug, debugging};
 use crate::vm::{ExecutionResult, Executor, Jobs};
 use crate::vm_utils::{assign_workers, UNASSIGNED, VmMemory};
 use crate::wip::{AssignedWorker, Word};
@@ -48,13 +49,13 @@ let total = Instant::now();
         let mut results = Vec::with_capacity(batch.len());
         let mut backlog = Vec::with_capacity(batch.len());
         let mut address_to_worker = vec![UNASSIGNED; self.memory.len()];
-println!("*** Allocating arrays in {:?}", total.elapsed());
-        // return self.execute_rec(results, batch, backlog, address_to_worker).await;
-let mut junk: Vec<Jobs> = vec!();
+// debug!("*** Allocating arrays in {:?}", total.elapsed());
+
+// let mut junk: Vec<Jobs> = vec!();
         loop {
             if batch.is_empty() {
-println!("*** Total took {:?}", total.elapsed());
-                println!("{:?}", junk[0].len());
+debug!("*** Total took {:?}", total.elapsed());
+// println!("{:?}", junk[0].len());
                 return Ok(results);
             }
 
@@ -67,7 +68,7 @@ let a = Instant::now();
                 &mut address_to_worker,
                 &mut backlog
             );
-println!("*** Work assignment took {:?}", a.elapsed());
+debug!("*** Work assignment took {:?}", a.elapsed());
 let start = Instant::now();
             // Start parallel execution ----------------------------------------------------------------
             let batch_arc = Arc::new(batch);
@@ -89,28 +90,22 @@ let start = Instant::now();
             for (_worker_index, worker) in self.workers.iter_mut().enumerate() {
                 let (mut _accessed, mut worker_output, mut worker_backlog) = worker.receive()?;
 
-                // let z: Vec<usize> = accessed.drain(..16).collect();
-                // println!("Worker {} accesses: {:?}", worker_index, z);
                 results.append(&mut worker_output);
                 backlog.append(&mut worker_backlog);
             }
-println!("*** Parallel execution in {:?}", start.elapsed());
-let end1 = Instant::now();
+debug!("*** Parallel execution in {:?}", start.elapsed());
+let end = Instant::now();
             // Prepare next iteration --------------------------------------------------------------
             batch = Arc::try_unwrap(batch_arc).unwrap_or(vec!());
+            batch.drain(0..).for_each(std::mem::drop);
             mem::swap(&mut batch, &mut backlog);
-            // backlog.clear();    // !!!
-            // unsafe {
-            //     backlog.set_len(0);
-            // }
-            // backlog.truncate(0); // !!!
-            // backlog.drain(0..).for_each(std::mem::drop);
-            let mut previous_backlog = vec!();
-            mem::swap(&mut backlog, &mut previous_backlog);
-            junk.push(previous_backlog);
+
+            // let mut previous_backlog = vec!();
+            // mem::swap(&mut backlog, &mut previous_backlog);
+            // junk.push(previous_backlog);
 
             // backlog = vec!();   // !!!
-println!("*** End of loop took {:?}", end1.elapsed());
+debug!("*** End of loop took {:?}", end.elapsed());
         }
     }
 

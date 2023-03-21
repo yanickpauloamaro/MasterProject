@@ -42,7 +42,7 @@ pub fn benchmarking(path: &str) -> Result<()> {
 
     println!("Benchmark end:");
     for result in results {
-        println!("{:#?}", result);
+        println!("{}", result);
     }
 
     Ok(())

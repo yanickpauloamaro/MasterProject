@@ -1,20 +1,14 @@
-#![allow(unused_imports)]
+// #![allow(unused_imports)]
 extern crate anyhow;
 extern crate either;
 extern crate hwloc;
 extern crate tokio;
 
-use std::cmp::max;
-use std::collections::{HashMap, HashSet};
-use std::collections::hash_map::DefaultHasher;
-use std::hash::Hash;
 use std::ops::{Add, Div};
-use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::{Context, Result};
-use core_affinity;
-use ed25519_dalek::{Sha512};
+// use core_affinity;
 use tokio::time::Instant;
 
 use testbench::benchmark::benchmarking;
@@ -31,12 +25,13 @@ fn main() -> Result<()>{
     // let _ = TransactionLoop::run(config, 1).await;
     // let _ = ConflictWorkload::run(config, 1);
 
-    // benchmarking("benchmark_config.json")?;
-    profiling("benchmark_config.json")?;
+    benchmarking("benchmark_config.json")?;
+    // profiling("benchmark_config.json")?;
 
     return Ok(());
 }
 
+#[allow(dead_code)]
 fn profiling(path: &str) -> Result<()> {
 
     let config = BenchmarkConfig::new(path)

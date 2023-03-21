@@ -1,9 +1,10 @@
 use std::collections::VecDeque;
+use std::mem;
 use std::time::Instant;
 
 use anyhow::Result;
 
-use crate::transaction::TransactionOutput;
+use crate::{debug, debugging};
 use crate::vm::{CPU, ExecutionResult, Executor, Jobs};
 use crate::wip::Word;
 
@@ -22,21 +23,32 @@ impl VMa {
 
 impl Executor for VMa {
     // TODO Add iterations to VMa
-    fn execute(&mut self, mut _backlog: Jobs) -> Result<Vec<ExecutionResult>> {
+    fn execute(&mut self, mut batch: Jobs) -> Result<Vec<ExecutionResult>> {
 let start = Instant::now();
-        let mut results = Vec::with_capacity(_backlog.len());
+        let mut results = Vec::with_capacity(batch.len());
+        let mut backlog = Vec::with_capacity(batch.len());
+
         let mut stack = VecDeque::new();
-        for tx in _backlog {
-            for instr in tx.instructions.iter() {
-                CPU::execute_from_array(instr, &mut stack, &mut self.memory);
+
+        loop {
+            if batch.is_empty() {
+debug!("### Done serial execution in {:?}", start.elapsed());
+                return Ok(results);
             }
-            let _output = TransactionOutput{ tx };
-            let result = ExecutionResult::todo();
-            results.push(result);
-            stack.clear();
+
+            for tx in batch.iter() {
+                stack.clear(); // TODO Does this need to be optimised?
+                for instr in tx.instructions.iter() {
+                    CPU::execute_from_array(instr, &mut stack, &mut self.memory);
+                }
+                let result = ExecutionResult::todo();
+                results.push(result);
+                // TODO add to next transaction piece to backlog
+            }
+
+            batch.drain(0..).for_each(std::mem::drop);
+            mem::swap(&mut batch, &mut backlog);
         }
-println!("### Done serial execution in {:?}", start.elapsed());
-        return Ok(results);
     }
 
     fn set_memory(&mut self, value: Word) {

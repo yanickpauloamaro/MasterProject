@@ -52,8 +52,7 @@ pub trait WorkerB {
 
         for (tx_index, (tx, assigned_worker)) in assignment.enumerate() {
             if *assigned_worker == worker_index {
-                // stack.clear();
-                stack.truncate(0);
+                stack.clear(); // TODO Does this need to be optimised?
                 for instr in tx.instructions.iter() {
                     CPU::execute_from_shared(instr, &mut stack, &mut shared_memory);
                 }
@@ -164,7 +163,6 @@ impl WorkerB for WorkerBStd {
         _handle: &Handle
     ) -> Self {
 
-        // TODO Pin thread to a core using core_affinity
         let (tx_job, rx_job) = channel();
         let (tx_result, rx_result) = channel();
         thread::spawn(move || {
@@ -174,9 +172,7 @@ impl WorkerB for WorkerBStd {
                println!("Failed to attach worker to core {}", index);
             }
 
-            // println!("Worker {} spawned (std::thread)", index);
             Self::execute(rx_job, tx_result, index);
-            // println!("Worker {} stopped (std::thread)", index);
         });
 
         return Self {
@@ -263,11 +259,12 @@ impl WorkerC {
             }
         }).or(Err(anyhow!("Unable to join crossbeam scope")))?;
 
-        if execution_errors.is_empty() {
-            return Ok(());
-        }
-
-        return Err(anyhow!("Some error occurred during parallel execution: {:?}", execution_errors));
+        return Ok(());
+        // if execution_errors.is_empty() {
+        //     return Ok(());
+        // }
+        //
+        // return Err(anyhow!("Some error occurred during parallel execution: {:?}", execution_errors));
     }
 }
 //endregion

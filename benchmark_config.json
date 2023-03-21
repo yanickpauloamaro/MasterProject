@@ -1,9 +1,9 @@
 {
   "vm_types": [
-    "BStd", "A"
+    "A", "BStd", "BTokio", "C"
   ],
   "nb_cores": [
-    4, 2
+    4
   ],
   "batch_sizes": [
     65536
@@ -11,5 +11,5 @@
   "conflict_rates": [
     0.5
   ],
-  "repetitions": 50000
+  "repetitions": 500
 }

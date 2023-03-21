@@ -1,3 +1,4 @@
+use std::fmt;
 use std::fs::{self};
 use std::time::Duration;
 
@@ -117,8 +118,11 @@ impl ConfigFile for BenchmarkResult {
     }
 }
 
-// impl fmt::Display for BenchmarkResult {
-//     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-//         write!(f, "todo: {:?}", self)
-//     }
-// }
+impl fmt::Display for BenchmarkResult {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        let _ = write!(f, "vm_type: {:?} {{\n", self.parameters.vm_type);
+        let _ = write!(f, "\tthroughput: {:?} tx/µs\n", self.throughput_micro);
+        let _ = write!(f, "\tlatency: {:?}\n", self.latency);
+        write!(f, "}}")
+    }
+}
