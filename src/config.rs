@@ -31,24 +31,6 @@ pub trait ConfigFile {
     fn name() -> String;
 }
 
-#[derive(Debug, Serialize, Deserialize, Copy, Clone)]
-pub struct Config {
-    pub rate: u32, // in ops/s
-    pub batch_size: usize, // in ops
-    pub duration: u64, // in s
-    pub nb_nodes: Option<usize>, // None => use all cores available
-    pub address_space_size: usize, // in byte, will be split between NUMA regions
-    pub transaction_type: TransactionType,
-    // pub seed: u64;
-    // pub duration: Duration,
-}
-
-impl ConfigFile for Config{
-    fn name() -> String {
-        String::from("config")
-    }
-}
-
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct BenchmarkConfig {
     pub vm_types: Vec<VmType>,

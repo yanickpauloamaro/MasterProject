@@ -6,11 +6,11 @@ use std::time::Instant;
 use anyhow::{self, Result};
 use async_recursion::async_recursion;
 use tokio::runtime::{EnterGuard, Handle, Runtime};
-use serde::{Serialize, Deserialize};
+use serde::{Deserialize, Serialize};
 
 use crate::transaction::TransactionOutput;
-use crate::vm::{CPU, ExecutionResult, Jobs};
-use crate::wip::{assign_workers, assign_workers_new_impl, assign_workers_original, AssignedWorker, Executor, NONE_TEST, NONE_WIP, Word};
+use crate::vm::{CPU, ExecutionResult, Executor, Jobs};
+use crate::wip::{assign_workers, assign_workers_new_impl, assign_workers_original, AssignedWorker, NONE_TEST, NONE_WIP, Word};
 use crate::worker_implementation::{WorkerB, WorkerBStd, WorkerBTokio, WorkerC, WorkerInput};
 
 //region VM Types ==================================================================================
@@ -158,9 +158,6 @@ pub struct VMb<W> where W: WorkerB + Send + Sized {
     handle: Handle,
 }
 
-// TODO use WorkerIndex instead of usize for addr-to-worker and tx-to-worker
-pub type WorkerIndex = u8;
-
 impl<W: WorkerB + Send + Sized> VMb<W> {
     pub fn new(memory_size: usize, nb_workers: usize, batch_size: usize) -> anyhow::Result<Self> {
         let memory = VmMemory::new(memory_size);
@@ -192,10 +189,11 @@ let total = Instant::now();
         let mut address_to_worker = vec![NONE_TEST; self.memory.len()];
 println!("*** Allocating arrays in {:?}", total.elapsed());
         // return self.execute_rec(results, batch, backlog, address_to_worker).await;
-
+let mut junk: Vec<Jobs> = vec!();
         loop {
             if batch.is_empty() {
-                println!("*** Total took {:?}", total.elapsed());
+println!("*** Total took {:?}", total.elapsed());
+                println!("{:?}", junk[0].len());
                 return Ok(results);
             }
 
@@ -241,11 +239,18 @@ let end2 = Instant::now();
             // Prepare next iteration --------------------------------------------------------------
             batch = Arc::try_unwrap(batch_arc).unwrap_or(vec!());
             mem::swap(&mut batch, &mut backlog);
-println!("*** Arc unwrap + swap {:?}", end2.elapsed());
+// println!("*** Arc unwrap + swap {:?}", end2.elapsed());
             // backlog.clear();    // !!!
-            unsafe {
-                backlog.set_len(0);
-            }
+            // unsafe {
+            //     backlog.set_len(0);
+            // }
+            // backlog.truncate(0); // !!!
+            // backlog.drain(0..).for_each(std::mem::drop);
+            let mut previous_backlog = vec!();
+            mem::swap(&mut backlog, &mut previous_backlog);
+            junk.push(previous_backlog);
+
+            // backlog = vec!();   // !!!
 println!("*** End of loop took {:?}", end1.elapsed());
         }
     }

@@ -11,7 +11,7 @@ use async_trait::async_trait;
 use tokio::runtime::{Handle, Runtime};
 use crate::transaction::Transaction;
 use crate::vm::{CPU, ExecutionResult, Jobs};
-use crate::vm_implementation::{SharedMemory, VmMemory, WorkerIndex};
+use crate::vm_implementation::{SharedMemory, VmMemory};
 use crate::wip::{AssignedWorker, Word};
 
 #[derive(Debug)]
@@ -51,7 +51,8 @@ pub trait WorkerB {
 
         for (tx_index, (tx, assigned_worker)) in assignment.enumerate() {
             if *assigned_worker == worker_index {
-                stack.clear();
+                // stack.clear();
+                stack.truncate(0);
                 for instr in tx.instructions.iter() {
                     CPU::execute_from_shared(instr, &mut stack, &mut shared_memory);
                 }

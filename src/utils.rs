@@ -6,12 +6,11 @@ use hwloc::{ObjectType, Topology, TopologyObject};
 use num_traits::{Inv, ToPrimitive, Zero};
 use tokio::time::Instant;
 use rand::seq::SliceRandom;
+use crate::config::BenchmarkConfig;
 
-use crate::config::Config;
 use crate::transaction::{Instruction, Transaction, TransactionAddress};
 use crate::vm::{ExecutionResult, Jobs};
 
-// const DEBUG: bool = false;
 #[macro_export]
 macro_rules! debugging {
     () => {
@@ -60,9 +59,9 @@ pub fn get_nb_cores(topo: &Topology) -> usize {
     return all_cores.len();
 }
 
-pub fn get_nb_nodes(topo: &Topology, config: &Config) -> Result<usize> {
+pub fn get_nb_nodes(topo: &Topology, requested_nb_nodes: Option<usize>) -> Result<usize> {
     let nb_cores = get_nb_cores(&topo);
-    match config.nb_nodes {
+    match requested_nb_nodes {
         Some(nb_nodes) if nb_nodes > nb_cores => {
             let error_msg = anyhow::anyhow!(
                 "Not enough cores. {} requested but only {} available",
@@ -74,7 +73,7 @@ pub fn get_nb_nodes(topo: &Topology, config: &Config) -> Result<usize> {
     }
 }
 
-pub fn account_creation_batch(batch_size: usize, nb_accounts: usize, amount: u64) -> Vec<Transaction> {
+pub fn batch_account_creation(batch_size: usize, nb_accounts: usize, amount: u64) -> Vec<Transaction> {
     let mut batch = Vec::with_capacity(batch_size);
     for i in 0..nb_accounts {
         let create = Instruction::CreateAccount(i as u64, amount);
@@ -90,14 +89,14 @@ pub fn account_creation_batch(batch_size: usize, nb_accounts: usize, amount: u64
     return batch;
 }
 
-pub fn transfer(from: TransactionAddress, to: TransactionAddress, amount: u64) -> Vec<Instruction> {
+fn transfer(from: TransactionAddress, to: TransactionAddress, amount: u64) -> Vec<Instruction> {
     return vec!(
         Instruction::Decrement(from, amount),
         Instruction::Increment(to, amount),
     );
 }
 
-pub fn transaction_loop(batch_size: usize, nb_account: usize) -> Vec<Transaction> {
+pub fn batch_transfer_loop(batch_size: usize, nb_account: usize) -> Vec<Transaction> {
 
     let mut batch = Vec::with_capacity(batch_size);
     for account in 0..(nb_account-1) {
@@ -112,6 +111,7 @@ pub fn transaction_loop(batch_size: usize, nb_account: usize) -> Vec<Transaction
         batch.push(tx);
     }
 
+    // TODO If we shuffle the batch, we probably get different performance
     return batch;
 }
 
@@ -139,7 +139,6 @@ pub fn batch_with_conflicts(batch_size: usize, conflict_rate: f64) -> Jobs {
         batch.push(tx);
     }
 
-    //
     let indices: Vec<usize> = (0..batch_size).collect();
 
     let mut conflict_counter = 0;
@@ -163,6 +162,8 @@ pub fn batch_with_conflicts(batch_size: usize, conflict_rate: f64) -> Jobs {
             }
         }
     }
+
+    // print_conflict_rate(&batch);
 
     batch
 }
@@ -232,86 +233,7 @@ pub fn print_conflict_rate(batch: &Vec<Transaction>) {
     println!();
 }
 
-
-pub trait AddressGenerator {
-    fn next(&mut self) -> TransactionAddress;
-}
-
-pub struct ContentionGenerator {
-    from_address: TransactionAddress,
-    contention_accounts: Vec<TransactionAddress>
-}
-
-impl ContentionGenerator {
-    pub fn new(from_address: TransactionAddress, contention_rate: f64) -> Result<Self> {
-
-        let contention_accounts = if contention_rate.is_zero() {
-            vec!()
-        } else {
-            let nb_contention_accounts = contention_rate.inv().ceil()
-                .to_usize()
-                .ok_or(anyhow!("Unable to compute number of contention accounts"))?;
-
-            (0..nb_contention_accounts)
-                .map(|addr| from_address + addr as u64)
-                .map(|addr| addr as u64)
-                .collect()
-        };
-
-        return Ok(Self {
-            from_address,
-            contention_accounts
-        })
-    }
-
-    pub fn nb_contention_accounts(&self) -> usize {
-        if self.contention_accounts.is_empty() {
-            return self.from_address as usize;
-        }
-        return self.contention_accounts.len();
-    }
-}
-
-impl AddressGenerator for ContentionGenerator {
-    fn next(&mut self) -> TransactionAddress {
-        match self.contention_accounts.choose(&mut rand::thread_rng()) {
-            Some(addr) => *addr,
-            None => {
-                let addr = self.from_address;
-                self.from_address += 1;
-                addr
-            }
-        }
-    }
-}
-
-pub fn create_batch_from_generator<G>(batch_size: usize, generator: &mut G) -> Jobs
-where G: AddressGenerator {
-
-    let mut batch = Vec::with_capacity(batch_size);
-
-    for addr in 0..batch_size {
-        let from = addr as u64;
-        let to = generator.next() ;
-        let amount = 2;
-
-        let tx = Transaction{
-            from,
-            to,
-            instructions: transfer(from, to, amount),
-        };
-
-        batch.push(tx);
-    }
-
-    return batch;
-}
-
-// pub fn create_conflict__batch(batch_size: usize, seed: usize, conflict_chance: f64) {
-//     let nb_conlfict_accounts = conflict_chance.inv().ceil().to_usize();
-// }
-
-pub fn create_batch_partitioned(batch_size: usize, nb_partitions: usize) -> Vec<Transaction> {
+pub fn batch_partitioned(batch_size: usize, nb_partitions: usize) -> Vec<Transaction> {
     let mut batch = Vec::with_capacity(batch_size);
     let chunks = (batch_size / nb_partitions) as u64;
 
@@ -329,36 +251,6 @@ pub fn create_batch_partitioned(batch_size: usize, nb_partitions: usize) -> Vec<
     }
 
     return batch;
-}
-
-pub fn print_metrics(
-    batch_results: Vec<(Vec<ExecutionResult>, Instant, Duration)>,
-    total_duration: Duration
-) {
-
-    // let mut processed: u64 = 0;
-    // let nb_batches = batch_results.len();
-    // let mut sum_latency = Duration::from_millis(0);
-    // let mut min_latency = Duration::MAX;
-    // let mut max_latency = Duration::from_nanos(0);
-
-    // for (results, execution_start, _duration) in batch_results {
-    //     for result in results {
-    //         let latency = result.execution_end - execution_start;
-    //         sum_latency += latency;
-    //         min_latency = min_latency.min(latency);
-    //         max_latency = max_latency.max(latency);
-    //         processed += 1;
-    //     }
-    // }
-
-    // println!("Batch size: {}, tx processed: {}", batch_size, processed);
-    // print_throughput(nb_batches, processed as usize, total_duration);
-    // println!();
-    // println!("Min latency is {:?}", min_latency);
-    // println!("Max latency is {:?}", max_latency);
-    // // println!("Average latency is {:?} µs", sum_latency.as_micros() / processed as u128);
-    // println!("Average latency is {:?} ms", sum_latency.as_millis() / processed as u128);
 }
 
 pub fn print_throughput(nb_batches: usize, nb_transactions: usize, duration: Duration) {
