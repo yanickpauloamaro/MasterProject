@@ -27,38 +27,13 @@ use tokio::task;
 use ed25519_dalek::Sha512;
 use ed25519_dalek::Digest as _;
 
-use crate::basic_vm::{BasicVM, BasicWorker};
 use crate::transaction::{Instruction, Transaction, TransactionAddress, TransactionOutput};
-use crate::config::Config;
 use crate::{debug, debugging};
-use crate::utils::{compatible, get_nb_nodes, print_metrics};
-use crate::vm::{Batch, CHANNEL_CAPACITY, CPU, ExecutionResult, Jobs, VM, WorkerPool};
-use crate::vm_implementation::{VMa, VMb, VMc, VmType, WorkerIndex};
+use crate::utils::{compatible, get_nb_nodes};
+use crate::vm::{Batch, CPU, ExecutionResult, Jobs};
+use crate::vm_implementation::{VMa, VMb, VMc, VmType};
 use crate::worker_implementation::{WorkerB, WorkerBStd, WorkerBTokio};
 
-
-// pub trait Assignment {
-//
-// }
-// // pub struct
-// pub struct None;
-// pub struct Index {
-//     i: WorkerIndex
-// }
-// pub struct Conflict;
-// pub struct Executed;
-//
-// #[repr(i16)]
-// pub enum Test {
-//     // Executed = -2,
-//     // Conflict = -1,
-//     // None = 0,
-//     // Index(u8),
-//     // Executed(-2),
-//     // Conflict(-1),
-//     None(ZERO),
-// }
-// pub const ZERO: i16 = 0;
 pub const EXECUTED_TEST: AssignedWorker = AssignedWorker::MAX-2;
 pub const CONFLICT_TEST: AssignedWorker = AssignedWorker::MAX-1;
 pub const NONE_TEST: AssignedWorker = 0;
@@ -67,18 +42,7 @@ pub const CONFLICT_WIP: u8 = u8::MAX;
 pub const DONE: u8 = CONFLICT_WIP - 1;
 pub const NONE_WIP: u8 = CONFLICT_WIP - 2;
 
-//region test
-pub type AssignedWorker = u16;
-
-//endregion
-pub trait Executor {
-    fn execute(&mut self, mut backlog: Jobs) -> Result<Vec<ExecutionResult>> {
-        todo!();
-    }
-
-    fn set_memory(&mut self, value: Word);
-}
-
+pub type AssignedWorker = u8;
 pub type Word = u64;
 pub type Address = u64;
 
@@ -160,9 +124,6 @@ pub fn assign_workers_new_impl(nb_workers: usize, batch: &Jobs, address_to_worke
             next_worker = (next_worker + assign_next_worker as AssignedWorker) % nb_workers as AssignedWorker;
 
         } else {
-            println!("***** Conflict between {} and {} for addresses {} and {}",
-            worker_from, worker_to, tx.from, tx.to
-            );
             backlog.push(tx.clone());
         }
     }
@@ -222,7 +183,170 @@ s: &mut DefaultHasher) -> Vec<u8> {
     return tx_to_worker;
 }
 
-pub fn assign_workers_dummy_modulo(nb_workers: usize, batch: &Jobs, address_to_worker: &mut Vec<AssignedWorker>, backlog: &mut Jobs) -> Vec<AssignedWorker> {
+pub fn assign_workers_new_impl_3(nb_workers: usize, batch: &Jobs, address_to_worker: &mut Vec<AssignedWorker>, backlog: &mut Jobs) -> Vec<AssignedWorker> {
+    let mut tx_to_worker = vec![NONE_TEST; batch.len()];
+    let mut next_worker = NONE_TEST;
+
+    for (index, tx) in batch.iter().enumerate() {
+        let from = tx.from as usize;
+        let to = tx.to as usize;
+
+        let worker_from = address_to_worker[from];
+        let worker_to = address_to_worker[to];
+
+        let assigned = match (worker_from, worker_to) {
+            (NONE_TEST, NONE_TEST) => {
+                // println!("Neither address is assigned: from={}, to={}", from, to);
+                let worker = next_worker + 1;
+                next_worker = (next_worker + 1) % nb_workers as AssignedWorker;
+                address_to_worker[from] = worker;
+                address_to_worker[to] = worker;
+                worker
+            },
+            (worker, NONE_TEST) => {
+                // println!("First address is assigned to {}: from={}, to={}", worker, from, to);
+                address_to_worker[to] = worker;
+                worker
+            },
+            (NONE_TEST, worker) => {
+                // println!("Second address is assigned to {}: from={}, to={}", worker, from, to);
+                address_to_worker[from] = worker;
+                worker
+            },
+            (a, b) if a == b => {
+                // println!("Both addresses are assigned to {}: from={}, to={}", a, from, to);
+                a
+            },
+            (a, b) => {
+                // println!("Both addresses are assigned to different workers: from={}->{}, to={}->{}", from, a, to, b);
+                backlog.push(tx.clone());
+                continue;
+            },
+        };
+
+        tx_to_worker[index] = assigned;
+    }
+
+    return tx_to_worker;
+}
+
+pub fn assign_workers_new_impl_4(nb_workers: usize, batch: &Jobs, address_to_worker: &mut Vec<AssignedWorker>, backlog: &mut Jobs) -> Vec<AssignedWorker> {
+    let mut tx_to_worker = vec![NONE_TEST; batch.len()];
+    let mut next_worker = NONE_TEST;
+
+    for (index, tx) in batch.iter().enumerate() {
+
+        // let from = (tx.from as usize) % address_to_worker.len(); // !!!
+        // let to = (tx.to as usize) % address_to_worker.len(); // !!!
+
+        let from = tx.from as usize;
+        let to = tx.to as usize;
+        // let from = (tx.from as usize) >> 1; // !!!
+        // let to = (tx.to as usize) >> 1; // !!!
+
+        let worker_from = address_to_worker[from];
+        let worker_to = address_to_worker[to];
+
+        // if worker_from == NONE_TEST && worker_to == NONE_TEST {
+        //     let assigned = next_worker + 1;
+        //     address_to_worker[from] = assigned;
+        //     address_to_worker[to] = assigned;
+        //     tx_to_worker[index] = assigned;
+        //     next_worker = (next_worker + 1) % nb_workers as AssignedWorker;
+        //
+        // } else if worker_from == NONE_TEST {
+        //     address_to_worker[from] = worker_to;
+        //     tx_to_worker[index] = worker_to;
+        //
+        // } else if worker_to == NONE_TEST {
+        //     address_to_worker[to] = worker_from;
+        //     tx_to_worker[index] = worker_from;
+        //
+        // } else if worker_from == worker_to {
+        //     tx_to_worker[index] = worker_from;
+        //
+        // } else {
+        //     backlog.push(tx.clone());
+        // }
+
+        // Slightly better
+        if worker_from == NONE_TEST && worker_to == NONE_TEST {
+            let assigned = next_worker + 1;
+            address_to_worker[from] = assigned;
+            address_to_worker[to] = assigned;
+            tx_to_worker[index] = assigned;
+            next_worker = (next_worker + 1) % nb_workers as AssignedWorker;
+
+        } else if worker_from == NONE_TEST || worker_to == NONE_TEST {
+            let assigned = max(worker_from, worker_to);
+            address_to_worker[from] = assigned;
+            address_to_worker[to] = assigned;
+            tx_to_worker[index] = assigned;
+
+        } else if worker_from == worker_to {
+            tx_to_worker[index] = worker_from;
+
+        } else {
+            // println!("** conflict:");
+            // println!("addr {} -> worker {}", from, worker_from);
+            // println!("addr {} -> worker {}", to, worker_to);
+            backlog.push(tx.clone());
+        }
+    }
+
+    return tx_to_worker;
+}
+
+pub fn assign_workers_new_impl_5<'a>(nb_workers: usize, batch: &'a Jobs, address_to_worker: &mut HashMap<TransactionAddress, AssignedWorker>, backlog: &mut Jobs) -> Vec<AssignedWorker> {
+    let mut tx_to_worker = vec![NONE_TEST; batch.len()];
+    let mut next_worker = NONE_TEST;
+
+    for (index, tx) in batch.iter().enumerate() {
+        let from = tx.from;
+        let to = tx.to;
+
+        // let from = (tx.from as usize) % address_to_worker.len(); // !!!
+        // let to = (tx.to as usize) % address_to_worker.len(); // !!!
+
+        // let from = (tx.from as usize) >> 1; // !!!
+        // let to = (tx.to as usize) >> 1; // !!!
+
+        let worker_from = address_to_worker.get(&from)
+            .unwrap_or(&NONE_TEST);
+        let worker_to = address_to_worker.get(&to)
+            .unwrap_or(&NONE_TEST);
+
+        // Slightly better
+        if *worker_from == NONE_TEST && *worker_to == NONE_TEST {
+            let assigned = next_worker + 1;
+            address_to_worker.insert(from, assigned);
+            address_to_worker.insert(to, assigned);
+            tx_to_worker[index] = assigned;
+            next_worker = (next_worker + 1) % nb_workers as AssignedWorker;
+
+        } else if *worker_from == NONE_TEST || *worker_to == NONE_TEST {
+            let assigned = max(*worker_from, *worker_to);
+            address_to_worker.insert(from, assigned);
+            address_to_worker.insert(to, assigned);
+            tx_to_worker[index] = assigned;
+
+        } else if *worker_from == *worker_to {
+            tx_to_worker[index] = *worker_from;
+
+        } else {
+            backlog.push(tx.clone());
+        }
+    }
+
+    return tx_to_worker;
+}
+
+pub fn assign_workers_dummy_modulo(
+    nb_workers: usize,
+    batch: &Jobs,
+    address_to_worker: &mut Vec<AssignedWorker>,
+    backlog: &mut Jobs
+) -> Vec<AssignedWorker> {
     let mut tx_to_worker = vec![NONE_TEST; batch.len()];
     let mut next_worker = 0 as AssignedWorker;
 
@@ -233,7 +357,7 @@ pub fn assign_workers_dummy_modulo(nb_workers: usize, batch: &Jobs, address_to_w
         let worker_from = address_to_worker[from];
         let worker_to = address_to_worker[to];
 
-        let assigned = 1 + (index % 2) as AssignedWorker;
+        let assigned = index as AssignedWorker;
 
         if assigned != CONFLICT_TEST {
             tx_to_worker[index] = assigned;
@@ -244,30 +368,6 @@ pub fn assign_workers_dummy_modulo(nb_workers: usize, batch: &Jobs, address_to_w
 
     return tx_to_worker;
 }
-
-pub fn assign_workers_dummy_modulo_u16(nb_workers: usize, batch: &Jobs, address_to_worker: &mut Vec<u16>, backlog: &mut Jobs) -> Vec<AssignedWorker> {
-    let mut tx_to_worker = vec![u16::MAX; batch.len()];
-    let mut next_worker = 0 as u16;
-
-    for (index, tx) in batch.iter().enumerate() {
-        let from = tx.from as usize;
-        let to = tx.to as usize;
-
-        let worker_from = address_to_worker[from];
-        let worker_to = address_to_worker[to];
-
-        let assigned = 1 + (index % 2) as u16;
-
-        if assigned != CONFLICT_TEST {
-            tx_to_worker[index] = assigned;
-        } else {
-            backlog.push(tx.clone());
-        }
-    }
-
-    return tx_to_worker;
-}
-
 
 pub fn assign_workers(
     nb_workers: usize,
@@ -358,191 +458,6 @@ pub fn assign_workers(
 }
 
 // =================================================================================================
-struct BloomFilter {
-    filter: Bloom<TransactionAddress>
-}
-
-impl BloomFilter {
-    pub fn new(expected_size: usize, false_positive: f64) -> Self {
-        Self{ filter: Bloom::new_for_fp_rate(expected_size, false_positive) }
-    }
-    pub fn has(&self, tx: &Transaction) -> bool {
-        return self.filter.check(&tx.from) || self.filter.check(&tx.to)
-    }
-
-    pub fn insert(&mut self, tx: &Transaction) {
-        self.filter.set(&tx.from);
-        self.filter.set(&tx.to);
-    }
-
-    pub fn clear(&mut self) {
-        self.filter.clear();
-    }
-}
-
-pub struct BloomVM {
-    nb_workers: usize,
-    batch_size: usize,
-    filters: Vec<BloomFilter>,
-    tx_jobs: Vec<Sender<Jobs>>,
-    rx_results: Receiver<(Vec<ExecutionResult>, Jobs)>
-}
-
-impl BloomVM {
-    // TODO Is there a way to call the original trait implementation?
-    async fn execute(&mut self, mut backlog: Jobs) -> Result<Vec<ExecutionResult>> {
-        debug!("Clearing bloom filters");
-        self.clear_filters();
-        return VM::execute(self, backlog).await;
-    }
-
-    fn clear_filters(&mut self) {
-        for filter in self.filters.iter_mut() {
-            filter.clear();
-        }
-    }
-
-    pub async fn init(&mut self, jobs: Jobs) -> Result<Vec<ExecutionResult>>{
-        println!("Sending init to workers");
-        for sender in self.tx_jobs.iter() {
-            sender.send(jobs.clone()).await;
-        }
-        println!("Collecting init");
-        let res = self.collect().await?;
-        return Ok(res.0);
-    }
-}
-
-#[async_trait]
-impl VM for BloomVM {
-    fn new(nb_workers: usize, batch_size: usize) -> Self {
-        let false_positive: f64 = 0.1;  // 10%?
-        let (tx_jobs, rx_results) = BasicWorker::new_worker_pool(nb_workers);
-        let filters = (0..nb_workers).map(|_| BloomFilter::new(batch_size, false_positive)).collect();
-
-        return Self {
-            nb_workers,
-            batch_size,
-            filters,
-            tx_jobs,
-            rx_results
-        };
-    }
-
-    async fn prepare(&mut self) {
-        println!("Waiting for workers to be ready (2s)");
-        // TODO Implement a real way of knowing when the workers are ready...
-        tokio::time::sleep(Duration::from_secs(2)).await;
-    }
-
-    async fn dispatch(&mut self, backlog: &mut Jobs) -> Result<Jobs> {
-        debug!("Dispatch =======================");
-        // TODO once we have mini transactions, we should not reset the filters in dispatch, only in execute
-        // TODO Maybe we can partially clear the Bloom ? i.e. only clear the receivers
-        self.clear_filters();
-
-// let start = Instant::now();
-// let mut finding_assigned_workers = Duration::from_micros(0);
-// let mut rest = Duration::from_micros(0);
-        let mut worker_jobs: Vec<Jobs> = (0..self.nb_workers).map(|_| vec!()).collect();
-        let mut conflicting_jobs: Jobs = vec!();
-        let mut next_worker = 0;
-        for tx in backlog.drain(..backlog.len()) {
-            // Find which worker is responsible for the addresses in this transaction
-// let mut a = Instant::now();
-            let mut assigned_workers = vec!();
-            for w in 0..self.nb_workers {
-                if self.filters[w].has(&tx) {
-                    assigned_workers.push(w);
-                }
-            }
-// finding_assigned_workers += a.elapsed();
-// a = Instant::now();
-            let assignee = match assigned_workers[..] {
-                [] => {
-                    // No worker is responsible for this tx, so pick the next one
-                    debug!("{:?} -> Assigned to {}", tx, next_worker);
-                    let worker = next_worker;
-                    next_worker = (next_worker + 1) % self.nb_workers;
-                    worker
-                },
-                [worker] => {
-                    // A worker is responsible for this tx
-                    debug!("{:?} -> Claimed by {}", tx, worker);
-                    worker
-                },
-                _ => {
-                    // There might be a conflict among workers
-                    // Possible reasons:
-                    //  - the bloom filter returned a false positive for some worker(s)
-                    //  - the tx accesses addresses that are from assigned to different workers
-                    debug!("{:?} -> Conflict between {:?}", tx, assigned_workers);
-                    conflicting_jobs.push(tx);
-                    continue;
-                }
-            };
-
-            // let assignee = assigned_workers.pop().unwrap_or_else(|| {
-            //     debug!("{:?} -> Assigned to {}", tx, next_worker);
-            //     let worker = next_worker;
-            //     next_worker = (next_worker + 1) % self.nb_workers;
-            //     worker
-            // });
-            //
-            // if assigned_workers.len() > 1 {
-            //     debug!("{:?} -> Conflict between {:?}", tx, assigned_workers);
-            //     conflicting_jobs.push(tx);
-            //     continue;
-            // }
-
-            // Assign the transaction to the worker
-            self.filters[assignee].insert(&tx);
-            worker_jobs[assignee].push(tx);
-// rest += a.elapsed();
-        }
-// println!("Separating transactions took {:?}", start.elapsed());
-// println!("\tIncluding {:?} for finding assigned workers", finding_assigned_workers);
-// println!("\tIncluding {:?} for the rest", rest);
-// println!();
-
-        // Send jobs to each worker
-        debug!("Sending jobs to workers...");
-// let start = Instant::now();
-        for (worker, jobs) in worker_jobs.into_iter().enumerate() {
-            // N.B: Must send to worker even if the jobs contains no transaction because ::collect
-            // expects all workers to send a result
-            self.tx_jobs[worker].send(jobs).await
-                .context(format!("Unable to send job to worker"))?;
-        }
-// println!("Sending transactions took {:?}", start.elapsed());
-// println!();
-
-        debug!();
-
-        Ok(conflicting_jobs)
-    }
-
-    async fn collect(&mut self) -> Result<(Vec<ExecutionResult>, Jobs)> {
-
-        let mut collected_results = Vec::with_capacity(self.batch_size);
-        let mut collected_jobs = Vec::with_capacity(self.batch_size);
-
-        debug!("Collecting responses...");
-        // Wait for all workers to give a response
-        for _ in 0..self.nb_workers {
-            let (mut results, mut jobs) = self.rx_results.recv().await
-                .ok_or(anyhow::anyhow!("Unable to receive results from workers"))?;
-
-            collected_results.append(&mut results);
-            collected_jobs.append(&mut jobs);
-        }
-        debug!("Got all responses");
-        debug!();
-
-        return Ok((collected_results, collected_jobs));
-    }
-}
-
 
 pub fn numa_latency() {
     print!("Checking compatibility with cpu binding...");
