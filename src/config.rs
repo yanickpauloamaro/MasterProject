@@ -1,11 +1,11 @@
-use std::fmt;
-use crate::transaction::TransactionType;
-use serde::{Serialize, Deserialize};
 use std::fs::{self};
 use std::time::Duration;
-use anyhow::{Result, Context};
+
+use anyhow::{Context, Result};
+use serde::{Deserialize, Serialize};
 use serde::de::DeserializeOwned;
-use crate::vm_implementation::VmType;
+
+use crate::vm_utils::VmType;
 
 pub trait ConfigFile {
     fn new(path: &str) -> Result<Self>

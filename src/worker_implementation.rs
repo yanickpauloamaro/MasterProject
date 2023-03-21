@@ -1,17 +1,17 @@
-use tokio::sync::mpsc::{channel as tokio_channel, Receiver as TokioReceiver, Sender as TokioSender};
-use std::thread;
-use std::sync::mpsc::{channel, Receiver, Sender};
-use std::sync::{Arc, mpsc};
-use crossbeam_utils::thread as crossbeam;
-use core_affinity::{CoreId};
-
 use std::collections::VecDeque;
+use std::sync::Arc;
+use std::sync::mpsc::{channel, Receiver, Sender};
+use std::thread;
+
 use anyhow::{anyhow, Context, Result};
-use async_trait::async_trait;
-use tokio::runtime::{Handle, Runtime};
+use core_affinity::CoreId;
+use crossbeam_utils::thread as crossbeam;
+use tokio::runtime::Handle;
+use tokio::sync::mpsc::{channel as tokio_channel, Receiver as TokioReceiver, Sender as TokioSender};
+
 use crate::transaction::Transaction;
 use crate::vm::{CPU, ExecutionResult, Jobs};
-use crate::vm_implementation::{SharedMemory, VmMemory};
+use crate::vm_utils::{SharedMemory, VmMemory};
 use crate::wip::{AssignedWorker, Word};
 
 #[derive(Debug)]
@@ -35,6 +35,7 @@ pub trait WorkerB {
 
     fn receive(&mut self) -> Result<WorkerOutput>;
 
+    // TOD split trait and include Worker C
     fn process_job(job: WorkerInput, worker_index: AssignedWorker) -> WorkerOutput {
 
         let mut shared_memory = job.memory;
@@ -47,7 +48,7 @@ pub trait WorkerB {
 
         let mut stack: VecDeque<Word> = VecDeque::new();
         let mut worker_output = vec!();
-        let mut worker_backlog = vec!();
+        let mut _worker_backlog = vec!();
 
         for (tx_index, (tx, assigned_worker)) in assignment.enumerate() {
             if *assigned_worker == worker_index {
@@ -62,7 +63,7 @@ pub trait WorkerB {
             }
         }
 
-        return (accessed, worker_output, worker_backlog);
+        return (accessed, worker_output, _worker_backlog);
     }
 }
 //endregion
@@ -101,8 +102,8 @@ impl WorkerB for WorkerBTokio {
     ) -> Self {
 
         // TODO Pin thread to a core
-        let (tx_job, mut rx_job) = tokio_channel(1);
-        let (mut tx_result, rx_result) = tokio_channel(1);
+        let (tx_job, rx_job) = tokio_channel(1);
+        let (tx_result, rx_result) = tokio_channel(1);
         handle.spawn(async move {
             // println!("Worker {} spawned (tokio)", index);
             Self::execute(rx_job, tx_result, index).await;
@@ -138,7 +139,7 @@ pub struct WorkerBStd {
 }
 
 impl WorkerBStd {
-    pub fn execute(mut rx_job: Receiver<WorkerInput>, tx_result: Sender<WorkerOutput>, worker_index: AssignedWorker) {
+    pub fn execute(rx_job: Receiver<WorkerInput>, tx_result: Sender<WorkerOutput>, worker_index: AssignedWorker) {
         loop {
             match rx_job.recv() {
                 Ok(job) => {
@@ -149,7 +150,7 @@ impl WorkerBStd {
                         return;
                     }
                 },
-                Err(e) => {
+                Err(_e) => {
                     return;
                 }
             }
@@ -164,8 +165,8 @@ impl WorkerB for WorkerBStd {
     ) -> Self {
 
         // TODO Pin thread to a core using core_affinity
-        let (tx_job, mut rx_job) = channel();
-        let (mut tx_result, rx_result) = channel();
+        let (tx_job, rx_job) = channel();
+        let (tx_result, rx_result) = channel();
         thread::spawn(move || {
 
             let res = core_affinity::set_for_current(CoreId{ id: index as usize - 1});
@@ -225,11 +226,11 @@ impl WorkerC {
 
                 handles.push(s.spawn(move |_| {
                     let mut accessed = vec![0; assignment.len()];
-                    let worker_name = format!("Worker {}", worker_index);
+                    let _worker_name = format!("Worker {}", worker_index);
 
                     let mut stack: VecDeque<Word> = VecDeque::new();
                     let mut worker_output = vec!();
-                    let mut worker_backlog = vec!();
+                    let mut _worker_backlog = vec!();
 
                     for (tx_index, (tx, assigned_worker)) in assignment.clone().enumerate() {
                         if *assigned_worker == worker_index {
@@ -241,16 +242,17 @@ impl WorkerC {
                             let result = ExecutionResult::todo();
                             worker_output.push(result);
                             accessed[tx_index] = 1;
+                            // TODO Push next transaction to backlog
                         }
                     }
 
-                    (accessed, worker_output, worker_backlog)
+                    (accessed, worker_output, _worker_backlog)
                 }));
             }
 
-            for (worker_index, handle) in handles.into_iter().enumerate() {
+            for (_worker_index, handle) in handles.into_iter().enumerate() {
                 match handle.join() {
-                    Ok((accessed, mut worker_output, mut worker_backlog)) => {
+                    Ok((_accessed, mut worker_output, mut worker_backlog)) => {
                         results.append(&mut worker_output);
                         backlog.append(&mut worker_backlog);
                     },

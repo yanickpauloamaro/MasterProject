@@ -1,42 +1,15 @@
 #![allow(unused_variables)]
 
 use std::cmp::max;
-use crossbeam_utils::thread;
-use std::collections::{HashMap, LinkedList, VecDeque};
+use std::collections::HashMap;
 use std::collections::hash_map::DefaultHasher;
-use std::fmt::{Display, Formatter};
-use std::hash::{Hash, Hasher};
-use std::iter::Zip;
-use std::mem;
-use std::slice::Iter;
-use tokio::sync::mpsc::{channel, Receiver, Sender};
-use tokio::sync::{broadcast, oneshot, RwLock};
-use tokio::time::{Duration, Instant};
-use either::Either;
-// use std::{mem, thread};
-use std::sync::Arc;
-use anyhow::{anyhow, Context, Error, Result};
-use async_trait::async_trait;
-use bloomfilter::Bloom;
+
 use hwloc::Topology;
-use tokio::task::JoinHandle;
-use async_recursion::async_recursion;
-use core_affinity::CoreId;
-use tokio::task;
-// use tokio::task;
-use ed25519_dalek::Sha512;
-use ed25519_dalek::Digest as _;
 
-use crate::transaction::{Instruction, Transaction, TransactionAddress, TransactionOutput};
-use crate::{debug, debugging};
-use crate::utils::{compatible, get_nb_nodes};
-use crate::vm::{Batch, CPU, ExecutionResult, Jobs};
-use crate::vm_implementation::{VMa, VMb, VMc, VmType};
-use crate::worker_implementation::{WorkerB, WorkerBStd, WorkerBTokio};
-
-pub const EXECUTED_TEST: AssignedWorker = AssignedWorker::MAX-2;
-pub const CONFLICT_TEST: AssignedWorker = AssignedWorker::MAX-1;
-pub const NONE_TEST: AssignedWorker = 0;
+use crate::transaction::TransactionAddress;
+use crate::utils::compatible;
+use crate::vm::Jobs;
+use crate::vm_utils::{CONFLICTING, UNASSIGNED};
 
 pub const CONFLICT_WIP: u8 = u8::MAX;
 pub const DONE: u8 = CONFLICT_WIP - 1;
@@ -47,8 +20,8 @@ pub type Word = u64;
 pub type Address = u64;
 
 pub fn assign_workers_original(nb_workers: usize, batch: &Jobs, address_to_worker: &mut Vec<AssignedWorker>, backlog: &mut Jobs) -> Vec<AssignedWorker> {
-    let mut tx_to_worker = vec![NONE_TEST; batch.len()];
-    let mut next_worker = NONE_TEST;
+    let mut tx_to_worker = vec![UNASSIGNED; batch.len()];
+    let mut next_worker = UNASSIGNED;
 
     for (index, tx) in batch.iter().enumerate() {
         let from = tx.from as usize;
@@ -57,8 +30,8 @@ pub fn assign_workers_original(nb_workers: usize, batch: &Jobs, address_to_worke
         let worker_from = address_to_worker[from];
         let worker_to = address_to_worker[to];
 
-        let assigned = match (worker_from, worker_to) {
-            (NONE_TEST, NONE_TEST) => {
+        let assignment = match (worker_from, worker_to) {
+            (UNASSIGNED, UNASSIGNED) => {
                 // println!("Neither address is assigned: from={}, to={}", from, to);
                 let worker = next_worker + 1;
                 next_worker = (next_worker + 1) % nb_workers as AssignedWorker;
@@ -66,12 +39,12 @@ pub fn assign_workers_original(nb_workers: usize, batch: &Jobs, address_to_worke
                 address_to_worker[to] = worker;
                 worker
             },
-            (worker, NONE_TEST) => {
+            (worker, UNASSIGNED) => {
                 // println!("First address is assigned to {}: from={}, to={}", worker, from, to);
                 address_to_worker[to] = worker;
                 worker
             },
-            (NONE_TEST, worker) => {
+            (UNASSIGNED, worker) => {
                 // println!("Second address is assigned to {}: from={}, to={}", worker, from, to);
                 address_to_worker[from] = worker;
                 worker
@@ -82,12 +55,12 @@ pub fn assign_workers_original(nb_workers: usize, batch: &Jobs, address_to_worke
             },
             (a, b) => {
                 // println!("Both addresses are assigned to different workers: from={}->{}, to={}->{}", from, a, to, b);
-                CONFLICT_TEST
+                CONFLICTING
             },
         };
 
-        if assigned != CONFLICT_TEST {
-            tx_to_worker[index] = assigned;
+        if assignment != CONFLICTING {
+            tx_to_worker[index] = assignment;
         } else {
             backlog.push(tx.clone());
         }
@@ -97,7 +70,7 @@ pub fn assign_workers_original(nb_workers: usize, batch: &Jobs, address_to_worke
 }
 
 pub fn assign_workers_new_impl(nb_workers: usize, batch: &Jobs, address_to_worker: &mut Vec<AssignedWorker>, backlog: &mut Jobs) -> Vec<AssignedWorker> {
-    let mut tx_to_worker = vec![NONE_TEST; batch.len()];
+    let mut tx_to_worker = vec![UNASSIGNED; batch.len()];
     let mut next_worker = 0 as AssignedWorker;
 
     for (index, tx) in batch.iter().enumerate() {
@@ -108,11 +81,11 @@ pub fn assign_workers_new_impl(nb_workers: usize, batch: &Jobs, address_to_worke
         let worker_to = address_to_worker[to];
 
         let has_conflict = (worker_from != worker_to) &&
-            (worker_from != NONE_TEST) &&
-            (worker_to != NONE_TEST);
+            (worker_from != UNASSIGNED) &&
+            (worker_to != UNASSIGNED);
 
         if !has_conflict {
-            let assign_next_worker = (worker_from == NONE_TEST) && (worker_to == NONE_TEST);
+            let assign_next_worker = (worker_from == UNASSIGNED) && (worker_to == UNASSIGNED);
 
             let assigned_worker = max(worker_from, worker_from) +
                 assign_next_worker as AssignedWorker * (next_worker + 1);
@@ -145,25 +118,25 @@ s: &mut DefaultHasher) -> Vec<u8> {
         // let from = (tx.from as usize) % address_to_worker.len(); // !!!
         // let to = (tx.to as usize) % address_to_worker.len(); // !!!
 
-        let from = (tx.from as usize);
-        let to = (tx.to as usize);
+        let from = tx.from as usize;
+        let to = tx.to as usize;
 
         let worker_from = address_to_worker[from];
         let worker_to = address_to_worker[to];
 
-        let a = (worker_from != worker_to);
-        let b = (worker_from != 0);
-        let c = (worker_to != 0);
+        let a = worker_from != worker_to;
+        let b = worker_from != 0;
+        let c = worker_to != 0;
         let has_conflict = a && b && c;
 
         if !has_conflict {   // !!!
-            let d = (worker_from == 0);
-            let e = (worker_to == 0);
+            let d = worker_from == 0;
+            let e = worker_to == 0;
             let assign_next_worker = d && e;
 
             let f = max(worker_from, worker_from);
             let g = assign_next_worker as u8;
-            let h = g * (next_worker + 1);
+            let h = g * next_worker + 1;
             let assigned_worker = f + h;
 
             address_to_worker[from] = assigned_worker;   // !!!
@@ -171,7 +144,7 @@ s: &mut DefaultHasher) -> Vec<u8> {
             tx_to_worker[index] = assigned_worker;   // !!!
 
             let i = assign_next_worker as u8;
-            let j = (next_worker + i);
+            let j = next_worker + i;
             let k = nb_workers as u8;
             let l = j % k;
             next_worker = l;
@@ -184,8 +157,8 @@ s: &mut DefaultHasher) -> Vec<u8> {
 }
 
 pub fn assign_workers_new_impl_3(nb_workers: usize, batch: &Jobs, address_to_worker: &mut Vec<AssignedWorker>, backlog: &mut Jobs) -> Vec<AssignedWorker> {
-    let mut tx_to_worker = vec![NONE_TEST; batch.len()];
-    let mut next_worker = NONE_TEST;
+    let mut tx_to_worker = vec![UNASSIGNED; batch.len()];
+    let mut next_worker = UNASSIGNED;
 
     for (index, tx) in batch.iter().enumerate() {
         let from = tx.from as usize;
@@ -195,7 +168,7 @@ pub fn assign_workers_new_impl_3(nb_workers: usize, batch: &Jobs, address_to_wor
         let worker_to = address_to_worker[to];
 
         let assigned = match (worker_from, worker_to) {
-            (NONE_TEST, NONE_TEST) => {
+            (UNASSIGNED, UNASSIGNED) => {
                 // println!("Neither address is assigned: from={}, to={}", from, to);
                 let worker = next_worker + 1;
                 next_worker = (next_worker + 1) % nb_workers as AssignedWorker;
@@ -203,12 +176,12 @@ pub fn assign_workers_new_impl_3(nb_workers: usize, batch: &Jobs, address_to_wor
                 address_to_worker[to] = worker;
                 worker
             },
-            (worker, NONE_TEST) => {
+            (worker, UNASSIGNED) => {
                 // println!("First address is assigned to {}: from={}, to={}", worker, from, to);
                 address_to_worker[to] = worker;
                 worker
             },
-            (NONE_TEST, worker) => {
+            (UNASSIGNED, worker) => {
                 // println!("Second address is assigned to {}: from={}, to={}", worker, from, to);
                 address_to_worker[from] = worker;
                 worker
@@ -231,8 +204,8 @@ pub fn assign_workers_new_impl_3(nb_workers: usize, batch: &Jobs, address_to_wor
 }
 
 pub fn assign_workers_new_impl_4(nb_workers: usize, batch: &Jobs, address_to_worker: &mut Vec<AssignedWorker>, backlog: &mut Jobs) -> Vec<AssignedWorker> {
-    let mut tx_to_worker = vec![NONE_TEST; batch.len()];
-    let mut next_worker = NONE_TEST;
+    let mut tx_to_worker = vec![UNASSIGNED; batch.len()];
+    let mut next_worker = UNASSIGNED;
 
     for (index, tx) in batch.iter().enumerate() {
 
@@ -270,14 +243,14 @@ pub fn assign_workers_new_impl_4(nb_workers: usize, batch: &Jobs, address_to_wor
         // }
 
         // Slightly better
-        if worker_from == NONE_TEST && worker_to == NONE_TEST {
+        if worker_from == UNASSIGNED && worker_to == UNASSIGNED {
             let assigned = next_worker + 1;
             address_to_worker[from] = assigned;
             address_to_worker[to] = assigned;
             tx_to_worker[index] = assigned;
             next_worker = (next_worker + 1) % nb_workers as AssignedWorker;
 
-        } else if worker_from == NONE_TEST || worker_to == NONE_TEST {
+        } else if worker_from == UNASSIGNED || worker_to == UNASSIGNED {
             let assigned = max(worker_from, worker_to);
             address_to_worker[from] = assigned;
             address_to_worker[to] = assigned;
@@ -298,8 +271,8 @@ pub fn assign_workers_new_impl_4(nb_workers: usize, batch: &Jobs, address_to_wor
 }
 
 pub fn assign_workers_new_impl_5<'a>(nb_workers: usize, batch: &'a Jobs, address_to_worker: &mut HashMap<TransactionAddress, AssignedWorker>, backlog: &mut Jobs) -> Vec<AssignedWorker> {
-    let mut tx_to_worker = vec![NONE_TEST; batch.len()];
-    let mut next_worker = NONE_TEST;
+    let mut tx_to_worker = vec![UNASSIGNED; batch.len()];
+    let mut next_worker = UNASSIGNED;
 
     for (index, tx) in batch.iter().enumerate() {
         let from = tx.from;
@@ -312,19 +285,19 @@ pub fn assign_workers_new_impl_5<'a>(nb_workers: usize, batch: &'a Jobs, address
         // let to = (tx.to as usize) >> 1; // !!!
 
         let worker_from = address_to_worker.get(&from)
-            .unwrap_or(&NONE_TEST);
+            .unwrap_or(&UNASSIGNED);
         let worker_to = address_to_worker.get(&to)
-            .unwrap_or(&NONE_TEST);
+            .unwrap_or(&UNASSIGNED);
 
         // Slightly better
-        if *worker_from == NONE_TEST && *worker_to == NONE_TEST {
+        if *worker_from == UNASSIGNED && *worker_to == UNASSIGNED {
             let assigned = next_worker + 1;
             address_to_worker.insert(from, assigned);
             address_to_worker.insert(to, assigned);
             tx_to_worker[index] = assigned;
             next_worker = (next_worker + 1) % nb_workers as AssignedWorker;
 
-        } else if *worker_from == NONE_TEST || *worker_to == NONE_TEST {
+        } else if *worker_from == UNASSIGNED || *worker_to == UNASSIGNED {
             let assigned = max(*worker_from, *worker_to);
             address_to_worker.insert(from, assigned);
             address_to_worker.insert(to, assigned);
@@ -347,8 +320,8 @@ pub fn assign_workers_dummy_modulo(
     address_to_worker: &mut Vec<AssignedWorker>,
     backlog: &mut Jobs
 ) -> Vec<AssignedWorker> {
-    let mut tx_to_worker = vec![NONE_TEST; batch.len()];
-    let mut next_worker = 0 as AssignedWorker;
+    let mut tx_to_worker = vec![UNASSIGNED; batch.len()];
+    // let mut next_worker = 0 as AssignedWorker;
 
     for (index, tx) in batch.iter().enumerate() {
         let from = tx.from as usize;
@@ -359,99 +332,11 @@ pub fn assign_workers_dummy_modulo(
 
         let assigned = index as AssignedWorker;
 
-        if assigned != CONFLICT_TEST {
+        if assigned != CONFLICTING {
             tx_to_worker[index] = assigned;
         } else {
             backlog.push(tx.clone());
         }
-    }
-
-    return tx_to_worker;
-}
-
-pub fn assign_workers(
-    nb_workers: usize,
-    batch: &Jobs,
-    address_to_worker: &mut Vec<AssignedWorker>,
-    backlog: &mut Jobs
-) -> Vec<AssignedWorker> {
-    let mut tx_to_worker = vec![NONE_TEST; batch.len()];
-    let mut next_worker = 0 as AssignedWorker;
-
-    for (index, tx) in batch.iter().enumerate() {
-        let from = tx.from as usize;
-        let to = tx.to as usize;
-
-        let worker_from = address_to_worker[from];
-        let worker_to = address_to_worker[to];
-
-        let has_conflict = (worker_from != worker_to) &&
-            (worker_from != NONE_TEST) &&
-            (worker_to != NONE_TEST);
-
-        if !has_conflict {
-            // A, None
-            // None, B
-            // None, None
-            // X, X
-
-            let assign_next_worker = (worker_from == NONE_TEST) && (worker_to == NONE_TEST);
-
-            let assigned_worker = max(worker_from, worker_from) +
-                assign_next_worker as AssignedWorker * (next_worker + 1);
-
-            address_to_worker[from] = assigned_worker;
-            address_to_worker[to] = assigned_worker;
-            tx_to_worker[index] = assigned_worker;
-
-            next_worker = (next_worker + assign_next_worker as AssignedWorker) % nb_workers as AssignedWorker;
-
-        } else {
-            backlog.push(tx.clone());
-        }
-
-        // let assigned = match (worker_from, worker_to) {
-        //     (NONE_TEST, NONE_TEST) => {
-        //         // println!("Neither address is assigned: from={}, to={}", from, to);
-        //         let worker = next_worker + 1;
-        //         next_worker = (next_worker + 1) % nb_workers as i16;
-        //         address_to_worker[from] = worker;
-        //         address_to_worker[to] = worker;
-        //         worker
-        //     },
-        //     (worker, NONE_TEST) => {
-        //         // println!("First address is assigned to {}: from={}, to={}", worker, from, to);
-        //         address_to_worker[to] = worker;
-        //         worker
-        //     },
-        //     (NONE_TEST, worker) => {
-        //         // println!("Second address is assigned to {}: from={}, to={}", worker, from, to);
-        //         address_to_worker[from] = worker;
-        //         worker
-        //     },
-        //     (a, b) if a == b => {
-        //         // println!("Both addresses are assigned to {}: from={}, to={}", a, from, to);
-        //         a
-        //     },
-        //     (a, b) => {
-        //         // println!("Both addresses are assigned to different workers: from={}->{}, to={}->{}", from, a, to, b);
-        //         CONFLICT_TEST
-        //     },
-        // };
-        let assigned = 1 + (index % 2) as AssignedWorker;
-        // let assigned = 1;
-
-        if assigned == CONFLICT_TEST {
-            backlog.push(tx.clone());
-        } else {
-            tx_to_worker[index] = assigned;
-        }
-
-        // if assigned != CONFLICT_TEST {
-        //     tx_to_worker[index] = assigned;
-        // } else {
-        //     backlog.push(tx.clone());
-        // }
     }
 
     return tx_to_worker;

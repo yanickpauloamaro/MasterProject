@@ -3,7 +3,7 @@
     "BStd", "A"
   ],
   "nb_cores": [
-    4
+    4, 2
   ],
   "batch_sizes": [
     65536
@@ -11,5 +11,5 @@
   "conflict_rates": [
     0.5
   ],
-  "repetitions": 1
+  "repetitions": 50000
 }

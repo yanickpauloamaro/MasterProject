@@ -16,9 +16,9 @@ pub struct Transaction {
     // pub parameters: Vec<ContractValue>,
 }
 
-type ContractValue = u64;
+// type ContractValue = u64;
 type Amount = u64;
-type Variable = u64;
+// type Variable = u64;
 
 #[derive(Debug, Clone)]
 pub enum Instruction {

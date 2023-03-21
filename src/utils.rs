@@ -1,15 +1,13 @@
 use std::collections::HashMap;
-use std::ops::{Add, Div, Mul};
+use std::ops::{Div, Mul};
 use std::time::Duration;
-use anyhow::{anyhow, Result};
-use hwloc::{ObjectType, Topology, TopologyObject};
-use num_traits::{Inv, ToPrimitive, Zero};
-use tokio::time::Instant;
+
+use anyhow::Result;
+use hwloc::{ObjectType, Topology};
 use rand::seq::SliceRandom;
-use crate::config::BenchmarkConfig;
 
 use crate::transaction::{Instruction, Transaction, TransactionAddress};
-use crate::vm::{ExecutionResult, Jobs};
+use crate::vm::Jobs;
 
 #[macro_export]
 macro_rules! debugging {

@@ -1,39 +1,27 @@
-extern crate hwloc;
+#![allow(unused_imports)]
 extern crate anyhow;
-extern crate tokio;
 extern crate either;
+extern crate hwloc;
+extern crate tokio;
 
+use std::cmp::max;
 use std::collections::{HashMap, HashSet};
 use std::collections::hash_map::DefaultHasher;
 use std::hash::Hash;
 use std::ops::{Add, Div};
 use std::sync::Arc;
 use std::time::Duration;
-use crossbeam_utils::thread;
-use testbench::config::{BenchmarkConfig, ConfigFile};
-use testbench::benchmark::{benchmarking};
+
 use anyhow::{Context, Result};
-use tokio::runtime::Runtime;
-use testbench::vm_implementation::{VMa, VmFactory, VmMemory, VmType};
-use testbench::wip::{
-    assign_workers,
-    assign_workers_dummy_modulo,
-    assign_workers_new_impl,
-    assign_workers_new_impl_2,
-    assign_workers_new_impl_4,
-    assign_workers_new_impl_5,
-    assign_workers_original,
-    AssignedWorker,
-    NONE_TEST,
-    NONE_WIP,
-    numa_latency
-};
 use core_affinity;
-use testbench::transaction::Transaction;
-use testbench::utils::{batch_with_conflicts};
-use rand::seq::SliceRandom;
+use ed25519_dalek::{Sha512};
 use tokio::time::Instant;
-use ed25519_dalek::{Sha512, Digest};
+
+use testbench::benchmark::benchmarking;
+use testbench::config::{BenchmarkConfig, ConfigFile};
+use testbench::transaction::Transaction;
+use testbench::utils::batch_with_conflicts;
+use testbench::vm_utils::{assign_workers, UNASSIGNED};
 
 fn main() -> Result<()>{
     println!("Hello, world!");
@@ -73,15 +61,15 @@ fn profiling(path: &str) -> Result<()> {
     // let reduced_vm_size = memory_size >> 7; // 0.7...%   = 1024
 
     // let mut s = DefaultHasher::new();
-    let mut address_to_worker = vec![1; reduced_vm_size];
+    let mut address_to_worker = vec![UNASSIGNED; reduced_vm_size];
     // let mut address_to_worker = HashMap::new();
 
     let mut latency_sum = Duration::from_nanos(0);
-    for i in 0..config.repetitions {
-        address_to_worker.fill(0);
+    for _i in 0..config.repetitions {
+        address_to_worker.fill(UNASSIGNED);
 
         let a = Instant::now();
-        let assignment = assign_workers_new_impl_4(
+        let _assignment = assign_workers(
             nb_cores,
             &batch,
             &mut address_to_worker,

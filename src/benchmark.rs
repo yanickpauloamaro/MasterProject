@@ -1,35 +1,13 @@
 use std::cell::RefCell;
-use std::io::Write;
-
-use rand::thread_rng;
-use rand::seq::SliceRandom;
-use hwloc::Topology;
-// use hwloc::{Topology, CPUBIND_PROCESS, TopologyObject, ObjectType};
-use anyhow::{anyhow, Context, Result};
-use std::time::{Duration, Instant};
-use std::mem;
 use std::ops::{Add, Div};
-use async_trait::async_trait;
-use bloomfilter::Bloom;
-use num_traits::FromPrimitive;
-use tokio::runtime::Runtime;
-use crate::utils::{
-    batch_account_creation,
-    batch_partitioned,
-    batch_transfer_loop,
-    batch_with_conflicts,
-    compatible,
-    get_nb_nodes,
-    print_conflict_rate,
-    print_throughput,
-};
-use crate::vm::{Batch, ExecutionResult, Executor, Jobs};
-use crate::config::{BenchmarkConfig, BenchmarkResult, ConfigFile, RunParameter};
-use crate::transaction::{Instruction, Transaction, TransactionAddress};
-use crate::vm_implementation::{VMa, VMb, VMc, VmFactory, VmType};
-use crate::wip::Word;
-use crate::worker_implementation::{WorkerBStd, WorkerBTokio};
+use std::time::{Duration, Instant};
 
+// use hwloc::{Topology, CPUBIND_PROCESS, TopologyObject, ObjectType};
+use anyhow::{Context, Result};
+
+use crate::config::{BenchmarkConfig, BenchmarkResult, ConfigFile, RunParameter};
+use crate::utils::batch_with_conflicts;
+use crate::vm_utils::VmFactory;
 
 pub fn benchmarking(path: &str) -> Result<()> {
 

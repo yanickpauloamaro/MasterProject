@@ -1,13 +1,10 @@
 use std::collections::{HashMap, VecDeque};
-use anyhow::{Context, Result};
-use async_trait::async_trait;
-use tokio::sync::mpsc::{channel, Receiver, Sender};
-use tokio::time::Instant;
+
+use anyhow::Result;
 
 use crate::transaction::{Instruction, Transaction, TransactionAddress, TransactionOutput};
-use crate::vm_implementation::SharedMemory;
+use crate::vm_utils::SharedMemory;
 use crate::wip::Word;
-use crate::worker_implementation::WorkerInput;
 
 // pub const CHANNEL_CAPACITY: usize = 200;
 
@@ -34,7 +31,7 @@ impl ExecutionResult {
 }
 
 pub trait Executor {
-    fn execute(&mut self, mut backlog: Jobs) -> Result<Vec<ExecutionResult>> {
+    fn execute(&mut self, mut _backlog: Jobs) -> Result<Vec<ExecutionResult>> {
         todo!();
     }
 

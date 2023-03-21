@@ -1,18 +1,14 @@
-use std::cell::RefCell;
-use std::ops::Deref;
-use std::rc::Rc;
-use criterion::{BatchSize, BenchmarkGroup, BenchmarkId, black_box, Criterion, criterion_group, criterion_main, PlotConfiguration, Throughput};
-use testbench::utils::{batch_with_conflicts, batch_partitioned};
-use testbench::vm_implementation::{VMa, VMb, VMc, VmFactory, VmType};
-use testbench::vm::Executor;
-use criterion::async_executor::FuturesExecutor;
-use tokio::runtime::{Handle, Runtime};
-use testbench::transaction::Transaction;
-use testbench::worker_implementation::{WorkerBStd, WorkerBTokio};
-use anyhow::{Context, Result};
+#[allow(unused)]
 use std::borrow::Borrow;
+use std::cell::RefCell;
+
+use anyhow::{Context, Result};
+use criterion::{BatchSize, BenchmarkGroup, BenchmarkId, Criterion, criterion_group, criterion_main, Throughput};
 use criterion::measurement::WallTime;
+
 use testbench::config::{BenchmarkConfig, ConfigFile};
+use testbench::utils::batch_with_conflicts;
+use testbench::vm_utils::{VmFactory, VmType};
 
 // criterion_group!(benches, benchmark_vma);
 // criterion_group!(benches, benchmark_vmc);
