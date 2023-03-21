@@ -117,6 +117,7 @@ pub fn assign_workers(
 ) -> Vec<AssignedWorker> {
     let mut tx_to_worker = vec![UNASSIGNED; batch.len()];
     let mut next_worker = 0 as AssignedWorker;
+    let nb_workers = nb_workers as AssignedWorker;
 
     for (index, tx) in batch.iter().enumerate() {
         let from = tx.from as usize;
@@ -130,8 +131,11 @@ pub fn assign_workers(
             address_to_worker[from] = assigned;
             address_to_worker[to] = assigned;
             tx_to_worker[index] = assigned;
-            next_worker = (next_worker + 1) % nb_workers as AssignedWorker;
-
+            next_worker = if next_worker == nb_workers - 1 {
+                0
+            } else {
+                next_worker + 1
+            };
         } else if worker_from == UNASSIGNED || worker_to == UNASSIGNED {
             let assigned = max(worker_from, worker_to);
             address_to_worker[from] = assigned;
