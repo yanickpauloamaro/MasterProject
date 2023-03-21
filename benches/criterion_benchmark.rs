@@ -5,6 +5,8 @@ use std::cell::RefCell;
 use anyhow::{Context, Result};
 use criterion::{BatchSize, BenchmarkGroup, BenchmarkId, Criterion, criterion_group, criterion_main, Throughput};
 use criterion::measurement::WallTime;
+use rand::rngs::StdRng;
+use rand::SeedableRng;
 
 use testbench::config::{BenchmarkConfig, ConfigFile};
 use testbench::utils::batch_with_conflicts;
@@ -273,6 +275,8 @@ fn bench_with_parameter<P: ::std::fmt::Display>(
         VmFactory::new_vm(vm_type, memory_size, nb_core, batch_size)
     );
 
+    let mut rng = StdRng::seed_from_u64(rand::random());
+
     group.bench_function(
         BenchmarkId::from_parameter(param), |b| {
             // Per sample setup (might be multiple iteration) ------------------------------
@@ -283,7 +287,7 @@ fn bench_with_parameter<P: ::std::fmt::Display>(
                     vm.borrow_mut().set_memory(100);
 
                     // TODO use conflict rate to generate input
-                    batch_with_conflicts(batch_size, conflict_rate)
+                    batch_with_conflicts(batch_size, conflict_rate, &mut rng)
                 },
                 |input| {
                     // Measured code (includes the time needed to drop the result)

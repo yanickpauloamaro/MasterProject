@@ -4,6 +4,8 @@ use std::time::Duration;
 
 use anyhow::Result;
 use hwloc::{ObjectType, Topology};
+use rand::{Rng, SeedableRng};
+use rand::rngs::StdRng;
 use rand::seq::SliceRandom;
 
 use crate::transaction::{Instruction, Transaction, TransactionAddress};
@@ -12,7 +14,7 @@ use crate::vm::Jobs;
 #[macro_export]
 macro_rules! debugging {
     () => {
-        false
+        true
     };
 }
 
@@ -113,7 +115,7 @@ pub fn batch_transfer_loop(batch_size: usize, nb_account: usize) -> Vec<Transact
     return batch;
 }
 
-pub fn batch_with_conflicts(batch_size: usize, conflict_rate: f64) -> Jobs {
+pub fn batch_with_conflicts(batch_size: usize, conflict_rate: f64, mut rng: &mut StdRng) -> Jobs {
 
     let nb_conflict = (conflict_rate * batch_size as f64).ceil() as usize;
 
@@ -141,8 +143,8 @@ pub fn batch_with_conflicts(batch_size: usize, conflict_rate: f64) -> Jobs {
 
     let mut conflict_counter = 0;
     while conflict_counter < nb_conflict {
-        let i = *indices.choose(&mut rand::thread_rng()).unwrap();
-        let j = *indices.choose(&mut rand::thread_rng()).unwrap();
+        let i = *indices.choose(&mut rng).unwrap();
+        let j = *indices.choose(&mut rng).unwrap();
 
         if batch[i].to != batch[j].to {
 

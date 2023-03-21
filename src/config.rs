@@ -40,6 +40,7 @@ pub struct BenchmarkConfig {
     // pub memory_size: u64, // 2 * batch_size for now
     pub conflict_rates: Vec<f64>,
     pub repetitions: u64,   // For 95% confidence interval
+    pub seed: Option<u64>,
 }
 
 impl ConfigFile for BenchmarkConfig{
@@ -56,6 +57,7 @@ impl Default for BenchmarkConfig {
             batch_sizes: vec![128],
             conflict_rates: vec![0.0],
             repetitions: 1,
+            seed: Some(42),
         }
     }
 }
@@ -68,6 +70,7 @@ pub struct RunParameter {
     pub memory_size: usize,
     pub conflict_rate: f64,
     pub repetitions: u64,   // For 95% confidence interval
+    pub seed: Option<u64>,
 }
 
 impl RunParameter {
@@ -77,9 +80,10 @@ impl RunParameter {
         batch_size: usize,
         memory_size: usize,
         conflict_rate: f64,
-        repetitions: u64
+        repetitions: u64,
+        seed: Option<u64>
     ) -> Self {
-        return Self{ vm_type, nb_core, batch_size, memory_size, conflict_rate, repetitions }
+        return Self{ vm_type, nb_core, batch_size, memory_size, conflict_rate, repetitions, seed }
     }
 }
 

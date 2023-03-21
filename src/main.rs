@@ -8,6 +8,8 @@ use std::ops::{Add, Div};
 use std::time::Duration;
 
 use anyhow::{Context, Result};
+use rand::rngs::StdRng;
+use rand::SeedableRng;
 // use core_affinity;
 use tokio::time::Instant;
 
@@ -43,7 +45,14 @@ fn profiling(path: &str) -> Result<()> {
     let nb_cores = config.nb_cores[0];
     let conflict_rate = config.conflict_rates[0];
 
-    let batch: Vec<Transaction> = batch_with_conflicts(batch_size, conflict_rate);
+    let mut rng = match config.seed {
+        Some(seed) => {
+            StdRng::seed_from_u64(seed)
+        },
+        None => StdRng::seed_from_u64(rand::random())
+    };
+
+    let batch: Vec<Transaction> = batch_with_conflicts(batch_size, conflict_rate, &mut rng);
     let mut backlog: Vec<Transaction> = Vec::with_capacity(batch.len());
 
     let reduced_vm_size = memory_size;

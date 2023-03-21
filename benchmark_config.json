@@ -11,5 +11,6 @@
   "conflict_rates": [
     0.5
   ],
-  "repetitions": 500
+  "repetitions": 1,
+  "seed": 10
 }

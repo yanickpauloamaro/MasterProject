@@ -32,7 +32,7 @@ let start = Instant::now();
 
         loop {
             if batch.is_empty() {
-debug!("### Done serial execution in {:?}", start.elapsed());
+debug!("### Done serial execution in {:?}\n", start.elapsed());
                 return Ok(results);
             }
 

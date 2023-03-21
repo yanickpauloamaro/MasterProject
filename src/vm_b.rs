@@ -54,7 +54,7 @@ let total = Instant::now();
 // let mut junk: Vec<Jobs> = vec!();
         loop {
             if batch.is_empty() {
-debug!("*** Total took {:?}", total.elapsed());
+debug!("*** Total took {:?}\n", total.elapsed());
 // println!("{:?}", junk[0].len());
                 return Ok(results);
             }

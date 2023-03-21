@@ -33,7 +33,7 @@ let total = Instant::now();
 
         loop {
             if batch.is_empty() {
-debug!("+++ Total took {:?}", total.elapsed());
+debug!("+++ Total took {:?}\n", total.elapsed());
                 return Ok(results);
             }
 

@@ -4,6 +4,8 @@ use std::time::{Duration, Instant};
 
 // use hwloc::{Topology, CPUBIND_PROCESS, TopologyObject, ObjectType};
 use anyhow::{Context, Result};
+use rand::rngs::StdRng;
+use rand::SeedableRng;
 
 use crate::config::{BenchmarkConfig, BenchmarkResult, ConfigFile, RunParameter};
 use crate::utils::batch_with_conflicts;
@@ -30,6 +32,7 @@ pub fn benchmarking(path: &str) -> Result<()> {
                         memory_size,
                         *conflict_rate,
                         repetitions,
+                        config.seed,
                     );
 
                     let result = bench_with_parameter(parameter);
@@ -57,8 +60,15 @@ fn bench_with_parameter(run: RunParameter) -> BenchmarkResult {
     let mut latency_reps = vec!();
     let mut throughput_reps = vec!();
 
+    let mut rng = match run.seed {
+        Some(seed) => {
+            StdRng::seed_from_u64(seed)
+        },
+        None => StdRng::seed_from_u64(rand::random())
+    };
+
     for _ in 0..run.repetitions {
-        let batch = batch_with_conflicts(run.batch_size, run.conflict_rate);
+        let batch = batch_with_conflicts(run.batch_size, run.conflict_rate, &mut rng);
         vm.borrow_mut().set_memory(200);
 
         let start = Instant::now();
