@@ -79,6 +79,10 @@ impl VmMemory {
     pub fn set_memory(&mut self, value: Word) {
         self.content.fill(value);
     }
+
+    pub fn total(&self) -> Word {
+        self.content.iter().fold(0, |a, b| a + *b)
+    }
 }
 
 #[derive(Copy, Clone, Debug)]

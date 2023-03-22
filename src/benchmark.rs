@@ -8,7 +8,7 @@ use rand::rngs::StdRng;
 use rand::SeedableRng;
 
 use crate::config::{BenchmarkConfig, BenchmarkResult, ConfigFile, RunParameter};
-use crate::utils::batch_with_conflicts;
+use crate::utils::{batch_with_conflicts, batch_with_conflicts_new_impl};
 use crate::vm_utils::VmFactory;
 
 pub fn benchmarking(path: &str) -> Result<()> {
@@ -68,7 +68,17 @@ fn bench_with_parameter(run: RunParameter) -> BenchmarkResult {
     };
 
     for _ in 0..run.repetitions {
-        let batch = batch_with_conflicts(run.batch_size, run.conflict_rate, &mut rng);
+        // let batch = batch_with_conflicts(
+        //     run.batch_size,
+        //     run.conflict_rate,
+        //     &mut rng
+        // );
+        let batch = batch_with_conflicts_new_impl(
+            run.memory_size,
+            run.batch_size,
+            run.conflict_rate,
+            &mut rng
+        );
         vm.borrow_mut().set_memory(200);
 
         let start = Instant::now();

@@ -205,7 +205,7 @@ impl WorkerC {
     pub fn crossbeam(
         nb_workers: usize,
         results: &mut Vec<ExecutionResult>,
-        batch: &mut Jobs,
+        batch: &Jobs,
         backlog: &mut Jobs,
         memory: &mut VmMemory,
         tx_to_worker: &Vec<AssignedWorker>
@@ -221,14 +221,14 @@ impl WorkerC {
                 let assignment = batch.iter().zip(tx_to_worker.iter());
 
                 handles.push(s.spawn(move |_| {
-                    let mut accessed = vec![0; assignment.len()];
+                    let mut accessed = vec!(0);//vec![0; batch.len()];
                     let _worker_name = format!("Worker {}", worker_index);
 
                     let mut stack: VecDeque<Word> = VecDeque::new();
                     let mut worker_output = vec!();
                     let mut _worker_backlog = vec!();
 
-                    for (tx_index, (tx, assigned_worker)) in assignment.clone().enumerate() {
+                    for (tx_index, (tx, assigned_worker)) in assignment.enumerate() {
                         if *assigned_worker == worker_index {
                             stack.clear();
                             for instr in tx.instructions.iter() {
@@ -237,10 +237,148 @@ impl WorkerC {
 
                             let result = ExecutionResult::todo();
                             worker_output.push(result);
-                            accessed[tx_index] = 1;
+                            // accessed[tx_index] = 1;
                             // TODO Push next transaction to backlog
                         }
                     }
+
+                    (accessed, worker_output, _worker_backlog)
+                }));
+            }
+
+            for (_worker_index, handle) in handles.into_iter().enumerate() {
+                match handle.join() {
+                    Ok((_accessed, mut worker_output, mut worker_backlog)) => {
+                        results.append(&mut worker_output);
+                        backlog.append(&mut worker_backlog);
+                    },
+                    Err(e) => {
+                        execution_errors.push(Err(anyhow!("{:?}", e)));
+                    }
+                }
+            }
+        }).or(Err(anyhow!("Unable to join crossbeam scope")))?;
+
+        return Ok(());
+        // if execution_errors.is_empty() {
+        //     return Ok(());
+        // }
+        //
+        // return Err(anyhow!("Some error occurred during parallel execution: {:?}", execution_errors));
+    }
+
+    pub fn crossbeam_new_impl(
+        nb_workers: usize,
+        results: &mut Vec<ExecutionResult>,
+        batch: &Jobs,
+        backlog: &mut Jobs,
+        memory: &mut VmMemory,
+        tx_to_worker: &Vec<Vec<usize>>
+    ) -> Result<()>
+    {
+        let mut execution_errors: Vec<Result<()>> = vec!();
+        crossbeam::scope(|s| {
+            let mut shared_memory = memory.get_shared();
+            let mut handles = Vec::with_capacity(nb_workers);
+
+            for i in 0..nb_workers {
+                let worker_index = i as AssignedWorker + 1;
+
+                handles.push(s.spawn(move |_| {
+                    let mut accessed = vec!(0);//vec![0; batch.len()];
+                    let _worker_name = format!("Worker {}", worker_index);
+
+                    let mut stack: VecDeque<Word> = VecDeque::new();
+                    let mut worker_output = vec!();
+                    let mut _worker_backlog = vec!();
+// let test: Vec<usize> = tx_to_worker[i].iter().take(10).map(|el| el.clone()).collect();
+// println!("Worker {} is responsible for {} tx: {:?}...", i, tx_to_worker[i].len(), test);
+                    for tx_index in tx_to_worker[i].iter() {
+                        let tx = batch.get(tx_index.clone()).unwrap();
+                        stack.clear();
+                        for instr in tx.instructions.iter() {
+                            CPU::execute_from_shared(instr, &mut stack, &mut shared_memory);
+                        }
+
+                        let result = ExecutionResult::todo();
+                        worker_output.push(result);
+                        // accessed[*tx_index] = 1;
+                        // TODO Push next transaction to backlog
+                    }
+
+                    (accessed, worker_output, _worker_backlog)
+                }));
+            }
+
+            for (_worker_index, handle) in handles.into_iter().enumerate() {
+                match handle.join() {
+                    Ok((_accessed, mut worker_output, mut worker_backlog)) => {
+                        results.append(&mut worker_output);
+                        backlog.append(&mut worker_backlog);
+                    },
+                    Err(e) => {
+                        execution_errors.push(Err(anyhow!("{:?}", e)));
+                    }
+                }
+            }
+        }).or(Err(anyhow!("Unable to join crossbeam scope")))?;
+
+        return Ok(());
+        // if execution_errors.is_empty() {
+        //     return Ok(());
+        // }
+        //
+        // return Err(anyhow!("Some error occurred during parallel execution: {:?}", execution_errors));
+    }
+
+    pub fn crossbeam_new_impl_2(
+        nb_workers: usize,
+        results: &mut Vec<ExecutionResult>,
+        batch: &Jobs,
+        backlog: &mut Jobs,
+        memory: &mut VmMemory,
+        next: &Vec<usize>,
+        head: &Vec<usize>
+    ) -> Result<()>
+    {
+        let mut execution_errors: Vec<Result<()>> = vec!();
+        crossbeam::scope(|s| {
+            let mut shared_memory = memory.get_shared();
+            let mut handles = Vec::with_capacity(nb_workers);
+
+            for i in 0..nb_workers {
+                let worker_index = i as AssignedWorker + 1;
+
+                handles.push(s.spawn(move |_| {
+                    //
+                    // let res = core_affinity::set_for_current(CoreId{ id: i });
+                    // if !res {
+                    //     println!("Failed to attach worker to core {}", i);
+                    // }
+
+                    let mut accessed = vec!(0);//vec![0; batch.len()];
+                    let _worker_name = format!("Worker {}", worker_index);
+
+                    let mut stack: VecDeque<Word> = VecDeque::new();
+                    let mut worker_output = vec!();
+                    let mut _worker_backlog = vec!();
+
+                    let mut tx_index = head[i];
+                    while tx_index != usize::MAX {
+                        let tx = batch.get(tx_index).unwrap();
+
+                        stack.clear();
+                        for instr in tx.instructions.iter() {
+                            CPU::execute_from_shared(instr, &mut stack, &mut shared_memory);
+                        }
+
+                        let result = ExecutionResult::todo();
+                        worker_output.push(result);
+                        // accessed[tx_index] = 1;
+                        // TODO Push next transaction to backlog
+
+                        tx_index = next[tx_index];
+                    };
 
                     (accessed, worker_output, _worker_backlog)
                 }));
