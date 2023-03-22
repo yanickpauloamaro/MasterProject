@@ -168,6 +168,64 @@ pub fn batch_with_conflicts(batch_size: usize, conflict_rate: f64, mut rng: &mut
     batch
 }
 
+pub fn batch_with_conflicts_new_impl(memory_size: usize, batch_size: usize, conflict_rate: f64, mut rng: &mut StdRng) -> Jobs {
+
+    let nb_conflict = (conflict_rate * batch_size as f64).ceil() as usize;
+    let mut addresses: Vec<u64> = (0..memory_size)
+            .choose_multiple(&mut rng, 2*batch_size)
+            .into_iter().map(|el| el as u64)
+            .collect();
+
+    let mut receiver_occurrences: HashMap<u64, u64> = HashMap::new();
+    let mut batch = Vec::with_capacity(batch_size);
+
+    // Create non-conflicting transactions
+    for i in 0..batch_size {
+        let amount = 2;
+
+        let from = addresses.pop().unwrap();
+        let mut to = addresses.pop().unwrap();
+
+        // Ensure senders and receivers don't conflict. Otherwise, would need to count conflicts
+        // between senders and receivers
+        // to += batch_size as u64;
+
+        receiver_occurrences.insert(to, 1);
+
+        let instructions = transfer(from, to, amount);
+        let tx = Transaction{ from, to, instructions};
+        batch.push(tx);
+    }
+
+    let indices: Vec<usize> = (0..batch_size).collect();
+
+    let mut conflict_counter = 0;
+    while conflict_counter < nb_conflict {
+        let i = *indices.choose(&mut rng).unwrap();
+        let j = *indices.choose(&mut rng).unwrap();
+
+        if batch[i].to != batch[j].to {
+
+            let freq_i = *receiver_occurrences.get(&batch[i].to).unwrap();
+            let freq_j = *receiver_occurrences.get(&batch[j].to).unwrap();
+
+            if freq_j != 2 {
+                if freq_j == 1 { conflict_counter += 1; }
+                if freq_i == 1 { conflict_counter += 1; }
+
+                receiver_occurrences.insert(batch[i].to, freq_i + 1);
+                receiver_occurrences.insert(batch[j].to, freq_j - 1);
+
+                batch[j].to = batch[i].to;
+            }
+        }
+    }
+
+    // print_conflict_rate(&batch);
+
+    batch
+}
+
 pub fn print_conflict_rate(batch: &Vec<Transaction>) {
 
     let mut nb_addresses = 0;
