@@ -1,4 +1,4 @@
-// #![allow(unused_imports)]
+#![allow(unused_imports)]
 extern crate anyhow;
 extern crate either;
 extern crate hwloc;
@@ -56,7 +56,6 @@ fn profiling(path: &str) -> Result<()> {
     let config = BenchmarkConfig::new(path)
         .context("Unable to create benchmark config")?;
 
-    let start = Instant::now();
     let batch_size = config.batch_sizes[0];
     let memory_size = batch_size * 10;
     let nb_cores = config.nb_cores[0];
@@ -69,7 +68,7 @@ fn profiling(path: &str) -> Result<()> {
         None => StdRng::seed_from_u64(rand::random())
     };
 
-    let mut initial_batch: Vec<Transaction> = batch_with_conflicts_new_impl(
+    let mut _initial_batch: Vec<Transaction> = batch_with_conflicts_new_impl(
         memory_size,
         batch_size,
         conflict_rate,
@@ -80,7 +79,7 @@ fn profiling(path: &str) -> Result<()> {
     //     conflict_rate,
     //     &mut rng
     // );
-    let mut backlog: Vec<Transaction> = Vec::with_capacity(initial_batch.len());
+    let mut backlog: Vec<Transaction> = Vec::with_capacity(_initial_batch.len());
 
     let reduced_vm_size = memory_size;
     // let reduced_vm_size = memory_size >> 1; // 50%       = 65536
@@ -99,9 +98,9 @@ fn profiling(path: &str) -> Result<()> {
     let mut results: Vec<ExecutionResult> = vec!();
 
     let mut worker_to_tx: Vec<Vec<usize>> = vec![
-        Vec::with_capacity(initial_batch.len()/nb_cores as usize); nb_cores
+        Vec::with_capacity(_initial_batch.len()/nb_cores as usize); nb_cores
     ];
-    let mut next = vec![usize::MAX; initial_batch.len()];
+    let mut next = vec![usize::MAX; _initial_batch.len()];
 
     let mut latency_assign = Duration::from_nanos(0);
     let mut latency_exec = Duration::from_nanos(0);
@@ -147,7 +146,7 @@ fn profiling(path: &str) -> Result<()> {
         memory.set_memory(200);
         results.truncate(0);
         backlog.truncate(0);
-        let mut batch = initial_batch.clone();
+        let mut batch = _initial_batch.clone();
         // tx_to_worker = list of worker index the size of the main memory
         // Measure assign_workers
         let a = Instant::now();
@@ -174,6 +173,7 @@ fn profiling(path: &str) -> Result<()> {
         latency_exec = latency_exec.add(b.elapsed());
 
         // Reset variables ------------------------------------------------------------------------
+        // assignment contains lists of tx index, one for each worker
         address_to_worker.fill(UNASSIGNED);
         for m in worker_to_tx.iter_mut() {
             m.truncate(0);
@@ -181,8 +181,7 @@ fn profiling(path: &str) -> Result<()> {
         results.truncate(0);
         backlog.truncate(0);
         memory.set_memory(200);
-        let mut batch = initial_batch.clone();
-        // assignment contains lists of tx index, one for each worker
+        let mut batch = _initial_batch.clone();
         // Measure assign_workers
         let a = Instant::now();
         let _assignment = assign_workers_new_impl(
@@ -208,14 +207,14 @@ fn profiling(path: &str) -> Result<()> {
         latency_exec_new_impl = latency_exec_new_impl.add(b.elapsed());
 
         // Reset variables -------------------------------------------------------------------------
+        // next is a linked list of tx_indexes, that each worker is responsible for
+        // head contains the first tx each worker is responsible for
         address_to_worker.fill(UNASSIGNED);
         next.fill(usize::MAX);
         results.truncate(0);
         backlog.truncate(0);
         memory.set_memory(200);
-        let mut batch = initial_batch.clone();
-        // next is a linked list of tx_indexes, that each worker is responsible for
-        // head contains the first tx each worker is responsible for
+        let mut batch = _initial_batch.clone();
         // Measure assign_workers
         let a = Instant::now();
         let assignment_new_impl_2 = assign_workers_new_impl_2(
@@ -248,19 +247,25 @@ fn profiling(path: &str) -> Result<()> {
     println!("original:");
     println!("Average latency (assign): {:?}", latency_assign.div(config.repetitions as u32));
     println!("Average latency (exec): {:?}", latency_exec.div(config.repetitions as u32));
-    println!("Together: {:.3?}", latency_assign.add(latency_exec).div(config.repetitions as u32));
+    let avg = latency_assign.add(latency_exec).div(config.repetitions as u32);
+    println!("Together: {:.3?}", avg);
+    println!("Throughput = {} tx/µs", batch_size as u128/avg.as_micros());
     println!();
 
     println!("new impl:");
     println!("Average latency (assign): {:?}", latency_assign_new_impl.div(config.repetitions as u32));
     println!("Average latency (exec): {:?}", latency_exec_new_impl.div(config.repetitions as u32));
-    println!("Together: {:.3?}", latency_assign_new_impl.add(latency_exec_new_impl).div(config.repetitions as u32));
+    let avg = latency_assign_new_impl.add(latency_exec_new_impl).div(config.repetitions as u32);
+    println!("Together: {:.3?}", avg);
+    println!("Throughput = {} tx/µs", batch_size as u128/avg.as_micros());
     println!();
 
     println!("new impl 2:");
     println!("Average latency (assign): {:?}", latency_assign_new_impl_2.div(config.repetitions as u32));
     println!("Average latency (exec): {:?}", latency_exec_new_impl_2.div(config.repetitions as u32));
-    println!("Together: {:.3?}", latency_assign_new_impl_2.add(latency_exec_new_impl_2).div(config.repetitions as u32));
+    let avg = latency_assign_new_impl_2.add(latency_exec_new_impl_2).div(config.repetitions as u32);
+    println!("Together: {:.3?}", avg);
+    println!("Throughput = {} tx/µs", batch_size as u128/avg.as_micros());
     println!();
 
     // println!("Total {} runs: {:?} (assign)", config.repetitions, latency_sum);

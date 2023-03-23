@@ -85,8 +85,8 @@ pub struct CPU;
 impl CPU{
     pub fn execute_from_hashmap(
         instruction: &Instruction,
-        stack: &mut VecDeque<u64>,
-        memory: &mut HashMap<TransactionAddress, u64>,
+        stack: &mut VecDeque<Word>,
+        memory: &mut HashMap<TransactionAddress, Word>,
     )
     {
         match instruction {
@@ -94,9 +94,6 @@ impl CPU{
                 memory.insert(*addr, *balance);
             },
             Instruction::Increment(addr, amount) => {
-                if memory.get_mut(&addr).is_none() {
-                    println!("Addr = {}", addr);
-                }
                 *memory.get_mut(&addr).unwrap() += amount;
             },
             Instruction::Decrement(addr, amount) => {
@@ -131,7 +128,7 @@ impl CPU{
 
     pub fn execute_from_array(
         instruction: &Instruction,
-        stack: &mut VecDeque<u64>,
+        stack: &mut VecDeque<Word>,
         memory: &mut Vec<Word>,
     )
     {
@@ -177,7 +174,7 @@ impl CPU{
 
     pub fn execute_from_shared(
         instruction: &Instruction,
-        stack: &mut VecDeque<u64>,
+        stack: &mut VecDeque<Word>,
         memory: &mut SharedMemory,
     )
     {

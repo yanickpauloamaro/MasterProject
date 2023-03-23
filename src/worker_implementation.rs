@@ -221,14 +221,14 @@ impl WorkerC {
                 let assignment = batch.iter().zip(tx_to_worker.iter());
 
                 handles.push(s.spawn(move |_| {
-                    let mut accessed = vec!(0);//vec![0; batch.len()];
+                    let mut _accessed = vec!(0);//vec![0; batch.len()];
                     let _worker_name = format!("Worker {}", worker_index);
 
                     let mut stack: VecDeque<Word> = VecDeque::new();
                     let mut worker_output = vec!();
                     let mut _worker_backlog = vec!();
 
-                    for (tx_index, (tx, assigned_worker)) in assignment.enumerate() {
+                    for (_tx_index, (tx, assigned_worker)) in assignment.enumerate() {
                         if *assigned_worker == worker_index {
                             stack.clear();
                             for instr in tx.instructions.iter() {
@@ -237,12 +237,12 @@ impl WorkerC {
 
                             let result = ExecutionResult::todo();
                             worker_output.push(result);
-                            // accessed[tx_index] = 1;
+                            // _accessed[_tx_index] = 1;
                             // TODO Push next transaction to backlog
                         }
                     }
 
-                    (accessed, worker_output, _worker_backlog)
+                    (_accessed, worker_output, _worker_backlog)
                 }));
             }
 
@@ -285,7 +285,7 @@ impl WorkerC {
                 let worker_index = i as AssignedWorker + 1;
 
                 handles.push(s.spawn(move |_| {
-                    let mut accessed = vec!(0);//vec![0; batch.len()];
+                    let mut _accessed = vec!(0);//vec![0; batch.len()];
                     let _worker_name = format!("Worker {}", worker_index);
 
                     let mut stack: VecDeque<Word> = VecDeque::new();
@@ -302,11 +302,11 @@ impl WorkerC {
 
                         let result = ExecutionResult::todo();
                         worker_output.push(result);
-                        // accessed[*tx_index] = 1;
+                        // _accessed[*tx_index] = 1;
                         // TODO Push next transaction to backlog
                     }
 
-                    (accessed, worker_output, _worker_backlog)
+                    (_accessed, worker_output, _worker_backlog)
                 }));
             }
 
@@ -356,7 +356,7 @@ impl WorkerC {
                     //     println!("Failed to attach worker to core {}", i);
                     // }
 
-                    let mut accessed = vec!(0);//vec![0; batch.len()];
+                    let mut _accessed = vec!(0);//vec![0; batch.len()];
                     let _worker_name = format!("Worker {}", worker_index);
 
                     let mut stack: VecDeque<Word> = VecDeque::new();
@@ -374,13 +374,13 @@ impl WorkerC {
 
                         let result = ExecutionResult::todo();
                         worker_output.push(result);
-                        // accessed[tx_index] = 1;
+                        // _accessed[tx_index] = 1;
                         // TODO Push next transaction to backlog
 
                         tx_index = next[tx_index];
                     };
 
-                    (accessed, worker_output, _worker_backlog)
+                    (_accessed, worker_output, _worker_backlog)
                 }));
             }
 

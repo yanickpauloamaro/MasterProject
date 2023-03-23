@@ -4,17 +4,17 @@ use std::time::Duration;
 
 use anyhow::Result;
 use hwloc::{ObjectType, Topology};
-use rand::{Rng, SeedableRng};
 use rand::rngs::StdRng;
-use rand::seq::SliceRandom;
+use rand::seq::{IteratorRandom, SliceRandom};
 
 use crate::transaction::{Instruction, Transaction, TransactionAddress};
 use crate::vm::Jobs;
+use crate::wip::Word;
 
 #[macro_export]
 macro_rules! debugging {
     () => {
-        true
+        false
     };
 }
 
@@ -54,6 +54,7 @@ pub fn compatible(topo: &Topology) -> Result<()> {
 }
 
 pub fn get_nb_cores(topo: &Topology) -> usize {
+    // TODO use num_cpus crate
     let core_depth = topo.depth_or_below_for_type(&ObjectType::Core).unwrap();
     let all_cores = topo.objects_at_depth(core_depth);
     return all_cores.len();
@@ -76,7 +77,7 @@ pub fn get_nb_nodes(topo: &Topology, requested_nb_nodes: Option<usize>) -> Resul
 pub fn batch_account_creation(batch_size: usize, nb_accounts: usize, amount: u64) -> Vec<Transaction> {
     let mut batch = Vec::with_capacity(batch_size);
     for i in 0..nb_accounts {
-        let create = Instruction::CreateAccount(i as u64, amount);
+        let create = Instruction::CreateAccount(i as u64, amount as Word);
         let tx = Transaction {
             from: 0,
             to: 0,
@@ -91,8 +92,8 @@ pub fn batch_account_creation(batch_size: usize, nb_accounts: usize, amount: u64
 
 fn transfer(from: TransactionAddress, to: TransactionAddress, amount: u64) -> Vec<Instruction> {
     return vec!(
-        Instruction::Decrement(from, amount),
-        Instruction::Increment(to, amount),
+        Instruction::Decrement(from, amount as Word),
+        Instruction::Increment(to, amount as Word),
     );
 }
 
@@ -180,11 +181,11 @@ pub fn batch_with_conflicts_new_impl(memory_size: usize, batch_size: usize, conf
     let mut batch = Vec::with_capacity(batch_size);
 
     // Create non-conflicting transactions
-    for i in 0..batch_size {
+    for _i in 0..batch_size {
         let amount = 2;
 
         let from = addresses.pop().unwrap();
-        let mut to = addresses.pop().unwrap();
+        let to = addresses.pop().unwrap();
 
         // Ensure senders and receivers don't conflict. Otherwise, would need to count conflicts
         // between senders and receivers

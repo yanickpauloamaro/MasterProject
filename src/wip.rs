@@ -1,15 +1,12 @@
 #![allow(unused_variables)]
 
 use std::cmp::{max, min};
-use std::collections::HashMap;
-use std::collections::hash_map::DefaultHasher;
 
 use hwloc::Topology;
 
-use crate::transaction::TransactionAddress;
 use crate::utils::compatible;
 use crate::vm::Jobs;
-use crate::vm_utils::{CONFLICTING, UNASSIGNED};
+use crate::vm_utils::UNASSIGNED;
 
 pub const CONFLICT_WIP: u8 = u8::MAX;
 pub const DONE: u8 = CONFLICT_WIP - 1;

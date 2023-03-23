@@ -8,7 +8,7 @@ use rand::rngs::StdRng;
 use rand::SeedableRng;
 
 use crate::config::{BenchmarkConfig, BenchmarkResult, ConfigFile, RunParameter};
-use crate::utils::{batch_with_conflicts, batch_with_conflicts_new_impl};
+use crate::utils::{batch_with_conflicts_new_impl};
 use crate::vm_utils::VmFactory;
 
 pub fn benchmarking(path: &str) -> Result<()> {
