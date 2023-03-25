@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use crate::wip::Amount;
 
 #[derive(Debug, Serialize, Deserialize, Copy, Clone)]
 pub enum TransactionType {
@@ -15,9 +16,6 @@ pub struct Transaction {
     pub instructions: Vec<Instruction>,
     // pub parameters: Vec<ContractValue>,
 }
-
-// type ContractValue = u64;
-type Amount = u64;
 // type Variable = u64;
 
 #[derive(Debug, Clone)]

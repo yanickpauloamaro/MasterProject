@@ -1,24 +1,185 @@
 #![allow(unused_variables)]
 
 use std::cmp::{max, min};
+use std::collections::BTreeMap;
 
 use hwloc::Topology;
-
 use crate::utils::compatible;
 use crate::vm::Jobs;
-use crate::vm_utils::UNASSIGNED;
+use crate::vm_utils::{UNASSIGNED, VmStorage};
 
 pub const CONFLICT_WIP: u8 = u8::MAX;
 pub const DONE: u8 = CONFLICT_WIP - 1;
 pub const NONE_WIP: u8 = CONFLICT_WIP - 2;
 
+// type ContractValue = u64;
+pub type Amount = u64;
 pub type AssignedWorker = u8;
 pub type Word = u64;
 pub type Address = u64;
+pub type Param = u64;
 
+pub fn address_translation(addr: &Address) -> usize {
+    return *addr as usize;
+}
 
-pub struct SegmentedContract {
+pub struct WipTransaction {
+    pub from: Address,
+    pub to: Address,
+    pub amount: Amount,
+    pub data: Data
 
+    // sequence_number,
+    // max_gas,
+    // gas_unit_price,
+}
+
+impl WipTransaction {
+    pub fn transfer(from: Address, to: Address, amount: Amount) -> Self {
+        return Self{
+            from, to, amount, data: Data::None,
+        }
+    }
+
+    pub fn call_contract(from: Address, coin_contract: Address, amount: Amount, to: Address) -> Self {
+        return Self{
+            from,
+            to: coin_contract,
+            amount: 0,
+            data: Data::Parameters(vec!(from, amount, to)),
+        }
+    }
+
+    pub fn new_coin() -> Self {
+
+        use SegmentInstruction::*;
+        let decrement = Segment::new(vec!(
+            PushParam(1),
+            DecrementFromParam(0),  // Return error in case of underflow
+            PushParam(2),
+            PushParam(1),
+            CallSegment(1), // Uses the stack as the params for the next segment
+        ));
+
+        let increment = Segment::new(vec!(
+            PushParam(1),
+            IncrementFromParam(0),  // Return error in case of underflow
+            Return(0),
+        ));
+
+        let transfer= Function::new(vec!(decrement, increment));
+
+        return Self{
+            from: 0,
+            to: 0,
+            amount: 0,
+            data: Data::NewContract(vec!(transfer)),
+        }
+    }
+}
+
+pub enum WipTransactionResult {
+    Error,
+    TransferSuccess,
+    Success(usize),
+}
+
+pub enum Data {
+    None,
+    NewContract(Vec<Function>),
+    Parameters(Vec<Param>)
+}
+
+pub struct Contract {
+    pub storage: VmStorage,
+    // main <=> functions[0]
+    pub functions: Vec<Function>,
+}
+
+#[derive(Clone, Debug)]
+pub struct Function {
+    pub segments: Vec<Segment>,
+
+    // Function prototype
+    // pub prototype: Protoype
+}
+
+impl Function {
+    pub fn new(segments: Vec<Segment>) -> Self {
+        return Self{segments};
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct Segment {
+    pub instructions: Vec<SegmentInstruction>,
+    // pub accesses: Vec<StorageAccess>
+}
+
+impl Segment {
+
+    pub fn new(instructions: Vec<SegmentInstruction>) -> Self {
+        return Self{instructions};
+    }
+    pub fn accesses(&self, params: Vec<Param>) -> BTreeMap<Address, AccessType> {
+        let mut accesses: BTreeMap<Address, AccessType> = BTreeMap::new();
+        use SegmentInstruction::*;
+        for instr in self.instructions.iter() {
+            match instr {
+                IncrementFromParam(i) => {
+                    let address = params[*i];
+                    match accesses.get_mut(&address) {
+                        Some(mut access) => {
+                            *access = max(*access, AccessType::Write);
+                        },
+                        None => {
+                            accesses.insert(address, AccessType::Write);
+                        }
+                    }
+                },
+                DecrementFromParam(i) => {
+                    let address = params[*i];
+                    match accesses.get_mut(&address) {
+                        Some(mut access) => {
+                            *access = max(*access, AccessType::Write);
+                        },
+                        None => {
+                            accesses.insert(address, AccessType::Write);
+                        }
+                    }
+                }
+                _ => {
+
+                }
+            }
+        }
+
+        return accesses;
+    }
+}
+
+#[derive(PartialEq, Eq, PartialOrd, Ord, Clone, Copy, Debug)]
+pub enum AccessType {
+    Read = 0,
+    Write = 1
+}
+
+pub enum StorageAccess {
+    // Accessing using a static address
+    Read(Address),
+    Write(Address),
+    // Accessing using a parameter
+    // Write(usize),
+    // Read(usize),
+}
+
+#[derive(Copy, Clone, Debug)]
+pub enum SegmentInstruction {
+    PushParam(usize),
+    IncrementFromParam(usize),
+    DecrementFromParam(usize),
+    CallSegment(usize),
+    Return(u64),
 }
 
 pub fn assign_workers_new_impl(
@@ -187,3 +348,4 @@ pub fn numa_latency() {
     //     println!("")
     // }
 }
+
