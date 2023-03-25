@@ -16,6 +16,11 @@ pub type AssignedWorker = u8;
 pub type Word = u64;
 pub type Address = u64;
 
+
+pub struct SegmentedContract {
+
+}
+
 pub fn assign_workers_new_impl(
     nb_workers: usize,
     batch: &Jobs,

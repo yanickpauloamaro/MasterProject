@@ -37,7 +37,7 @@ pub struct BenchmarkConfig {
     pub vm_types: Vec<VmType>,
     pub nb_cores: Vec<usize>,
     pub batch_sizes: Vec<usize>,
-    // pub memory_size: u64, // 2 * batch_size for now
+    // pub storage_size: u64, // 2 * batch_size for now
     pub conflict_rates: Vec<f64>,
     pub repetitions: u64,   // For 95% confidence interval
     pub seed: Option<u64>,
@@ -67,7 +67,7 @@ pub struct RunParameter {
     pub vm_type: VmType,
     pub nb_core: usize,
     pub batch_size: usize,
-    pub memory_size: usize,
+    pub storage_size: usize,
     pub conflict_rate: f64,
     pub repetitions: u64,   // For 95% confidence interval
     pub seed: Option<u64>,
@@ -78,12 +78,12 @@ impl RunParameter {
         vm_type: VmType,
         nb_core: usize,
         batch_size: usize,
-        memory_size: usize,
+        storage_size: usize,
         conflict_rate: f64,
         repetitions: u64,
         seed: Option<u64>
     ) -> Self {
-        return Self{ vm_type, nb_core, batch_size, memory_size, conflict_rate, repetitions, seed }
+        return Self{ vm_type, nb_core, batch_size, storage_size, conflict_rate, repetitions, seed }
     }
 }
 
@@ -94,7 +94,7 @@ impl RunParameter {
 //         write!(f, "todo: {:?}", self.vm_type);
 //         write!(f, "todo: {:?}", self.nb_core);
 //         write!(f, "todo: {:?}", self.batch_size);
-//         write!(f, "todo: {:?}", self.memory_size);
+//         write!(f, "todo: {:?}", self.storage_size);
 //         write!(f, "todo: {:?}", self.conflict_rate);
 //         write!(f, "todo: {:?}", self);
 //     }

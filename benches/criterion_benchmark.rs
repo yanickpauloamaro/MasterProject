@@ -34,7 +34,7 @@ pub fn benchmark_aws_cores(c: &mut Criterion) {
     ];
 
     let batch_size = 65536;
-    let memory_size = 2 * batch_size;
+    let storage_size = 2 * batch_size;
     let nb_cores = [1, 2, 4, 8, 16, 32];
 
     let conflict_rate = 0.0;
@@ -44,7 +44,7 @@ pub fn benchmark_aws_cores(c: &mut Criterion) {
     bench_with_parameter(
         &mut group,
         &vma,
-        1, memory_size, batch_size, conflict_rate,
+        1, storage_size, batch_size, conflict_rate,
         param_str
     );
 
@@ -54,7 +54,7 @@ pub fn benchmark_aws_cores(c: &mut Criterion) {
             bench_with_parameter(
                 &mut group,
                 &vm_type,
-                *nb_core, memory_size, batch_size, conflict_rate,
+                *nb_core, storage_size, batch_size, conflict_rate,
                 param_str
             );
         }
@@ -76,7 +76,7 @@ pub fn benchmark_aws_conflict(c: &mut Criterion) {
     ];
 
     let batch_size = 65536;
-    let memory_size = 2 * batch_size;
+    let storage_size = 2 * batch_size;
     let nb_core = 32;
 
     let conflict_rates = vec![0.0, 0.01, 0.1, 0.5];
@@ -87,7 +87,7 @@ pub fn benchmark_aws_conflict(c: &mut Criterion) {
             bench_with_parameter(
                 &mut group,
                 &vm_type,
-                nb_core, memory_size, batch_size, *conflict_rate,
+                nb_core, storage_size, batch_size, *conflict_rate,
                 param_str
             );
         }
@@ -108,13 +108,13 @@ pub fn benchmark_from_config(c: &mut Criterion) -> Result<()> {
     for vm_type in config.vm_types.iter() {
         for nb_core in config.nb_cores.iter() {
             for batch_size in config.batch_sizes.iter() {
-                let memory_size= 2 * batch_size;
+                let storage_size= 2 * batch_size;
                 for conflict_rate in config.conflict_rates.iter() {
                     let param_str = format!("{}-{}-{}-{}", vm_type.name() ,nb_core, batch_size, conflict_rate);
                     bench_with_parameter(
                         &mut group,
                         vm_type,
-                        *nb_core, memory_size, *batch_size, *conflict_rate,
+                        *nb_core, storage_size, *batch_size, *conflict_rate,
                         param_str
                     );
                 }
@@ -168,7 +168,7 @@ pub fn benchmark_vmc(c: &mut Criterion) {
 //region Benchmark types ===========================================================================
 fn benchmark_vm_scaling(c: &mut Criterion) {
     let batch_size = 65536;
-    let memory_size = 2 * batch_size;
+    let storage_size = 2 * batch_size;
     let nb_cores = 4;
     let conflict_rate = 0.1;
 
@@ -187,7 +187,7 @@ fn benchmark_vm_scaling(c: &mut Criterion) {
         bench_with_parameter(
             &mut group,
             &vm_type,
-            nb_cores, memory_size, batch_size, conflict_rate,
+            nb_cores, storage_size, batch_size, conflict_rate,
             vm_type.name()
         );
     }
@@ -196,7 +196,7 @@ fn benchmark_vm_scaling(c: &mut Criterion) {
 
 fn benchmark_core_scaling(c: &mut Criterion, vm_type: &VmType, name: &str) {
     let batch_size = 65536;
-    let memory_size = 2 * batch_size;
+    let storage_size = 2 * batch_size;
     // let cores: Vec<usize> = vec![1, 2, 4]; // TODO vec![1, 2, 4, 8, 16, 32];
     let cores: Vec<usize> = vec![1, 2, 4, 8, 16, 32];
     let conflict_rate = 0.0;
@@ -209,7 +209,7 @@ fn benchmark_core_scaling(c: &mut Criterion, vm_type: &VmType, name: &str) {
         bench_with_parameter(
             &mut group,
             vm_type,
-            nb_cores, memory_size, batch_size, conflict_rate,
+            nb_cores, storage_size, batch_size, conflict_rate,
             nb_cores
         );
     }
@@ -226,11 +226,11 @@ fn benchmark_batch_size_scaling(c: &mut Criterion, vm_type: &VmType, name: &str)
     );
 
     for batch_size in batch_sizes.into_iter() {
-        let memory_size = 2 * batch_size;
+        let storage_size = 2 * batch_size;
         bench_with_parameter(
             &mut group,
             vm_type,
-            nb_cores, memory_size, batch_size, conflict_rate,
+            nb_cores, storage_size, batch_size, conflict_rate,
             batch_size
         );
     }
@@ -239,7 +239,7 @@ fn benchmark_batch_size_scaling(c: &mut Criterion, vm_type: &VmType, name: &str)
 
 fn benchmark_conflict_rate_scaling(c: &mut Criterion, vm_type: &VmType, name: &str) {
     let batch_size = 65536;
-    let memory_size = 2 * batch_size;
+    let storage_size = 2 * batch_size;
     let nb_cores = 32;
     let conflict_rates = vec![0.0, 0.01, 0.1, 0.5];
 
@@ -251,7 +251,7 @@ fn benchmark_conflict_rate_scaling(c: &mut Criterion, vm_type: &VmType, name: &s
         bench_with_parameter(
             &mut group,
             vm_type,
-            nb_cores, memory_size, batch_size, conflict_rate,
+            nb_cores, storage_size, batch_size, conflict_rate,
             conflict_rate
         );
     }
@@ -263,7 +263,7 @@ fn benchmark_conflict_rate_scaling(c: &mut Criterion, vm_type: &VmType, name: &s
 fn bench_with_parameter<P: ::std::fmt::Display>(
     group: &mut BenchmarkGroup<WallTime>,
     vm_type: &VmType,
-    nb_core: usize, memory_size: usize, batch_size: usize, conflict_rate: f64,
+    nb_core: usize, storage_size: usize, batch_size: usize, conflict_rate: f64,
     param: P
 )
 {
@@ -272,7 +272,7 @@ fn bench_with_parameter<P: ::std::fmt::Display>(
 
     // One time setup: ---------------------------------------------------------------------
     let vm = RefCell::new(
-        VmFactory::new_vm(vm_type, memory_size, nb_core, batch_size)
+        VmFactory::new_vm(vm_type, storage_size, nb_core, batch_size)
     );
 
     let mut rng = StdRng::seed_from_u64(rand::random());
@@ -284,7 +284,7 @@ fn bench_with_parameter<P: ::std::fmt::Display>(
             b.iter_batched(
                 || {
                     // Input creation (per iteration?)
-                    vm.borrow_mut().set_memory(100);
+                    vm.borrow_mut().set_storage(100);
 
                     // TODO use conflict rate to generate input
                     batch_with_conflicts(batch_size, conflict_rate, &mut rng)

@@ -10,13 +10,13 @@ use crate::wip::Word;
 
 //region Serial VM =================================================================================
 pub struct VMa {
-    memory: Vec<Word>
+    storage: Vec<Word>
 }
 
 impl VMa {
-    pub fn new(memory_size: usize) -> Result<Self> {
-        let memory = (0..memory_size).map(|_| 0 as Word).collect();
-        let vm = Self{ memory };
+    pub fn new(storage_size: usize) -> Result<Self> {
+        let storage = (0..storage_size).map(|_| 0 as Word).collect();
+        let vm = Self{ storage };
         return Ok(vm);
     }
 }
@@ -39,7 +39,7 @@ debug!("### Done serial execution in {:?}\n", start.elapsed());
             for tx in batch.iter() {
                 stack.clear(); // TODO Does this need to be optimised?
                 for instr in tx.instructions.iter() {
-                    CPU::execute_from_array(instr, &mut stack, &mut self.memory);
+                    CPU::execute_from_array(instr, &mut stack, &mut self.storage);
                 }
                 let result = ExecutionResult::todo();
                 results.push(result);
@@ -51,8 +51,8 @@ debug!("### Done serial execution in {:?}\n", start.elapsed());
         }
     }
 
-    fn set_memory(&mut self, value: Word) {
-        self.memory.fill(value);
+    fn set_storage(&mut self, value: Word) {
+        self.storage.fill(value);
     }
 }
 //endregion

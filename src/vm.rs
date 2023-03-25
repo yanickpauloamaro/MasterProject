@@ -3,7 +3,7 @@ use std::collections::{HashMap, VecDeque};
 use anyhow::Result;
 
 use crate::transaction::{Instruction, Transaction, TransactionAddress, TransactionOutput};
-use crate::vm_utils::SharedMemory;
+use crate::vm_utils::SharedStorage;
 use crate::wip::Word;
 
 // pub const CHANNEL_CAPACITY: usize = 200;
@@ -35,7 +35,7 @@ pub trait Executor {
         todo!();
     }
 
-    fn set_memory(&mut self, value: Word);
+    fn set_storage(&mut self, value: Word);
 }
 
 // trait SpawnWorker{
@@ -86,26 +86,26 @@ impl CPU{
     pub fn execute_from_hashmap(
         instruction: &Instruction,
         stack: &mut VecDeque<Word>,
-        memory: &mut HashMap<TransactionAddress, Word>,
+        storage: &mut HashMap<TransactionAddress, Word>,
     )
     {
         match instruction {
             Instruction::CreateAccount(addr, balance) => {
-                memory.insert(*addr, *balance);
+                storage.insert(*addr, *balance);
             },
             Instruction::Increment(addr, amount) => {
-                *memory.get_mut(&addr).unwrap() += amount;
+                *storage.get_mut(&addr).unwrap() += amount;
             },
             Instruction::Decrement(addr, amount) => {
-                *memory.get_mut(&addr).unwrap() -= amount;
+                *storage.get_mut(&addr).unwrap() -= amount;
             },
             Instruction::Read(addr) => {
-                let value = *memory.get(&addr).unwrap();
+                let value = *storage.get(&addr).unwrap();
                 stack.push_back(value);
             },
             Instruction::Write(addr) => {
                 let value = stack.pop_back().unwrap();
-                *memory.get_mut(&addr).unwrap() = value;
+                *storage.get_mut(&addr).unwrap() = value;
             },
             Instruction::Add() => {
                 let a = stack.pop_back().unwrap();
@@ -129,29 +129,29 @@ impl CPU{
     pub fn execute_from_array(
         instruction: &Instruction,
         stack: &mut VecDeque<Word>,
-        memory: &mut Vec<Word>,
+        storage: &mut Vec<Word>,
     )
     {
         match instruction {
             Instruction::CreateAccount(addr, amount) => {
-                if memory.get_mut(*addr as usize).is_none() {
-                    println!("Address {}, memory size = ", addr);
+                if storage.get_mut(*addr as usize).is_none() {
+                    println!("Address {}, storage size = ", addr);
                 }
-                *memory.get_mut(*addr as usize).unwrap() = *amount;
+                *storage.get_mut(*addr as usize).unwrap() = *amount;
             },
             Instruction::Increment(addr, amount) => {
-                *memory.get_mut(*addr as usize).unwrap() += amount;
+                *storage.get_mut(*addr as usize).unwrap() += amount;
             },
             Instruction::Decrement(addr, amount) => {
-                *memory.get_mut(*addr as usize).unwrap() -= amount;
+                *storage.get_mut(*addr as usize).unwrap() -= amount;
             },
             Instruction::Read(addr) => {
-                let value = *memory.get(*addr as usize).unwrap();
+                let value = *storage.get(*addr as usize).unwrap();
                 stack.push_back(value);
             },
             Instruction::Write(addr) => {
                 let value = stack.pop_back().unwrap();
-                *memory.get_mut(*addr as usize).unwrap() = value;
+                *storage.get_mut(*addr as usize).unwrap() = value;
             },
             Instruction::Add() => {
                 let a = stack.pop_back().unwrap();
@@ -175,28 +175,28 @@ impl CPU{
     pub fn execute_from_shared(
         instruction: &Instruction,
         stack: &mut VecDeque<Word>,
-        memory: &mut SharedMemory,
+        storage: &mut SharedStorage,
     )
     {
         match instruction {
             Instruction::CreateAccount(addr, amount) => {
-                memory.set(*addr as usize, *amount);
+                storage.set(*addr as usize, *amount);
             },
             Instruction::Increment(addr, amount) => {
-                let balance = memory.get(*addr as usize);
-                memory.set(*addr as usize, balance + *amount);
+                let balance = storage.get(*addr as usize);
+                storage.set(*addr as usize, balance + *amount);
             },
             Instruction::Decrement(addr, amount) => {
-                let balance = memory.get(*addr as usize);
-                memory.set(*addr as usize, balance - *amount);
+                let balance = storage.get(*addr as usize);
+                storage.set(*addr as usize, balance - *amount);
             },
             Instruction::Read(addr) => {
-                let value = memory.get(*addr as usize);
+                let value = storage.get(*addr as usize);
                 stack.push_back(value);
             },
             Instruction::Write(addr) => {
                 let value = stack.pop_back().unwrap();
-                memory.set(*addr as usize, value);
+                storage.set(*addr as usize, value);
             },
             Instruction::Add() => {
                 let a = stack.pop_back().unwrap();

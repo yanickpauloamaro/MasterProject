@@ -3,21 +3,21 @@ use std::time::Instant;
 
 use crate::{debug, debugging};
 use crate::vm::{ExecutionResult, Executor, Jobs};
-use crate::vm_utils::{assign_workers, UNASSIGNED, VmMemory};
+use crate::vm_utils::{assign_workers, UNASSIGNED, VmStorage};
 use crate::wip::Word;
 use crate::worker_implementation::WorkerC;
 
 //region Parallel VM crossbeam =====================================================================
 pub struct VMc {
-    memory: VmMemory,
+    storage: VmStorage,
     nb_workers: usize,
 }
 
 impl VMc {
-    pub fn new(memory_size: usize, nb_workers: usize, _batch_size: usize) -> anyhow::Result<Self> {
+    pub fn new(storage_size: usize, nb_workers: usize, _batch_size: usize) -> anyhow::Result<Self> {
 
-        let memory = VmMemory::new(memory_size);
-        let vm = Self{ memory, nb_workers };
+        let storage = VmStorage::new(storage_size);
+        let vm = Self{ storage, nb_workers };
         return Ok(vm);
     }
 }
@@ -27,7 +27,7 @@ impl Executor for VMc {
 let total = Instant::now();
         let mut results = Vec::with_capacity(batch.len());
         let mut backlog = Vec::with_capacity(batch.len());
-        let mut address_to_worker = vec![UNASSIGNED; self.memory.len()];
+        let mut address_to_worker = vec![UNASSIGNED; self.storage.len()];
 
         // return self.execute_rec(results, batch, backlog, address_to_worker);
 
@@ -54,7 +54,7 @@ let start = Instant::now();
                 &mut results,
                 &mut batch,
                 &mut backlog,
-                &mut self.memory,
+                &mut self.storage,
                 &tx_to_worker,
             )?;
 debug!("+++ Parallel execution in {:?}", start.elapsed());
@@ -66,8 +66,8 @@ debug!("+++ End of loop took {:?}", end.elapsed());
         }
     }
 
-    fn set_memory(&mut self, value: Word) {
-        self.memory.set_memory(value);
+    fn set_storage(&mut self, value: Word) {
+        self.storage.set_storage(value);
     }
 }
 //endregion

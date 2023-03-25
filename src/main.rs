@@ -18,7 +18,7 @@ use testbench::transaction::Transaction;
 use testbench::utils::{batch_with_conflicts, batch_with_conflicts_new_impl};
 use testbench::vm::{ExecutionResult, Executor};
 use testbench::vm_c::VMc;
-use testbench::vm_utils::{assign_workers, UNASSIGNED, VmMemory};
+use testbench::vm_utils::{assign_workers, UNASSIGNED, VmStorage};
 use testbench::wip::{assign_workers_new_impl, assign_workers_new_impl_2};
 use testbench::worker_implementation::WorkerC;
 
@@ -57,7 +57,7 @@ fn profiling(path: &str) -> Result<()> {
         .context("Unable to create benchmark config")?;
 
     let batch_size = config.batch_sizes[0];
-    let memory_size = batch_size * 10;
+    let storage_size = batch_size * 10;
     let nb_cores = config.nb_cores[0];
     let conflict_rate = config.conflict_rates[0];
 
@@ -69,7 +69,7 @@ fn profiling(path: &str) -> Result<()> {
     };
 
     let mut _initial_batch: Vec<Transaction> = batch_with_conflicts_new_impl(
-        memory_size,
+        storage_size,
         batch_size,
         conflict_rate,
         &mut rng
@@ -81,20 +81,20 @@ fn profiling(path: &str) -> Result<()> {
     // );
     let mut backlog: Vec<Transaction> = Vec::with_capacity(_initial_batch.len());
 
-    let reduced_vm_size = memory_size;
-    // let reduced_vm_size = memory_size >> 1; // 50%       = 65536
-    // let reduced_vm_size = memory_size >> 2; // 25%       = 32768
-    // let reduced_vm_size = memory_size >> 3; // 12.5%     = 16384
-    // let reduced_vm_size = memory_size >> 4; // 6.25%     = 8192
-    // let reduced_vm_size = memory_size >> 5; // 3...%     = 4096
-    // let reduced_vm_size = memory_size >> 6; // 1.5...%   = 2048
-    // let reduced_vm_size = memory_size >> 7; // 0.7...%   = 1024
+    let reduced_vm_size = storage_size;
+    // let reduced_vm_size = storage_size >> 1; // 50%       = 65536
+    // let reduced_vm_size = storage_size >> 2; // 25%       = 32768
+    // let reduced_vm_size = storage_size >> 3; // 12.5%     = 16384
+    // let reduced_vm_size = storage_size >> 4; // 6.25%     = 8192
+    // let reduced_vm_size = storage_size >> 5; // 3...%     = 4096
+    // let reduced_vm_size = storage_size >> 6; // 1.5...%   = 2048
+    // let reduced_vm_size = storage_size >> 7; // 0.7...%   = 1024
 
     // let mut s = DefaultHasher::new();
     let mut address_to_worker = vec![UNASSIGNED; reduced_vm_size];
     // let mut address_to_worker = HashMap::new();
 
-    let mut memory = VmMemory::new(memory_size);
+    let mut storage = VmStorage::new(storage_size);
     let mut results: Vec<ExecutionResult> = vec!();
 
     let mut worker_to_tx: Vec<Vec<usize>> = vec![
@@ -143,11 +143,11 @@ fn profiling(path: &str) -> Result<()> {
     for _i in 0..config.repetitions {
         // Reset variables -------------------------------------------------------------------------
         address_to_worker.fill(UNASSIGNED);
-        memory.set_memory(200);
+        storage.set_storage(200);
         results.truncate(0);
         backlog.truncate(0);
         let mut batch = _initial_batch.clone();
-        // tx_to_worker = list of worker index the size of the main memory
+        // tx_to_worker = list of worker index the size of the main storage
         // Measure assign_workers
         let a = Instant::now();
         let assignment_original = assign_workers(
@@ -167,7 +167,7 @@ fn profiling(path: &str) -> Result<()> {
             &mut results,
             &mut batch,
             &mut backlog,
-            &mut memory,
+            &mut storage,
             &assignment_original,
         )?;
         latency_exec = latency_exec.add(b.elapsed());
@@ -180,7 +180,7 @@ fn profiling(path: &str) -> Result<()> {
         }
         results.truncate(0);
         backlog.truncate(0);
-        memory.set_memory(200);
+        storage.set_storage(200);
         let mut batch = _initial_batch.clone();
         // Measure assign_workers
         let a = Instant::now();
@@ -201,7 +201,7 @@ fn profiling(path: &str) -> Result<()> {
             &mut results,
             &mut batch,
             &mut backlog,
-            &mut memory,
+            &mut storage,
             &worker_to_tx,
         )?;
         latency_exec_new_impl = latency_exec_new_impl.add(b.elapsed());
@@ -213,7 +213,7 @@ fn profiling(path: &str) -> Result<()> {
         next.fill(usize::MAX);
         results.truncate(0);
         backlog.truncate(0);
-        memory.set_memory(200);
+        storage.set_storage(200);
         let mut batch = _initial_batch.clone();
         // Measure assign_workers
         let a = Instant::now();
@@ -234,13 +234,13 @@ fn profiling(path: &str) -> Result<()> {
             &mut results,
             &mut batch,
             &mut backlog,
-            &mut memory,
+            &mut storage,
             &next,
             &assignment_new_impl_2
         )?;
         latency_exec_new_impl_2 = latency_exec_new_impl_2.add(b.elapsed());
 
-        // println!("Amount per address after exec: {}", memory.total()/memory_size as u64);
+        // println!("Amount per address after exec: {}", storage.total()/storage_size as u64);
     }
     println!("Profiling took {:?}", total.elapsed());
     println!();

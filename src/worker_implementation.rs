@@ -11,14 +11,14 @@ use tokio::sync::mpsc::{channel as tokio_channel, Receiver as TokioReceiver, Sen
 
 use crate::transaction::Transaction;
 use crate::vm::{CPU, ExecutionResult, Jobs};
-use crate::vm_utils::{SharedMemory, VmMemory};
+use crate::vm_utils::{SharedStorage, VmStorage};
 use crate::wip::{AssignedWorker, Word};
 
 #[derive(Debug)]
 pub struct WorkerInput {
     pub batch: Arc<Jobs>,
     pub tx_to_worker: Arc<Vec<AssignedWorker>>,
-    pub memory: SharedMemory,
+    pub storage: SharedStorage,
 }
 
 pub type WorkerOutput = (Vec<usize>, Vec<ExecutionResult>, Vec<Transaction>);
@@ -38,7 +38,7 @@ pub trait WorkerB {
     // TOD split trait and include Worker C
     fn process_job(job: WorkerInput, worker_index: AssignedWorker) -> WorkerOutput {
 
-        let mut shared_memory = job.memory;
+        let mut shared_storage = job.storage;
         let batch = job.batch;
         let tx_to_worker = job.tx_to_worker;
 
@@ -54,7 +54,7 @@ pub trait WorkerB {
             if *assigned_worker == worker_index {
                 stack.clear(); // TODO Does this need to be optimised?
                 for instr in tx.instructions.iter() {
-                    CPU::execute_from_shared(instr, &mut stack, &mut shared_memory);
+                    CPU::execute_from_shared(instr, &mut stack, &mut shared_storage);
                 }
                 let result = ExecutionResult::todo();
                 worker_output.push(result);
@@ -207,13 +207,13 @@ impl WorkerC {
         results: &mut Vec<ExecutionResult>,
         batch: &Jobs,
         backlog: &mut Jobs,
-        memory: &mut VmMemory,
+        storage: &mut VmStorage,
         tx_to_worker: &Vec<AssignedWorker>
     ) -> Result<()>
     {
         let mut execution_errors: Vec<Result<()>> = vec!();
         crossbeam::scope(|s| {
-            let mut shared_memory = memory.get_shared();
+            let mut shared_storage = storage.get_shared();
             let mut handles = Vec::with_capacity(nb_workers);
 
             for i in 0..nb_workers {
@@ -232,7 +232,7 @@ impl WorkerC {
                         if *assigned_worker == worker_index {
                             stack.clear();
                             for instr in tx.instructions.iter() {
-                                CPU::execute_from_shared(instr, &mut stack, &mut shared_memory);
+                                CPU::execute_from_shared(instr, &mut stack, &mut shared_storage);
                             }
 
                             let result = ExecutionResult::todo();
@@ -272,13 +272,13 @@ impl WorkerC {
         results: &mut Vec<ExecutionResult>,
         batch: &Jobs,
         backlog: &mut Jobs,
-        memory: &mut VmMemory,
+        storage: &mut VmStorage,
         tx_to_worker: &Vec<Vec<usize>>
     ) -> Result<()>
     {
         let mut execution_errors: Vec<Result<()>> = vec!();
         crossbeam::scope(|s| {
-            let mut shared_memory = memory.get_shared();
+            let mut shared_storage = storage.get_shared();
             let mut handles = Vec::with_capacity(nb_workers);
 
             for i in 0..nb_workers {
@@ -297,7 +297,7 @@ impl WorkerC {
                         let tx = batch.get(tx_index.clone()).unwrap();
                         stack.clear();
                         for instr in tx.instructions.iter() {
-                            CPU::execute_from_shared(instr, &mut stack, &mut shared_memory);
+                            CPU::execute_from_shared(instr, &mut stack, &mut shared_storage);
                         }
 
                         let result = ExecutionResult::todo();
@@ -336,14 +336,14 @@ impl WorkerC {
         results: &mut Vec<ExecutionResult>,
         batch: &Jobs,
         backlog: &mut Jobs,
-        memory: &mut VmMemory,
+        storage: &mut VmStorage,
         next: &Vec<usize>,
         head: &Vec<usize>
     ) -> Result<()>
     {
         let mut execution_errors: Vec<Result<()>> = vec!();
         crossbeam::scope(|s| {
-            let mut shared_memory = memory.get_shared();
+            let mut shared_storage = storage.get_shared();
             let mut handles = Vec::with_capacity(nb_workers);
 
             for i in 0..nb_workers {
@@ -369,7 +369,7 @@ impl WorkerC {
 
                         stack.clear();
                         for instr in tx.instructions.iter() {
-                            CPU::execute_from_shared(instr, &mut stack, &mut shared_memory);
+                            CPU::execute_from_shared(instr, &mut stack, &mut shared_storage);
                         }
 
                         let result = ExecutionResult::todo();

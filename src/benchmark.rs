@@ -23,13 +23,13 @@ pub fn benchmarking(path: &str) -> Result<()> {
     for vm_type in config.vm_types.iter() {
         for nb_core in config.nb_cores.iter() {
             for batch_size in config.batch_sizes.iter() {
-                let memory_size= 2 * batch_size;
+                let storage_size = 2 * batch_size;
                 for conflict_rate in config.conflict_rates.iter() {
                     let parameter = RunParameter::new(
                         *vm_type,
                         *nb_core,
                         *batch_size,
-                        memory_size,
+                        storage_size,
                         *conflict_rate,
                         repetitions,
                         config.seed,
@@ -54,7 +54,7 @@ pub fn benchmarking(path: &str) -> Result<()> {
 fn bench_with_parameter(run: RunParameter) -> BenchmarkResult {
 
     let vm = RefCell::new(
-        VmFactory::new_vm(&run.vm_type, run.memory_size, run.nb_core, run.batch_size)
+        VmFactory::new_vm(&run.vm_type, run.storage_size, run.nb_core, run.batch_size)
     );
 
     let mut latency_reps = vec!();
@@ -74,12 +74,12 @@ fn bench_with_parameter(run: RunParameter) -> BenchmarkResult {
         //     &mut rng
         // );
         let batch = batch_with_conflicts_new_impl(
-            run.memory_size,
+            run.storage_size,
             run.batch_size,
             run.conflict_rate,
             &mut rng
         );
-        vm.borrow_mut().set_memory(200);
+        vm.borrow_mut().set_storage(200);
 
         let start = Instant::now();
         let _vm_output = vm.borrow_mut().execute(batch);

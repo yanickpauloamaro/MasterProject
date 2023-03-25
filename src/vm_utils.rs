@@ -33,29 +33,29 @@ impl VmType {
 //region VM Factory ================================================================================
 pub struct VmFactory;
 impl VmFactory {
-    pub fn new_vm(tpe: &VmType, memory_size: usize, nb_cores: usize, batch_size: usize) -> Box<dyn Executor> {
+    pub fn new_vm(tpe: &VmType, storage_size: usize, nb_cores: usize, batch_size: usize) -> Box<dyn Executor> {
         match tpe {
-            VmType::A => Box::new(VMa::new(memory_size).unwrap()),
-            VmType::BTokio => Box::new(VMb::<WorkerBTokio>::new(memory_size, nb_cores, batch_size).unwrap()),
-            VmType::BStd => Box::new(VMb::<WorkerBStd>::new(memory_size, nb_cores, batch_size).unwrap()),
-            VmType::C => Box::new(VMc::new(memory_size, nb_cores, batch_size).unwrap()),
+            VmType::A => Box::new(VMa::new(storage_size).unwrap()),
+            VmType::BTokio => Box::new(VMb::<WorkerBTokio>::new(storage_size, nb_cores, batch_size).unwrap()),
+            VmType::BStd => Box::new(VMb::<WorkerBStd>::new(storage_size, nb_cores, batch_size).unwrap()),
+            VmType::C => Box::new(VMc::new(storage_size, nb_cores, batch_size).unwrap()),
         }
     }
 }
 //endregion
 
-//region VM memory =================================================================================
+//region VM storage ================================================================================
 #[derive(Debug)]
-pub struct VmMemory {
+pub struct VmStorage {
     content: Vec<Word>,
-    shared: SharedMemory,
+    shared: SharedStorage,
 }
 
-impl VmMemory {
+impl VmStorage {
     pub fn new(size: usize) -> Self {
         let mut content = vec![0 as Word; size];
         let ptr = content.as_mut_ptr();
-        let shared = SharedMemory{ ptr };
+        let shared = SharedStorage { ptr };
 
         return Self{ content, shared};
     }
@@ -72,11 +72,11 @@ impl VmMemory {
         self.content[index] = value;
     }
 
-    pub fn get_shared(&self) -> SharedMemory {
+    pub fn get_shared(&self) -> SharedStorage {
         return self.shared;
     }
 
-    pub fn set_memory(&mut self, value: Word) {
+    pub fn set_storage(&mut self, value: Word) {
         self.content.fill(value);
     }
 
@@ -86,15 +86,15 @@ impl VmMemory {
 }
 
 #[derive(Copy, Clone, Debug)]
-pub struct SharedMemory {
+pub struct SharedStorage {
     pub ptr: *mut Word
 }
 
-unsafe impl Send for SharedMemory {}
+unsafe impl Send for SharedStorage {}
 
-unsafe impl Sync for SharedMemory {}
+unsafe impl Sync for SharedStorage {}
 
-impl SharedMemory {
+impl SharedStorage {
     pub fn get(&self, index: usize) -> Word {
         unsafe {
             *self.ptr.add(index)

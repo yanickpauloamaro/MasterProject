@@ -6,13 +6,13 @@ use tokio::runtime::{Handle, Runtime};
 
 use crate::{debug, debugging};
 use crate::vm::{ExecutionResult, Executor, Jobs};
-use crate::vm_utils::{assign_workers, UNASSIGNED, VmMemory};
+use crate::vm_utils::{assign_workers, UNASSIGNED, VmStorage};
 use crate::wip::{AssignedWorker, Word};
 use crate::worker_implementation::{WorkerB, WorkerInput};
 
 //region Parallel VM with background workers =======================================================
 pub struct VMb<W> where W: WorkerB + Send + Sized {
-    memory: VmMemory,
+    storage: VmStorage,
     nb_workers: usize,
     workers: Vec<W>,
 
@@ -21,8 +21,8 @@ pub struct VMb<W> where W: WorkerB + Send + Sized {
 }
 
 impl<W: WorkerB + Send + Sized> VMb<W> {
-    pub fn new(memory_size: usize, nb_workers: usize, _batch_size: usize) -> anyhow::Result<Self> {
-        let memory = VmMemory::new(memory_size);
+    pub fn new(storage_size: usize, nb_workers: usize, _batch_size: usize) -> anyhow::Result<Self> {
+        let storage = VmStorage::new(storage_size);
         let (runtime_keep_alive, handle) = match Handle::try_current() {
             Ok(h) => (None, h),
             Err(_) => {
@@ -38,7 +38,7 @@ impl<W: WorkerB + Send + Sized> VMb<W> {
             workers.push(worker);
         }
 
-        let vm = Self{ memory, nb_workers, workers, _runtime_keep_alive: runtime_keep_alive, _handle: handle };
+        let vm = Self{ storage, nb_workers, workers, _runtime_keep_alive: runtime_keep_alive, _handle: handle };
         return Ok(vm);
     }
 }
@@ -48,7 +48,7 @@ impl<W: WorkerB + Send + Sized> Executor for VMb<W> {
 let total = Instant::now();
         let mut results = Vec::with_capacity(batch.len());
         let mut backlog = Vec::with_capacity(batch.len());
-        let mut address_to_worker = vec![UNASSIGNED; self.memory.len()];
+        let mut address_to_worker = vec![UNASSIGNED; self.storage.len()];
 // debug!("*** Allocating arrays in {:?}", total.elapsed());
 
 // let mut junk: Vec<Jobs> = vec!();
@@ -78,7 +78,7 @@ let start = Instant::now();
                 let worker_input = WorkerInput {
                     batch: batch_arc.clone(),
                     tx_to_worker: tx_to_worker_arc.clone(),
-                    memory: self.memory.get_shared()
+                    storage: self.storage.get_shared()
                 };
 
                 if let Err(e) = worker.send(worker_input) {
@@ -109,8 +109,8 @@ debug!("*** End of loop took {:?}", end.elapsed());
         }
     }
 
-    fn set_memory(&mut self, value: Word) {
-        self.memory.set_memory(value);
+    fn set_storage(&mut self, value: Word) {
+        self.storage.set_storage(value);
     }
 }
 //endregion
