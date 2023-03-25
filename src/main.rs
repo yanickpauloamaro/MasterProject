@@ -17,9 +17,10 @@ use testbench::config::{BenchmarkConfig, ConfigFile};
 use testbench::transaction::Transaction;
 use testbench::utils::{batch_with_conflicts, batch_with_conflicts_new_impl};
 use testbench::vm::{ExecutionResult, Executor};
+use testbench::vm_a::SerialVM;
 use testbench::vm_c::VMc;
 use testbench::vm_utils::{assign_workers, UNASSIGNED, VmStorage};
-use testbench::wip::{assign_workers_new_impl, assign_workers_new_impl_2};
+use testbench::wip::{AccessType, assign_workers_new_impl, assign_workers_new_impl_2, WipTransaction};
 use testbench::worker_implementation::WorkerC;
 
 fn main() -> Result<()>{
@@ -31,7 +32,10 @@ fn main() -> Result<()>{
     // let _ = ConflictWorkload::run(config, 1);
 
     // benchmarking("benchmark_config.json")?;
-    profiling("benchmark_config.json")?;
+    // profiling("benchmark_config.json")?;
+
+    test_new_transactions();
+    // test_new_contracts();
 
     // let _ = crossbeam::scope(|s| {
     //     let start = Instant::now();
@@ -48,6 +52,43 @@ fn main() -> Result<()>{
     // }).or(Err(anyhow::anyhow!("Unable to join crossbeam scope")))?;
 
     return Ok(());
+}
+
+fn test_new_transactions() {
+    let mut serial_vm = SerialVM::new(10)?;
+    serial_vm.set_account_balance(10);
+
+    let batch = vec!(
+        WipTransaction::transfer(0, 1, 1),
+        WipTransaction::transfer(1, 2, 2),
+        WipTransaction::transfer(2, 3, 3),
+        WipTransaction::transfer(3, 4, 4),
+        WipTransaction::transfer(4, 5, 5),
+    );
+
+    println!("Accounts balance before execution: {:?}", serial_vm.accounts);
+    let _result = serial_vm.execute(batch);
+    println!("Accounts balance after execution: {:?}", serial_vm.accounts);
+}
+
+fn test_new_contracts() {
+
+    let mut serial_vm = SerialVM::new(0)?;
+
+    let batch = vec!(WipTransaction::new_coin());
+    let _result = serial_vm.execute(batch);
+
+    let batch = vec!(
+        WipTransaction::call_contract(0, 0, 1, 1),
+        WipTransaction::call_contract(1, 0, 1, 2),
+        WipTransaction::call_contract(2, 0, 1, 3),
+        WipTransaction::call_contract(3, 0, 1, 4),
+        WipTransaction::call_contract(4, 0, 1, 5),
+    );
+
+    println!("Storage before execution: {:?}", serial_vm.contracts[0].storage);
+    let _result = serial_vm.execute(batch);
+    println!("Storage after execution: {:?}", serial_vm.contracts[0].storage);
 }
 
 #[allow(dead_code)]
