@@ -48,10 +48,9 @@ impl SerialVM {
                 Data::NewContract(functions) => {
                     // Creation of a new contract
                     let mut new_contract = Contract{
-                        storage: VmStorage::new(10),    // TODO Just for development: size should be 0 initially
+                        storage: VmStorage::new(0),
                         functions: functions.clone(),
                     };
-                    new_contract.storage.set_storage(10);   // TODO Just for development: should be 0
                     let new_contract_address = self.contracts.len();
                     self.contracts.push(new_contract);
                     Success(new_contract_address)

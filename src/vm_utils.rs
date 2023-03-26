@@ -47,8 +47,8 @@ impl VmFactory {
 //region VM storage ================================================================================
 #[derive(Debug)]
 pub struct VmStorage {
-    content: Vec<Word>,
-    shared: SharedStorage,
+    pub content: Vec<Word>,
+    pub shared: SharedStorage,
 }
 
 impl VmStorage {

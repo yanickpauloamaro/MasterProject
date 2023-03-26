@@ -1,9 +1,11 @@
 #![allow(unused_variables)]
 
 use std::cmp::{max, min};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 
 use hwloc::Topology;
+use rand::rngs::StdRng;
+use rand::seq::{IteratorRandom, SliceRandom};
 use crate::utils::compatible;
 use crate::vm::Jobs;
 use crate::vm_utils::{UNASSIGNED, VmStorage};
@@ -23,6 +25,7 @@ pub fn address_translation(addr: &Address) -> usize {
     return *addr as usize;
 }
 
+#[derive(Clone, Debug)]
 pub struct WipTransaction {
     pub from: Address,
     pub to: Address,
@@ -76,6 +79,125 @@ impl WipTransaction {
             data: Data::NewContract(vec!(transfer)),
         }
     }
+
+    pub fn batch_with_conflicts(memory_size: usize, batch_size: usize, conflict_rate: f64, mut rng: &mut StdRng) -> Vec<WipTransaction> {
+
+        let nb_conflict = (conflict_rate * batch_size as f64).ceil() as usize;
+        let mut addresses: Vec<u64> = (0..memory_size)
+            .choose_multiple(&mut rng, 2*batch_size)
+            .into_iter().map(|el| el as u64)
+            .collect();
+
+        let mut receiver_occurrences: HashMap<u64, u64> = HashMap::new();
+        let mut batch = Vec::with_capacity(batch_size);
+
+        // Create non-conflicting transactions
+        for _i in 0..batch_size {
+            let amount = 2;
+
+            let from = addresses.pop().unwrap();
+            let to = addresses.pop().unwrap();
+
+            // Ensure senders and receivers don't conflict. Otherwise, would need to count conflicts
+            // between senders and receivers
+            // to += batch_size as u64;
+
+            receiver_occurrences.insert(to, 1);
+
+            let tx = WipTransaction::transfer(from, to, amount);
+            batch.push(tx);
+        }
+
+        let indices: Vec<usize> = (0..batch_size).collect();
+
+        let mut conflict_counter = 0;
+        while conflict_counter < nb_conflict {
+            let i = *indices.choose(&mut rng).unwrap();
+            let j = *indices.choose(&mut rng).unwrap();
+
+            if batch[i].to != batch[j].to {
+
+                let freq_i = *receiver_occurrences.get(&batch[i].to).unwrap();
+                let freq_j = *receiver_occurrences.get(&batch[j].to).unwrap();
+
+                if freq_j != 2 {
+                    if freq_j == 1 { conflict_counter += 1; }
+                    if freq_i == 1 { conflict_counter += 1; }
+
+                    receiver_occurrences.insert(batch[i].to, freq_i + 1);
+                    receiver_occurrences.insert(batch[j].to, freq_j - 1);
+
+                    batch[j].to = batch[i].to;
+                }
+            }
+        }
+
+        // print_conflict_rate(&batch);
+
+        batch
+    }
+
+    pub fn batch_with_conflicts_contract(memory_size: usize, batch_size: usize, conflict_rate: f64, mut rng: &mut StdRng) -> Vec<WipTransaction> {
+        let nb_conflict = (conflict_rate * batch_size as f64).ceil() as usize;
+        let mut addresses: Vec<u64> = (0..memory_size)
+            .choose_multiple(&mut rng, 2*batch_size)
+            .into_iter().map(|el| el as u64)
+            .collect();
+
+        let mut receiver_occurrences: HashMap<u64, u64> = HashMap::new();
+        let mut batch = Vec::with_capacity(batch_size);
+
+        // Create non-conflicting transactions
+        for _i in 0..batch_size {
+            let amount = 2;
+            let from = addresses.pop().unwrap();
+            let to = addresses.pop().unwrap();
+
+            // Ensure senders and receivers don't conflict. Otherwise, would need to count conflicts
+            // between senders and receivers
+            // to += batch_size as u64;
+
+            receiver_occurrences.insert(to, 1);
+
+            let tx = WipTransaction::call_contract(from, 0, amount, to);
+            batch.push(tx);
+        }
+
+        let indices: Vec<usize> = (0..batch_size).collect();
+
+        let receiver = |data: &Data| {
+            match data {
+                Data::Parameters(v) => v[2],
+                _ => panic!("All tx should  parameters in this context")
+            }
+        };
+
+        let mut conflict_counter = 0;
+        while conflict_counter < nb_conflict {
+            let i = *indices.choose(&mut rng).unwrap();
+            let j = *indices.choose(&mut rng).unwrap();
+
+            if receiver(&batch[i].data) != receiver(&batch[j].data) {
+
+                let freq_i = *receiver_occurrences.get(&receiver(&batch[i].data)).unwrap();
+                let freq_j = *receiver_occurrences.get(&receiver(&batch[j].data)).unwrap();
+
+                if freq_j != 2 {
+                    if freq_j == 1 { conflict_counter += 1; }
+                    if freq_i == 1 { conflict_counter += 1; }
+
+                    receiver_occurrences.insert(batch[i].to, freq_i + 1);
+                    receiver_occurrences.insert(batch[j].to, freq_j - 1);
+
+                    batch[j].to = batch[i].to;
+                }
+            }
+        }
+
+        // print_conflict_rate(&batch);
+
+        batch
+    }
 }
 
 pub enum WipTransactionResult {
@@ -84,6 +206,7 @@ pub enum WipTransactionResult {
     Success(usize),
 }
 
+#[derive(Clone, Debug)]
 pub enum Data {
     None,
     NewContract(Vec<Function>),
@@ -181,6 +304,87 @@ pub enum SegmentInstruction {
     CallSegment(usize),
     Return(u64),
 }
+
+// pub struct Interpreter;
+//
+// impl Interpreter {
+//
+// }
+//
+// pub fn test() -> Contract {
+//     /*
+//     critical {
+//         let from = storage[param0]
+//         if from < param2 {
+//             return 1
+//         } else {
+//             from = from - param1
+//         }
+//     }
+//
+//     go (param1, param2) critical {
+//             to = storage[param2]
+//             to = to + param1
+//             return 0
+//         }
+//
+//
+//     critical {
+//         let from = storage[param0]  // load from parameter
+//         let amount = param1
+//         if from < amount {
+//             return 1
+//         } else {
+//             let from = storage[param0]
+//             let amount = param1
+//             from = from - amount
+//             storage[param0] = from
+//         }
+//     }
+//
+//     go (param1, param2) critical {
+//             to = storage[param2]
+//             amount = param1
+//             to = to + amount
+//             storage[param2] = to
+//             return 0
+//         }
+//      */
+//
+//     let decrement = Segment{
+//         instructions: vec!(
+//             LoadFromParam(0),   // push(storage[param0])
+//             PushParam(1), // push(param1)
+//             Lt,
+//             JumpI(+7),
+//             LoadFromParam(0),   // push(storage[param0])
+//             PushParam(1), // push(param1)
+//             Sub,
+//             WriteFromParam(0),
+//             ParamPopFront,
+//             NextSegment,    // is considered a return statement
+//             ReturnErr
+//         ),
+//         accesses: vec!(
+//             WriteParam(0)
+//         )
+//     };
+//
+//     let increment = Segment{
+//         instructions: vec!(
+//             LoadFromParam(0),   // push(storage[param0])
+//             PushParam(1), // push(param1)
+//             Add,
+//             WriteFromParam(0),
+//             ReturnSuccess
+//         ),
+//         accesses: vec!(
+//             WriteParam(0)
+//         )
+//     };
+//
+//     todo!();
+// }
 
 pub fn assign_workers_new_impl(
     nb_workers: usize,
