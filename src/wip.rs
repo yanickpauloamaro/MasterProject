@@ -1,13 +1,14 @@
 #![allow(unused_variables)]
 
 use std::cmp::{max, min};
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, VecDeque};
 
 use hwloc::Topology;
 use rand::rngs::StdRng;
 use rand::seq::{IteratorRandom, SliceRandom};
 use crate::utils::compatible;
 use crate::vm::Jobs;
+use crate::vm_a::SerialVM;
 use crate::vm_utils::{UNASSIGNED, VmStorage};
 
 pub const CONFLICT_WIP: u8 = u8::MAX;
@@ -26,7 +27,16 @@ pub fn address_translation(addr: &Address) -> usize {
 }
 
 #[derive(Clone, Debug)]
-pub struct WipTransaction {
+pub struct InternalRequest {
+    pub request_index: usize,
+    pub contract_index: usize,
+    pub function_index: usize,
+    pub segment_index: usize,
+    pub params: Vec<Word>,
+}
+
+#[derive(Clone, Debug)]
+pub struct ExternalRequest {
     pub from: Address,
     pub to: Address,
     pub amount: Amount,
@@ -37,7 +47,7 @@ pub struct WipTransaction {
     // gas_unit_price,
 }
 
-impl WipTransaction {
+impl ExternalRequest {
     pub fn transfer(from: Address, to: Address, amount: Amount) -> Self {
         return Self{
             from, to, amount, data: Data::None,
@@ -56,19 +66,25 @@ impl WipTransaction {
     pub fn new_coin() -> Self {
 
         use SegmentInstruction::*;
-        let decrement = Segment::new(vec!(
-            PushParam(1),
-            DecrementFromParam(0),  // Return error in case of underflow
-            PushParam(2),
-            PushParam(1),
-            CallSegment(1), // Uses the stack as the params for the next segment
-        ));
+        let decrement = Segment::new(
+            vec!(
+                PushParam(1),
+                DecrementFromParam(0),  // Return error in case of underflow
+                PushParam(2),
+                PushParam(1),
+                CallSegment(1), // Uses the stack as the params for the next segment
+            ),
+            vec!(StorageAccess::Param(0))
+        );
 
-        let increment = Segment::new(vec!(
-            PushParam(1),
-            IncrementFromParam(0),  // Return error in case of underflow
-            Return(0),
-        ));
+        let increment = Segment::new(
+            vec!(
+                PushParam(1),
+                IncrementFromParam(0),  // Return error in case of underflow
+                Return(0),
+            ),
+            vec!(StorageAccess::Param(0))
+        );
 
         let transfer= Function::new(vec!(decrement, increment));
 
@@ -80,7 +96,7 @@ impl WipTransaction {
         }
     }
 
-    pub fn batch_with_conflicts(memory_size: usize, batch_size: usize, conflict_rate: f64, mut rng: &mut StdRng) -> Vec<WipTransaction> {
+    pub fn batch_with_conflicts(memory_size: usize, batch_size: usize, conflict_rate: f64, mut rng: &mut StdRng) -> Vec<ExternalRequest> {
 
         let nb_conflict = (conflict_rate * batch_size as f64).ceil() as usize;
         let mut addresses: Vec<u64> = (0..memory_size)
@@ -104,7 +120,7 @@ impl WipTransaction {
 
             receiver_occurrences.insert(to, 1);
 
-            let tx = WipTransaction::transfer(from, to, amount);
+            let tx = ExternalRequest::transfer(from, to, amount);
             batch.push(tx);
         }
 
@@ -137,7 +153,7 @@ impl WipTransaction {
         batch
     }
 
-    pub fn batch_with_conflicts_contract(memory_size: usize, batch_size: usize, conflict_rate: f64, mut rng: &mut StdRng) -> Vec<WipTransaction> {
+    pub fn batch_with_conflicts_contract(memory_size: usize, batch_size: usize, conflict_rate: f64, mut rng: &mut StdRng) -> Vec<ExternalRequest> {
         let nb_conflict = (conflict_rate * batch_size as f64).ceil() as usize;
         let mut addresses: Vec<u64> = (0..memory_size)
             .choose_multiple(&mut rng, 2*batch_size)
@@ -159,7 +175,7 @@ impl WipTransaction {
 
             receiver_occurrences.insert(to, 1);
 
-            let tx = WipTransaction::call_contract(from, 0, amount, to);
+            let tx = ExternalRequest::call_contract(from, 0, amount, to);
             batch.push(tx);
         }
 
@@ -200,9 +216,11 @@ impl WipTransaction {
     }
 }
 
+#[derive(Clone, Debug)]
 pub enum WipTransactionResult {
     Error,
     TransferSuccess,
+    Pending,
     Success(usize),
 }
 
@@ -236,49 +254,62 @@ impl Function {
 #[derive(Clone, Debug)]
 pub struct Segment {
     pub instructions: Vec<SegmentInstruction>,
-    // pub accesses: Vec<StorageAccess>
+    pub accesses: Vec<StorageAccess>
 }
 
 impl Segment {
 
-    pub fn new(instructions: Vec<SegmentInstruction>) -> Self {
-        return Self{instructions};
+    pub fn new(
+        instructions: Vec<SegmentInstruction>,
+        accesses: Vec<StorageAccess>
+    ) -> Self {
+        return Self{instructions, accesses};
     }
-    pub fn accesses(&self, params: Vec<Param>) -> BTreeMap<Address, AccessType> {
-        let mut accesses: BTreeMap<Address, AccessType> = BTreeMap::new();
-        use SegmentInstruction::*;
-        for instr in self.instructions.iter() {
-            match instr {
-                IncrementFromParam(i) => {
-                    let address = params[*i];
-                    match accesses.get_mut(&address) {
-                        Some(mut access) => {
-                            *access = max(*access, AccessType::Write);
-                        },
-                        None => {
-                            accesses.insert(address, AccessType::Write);
-                        }
-                    }
-                },
-                DecrementFromParam(i) => {
-                    let address = params[*i];
-                    match accesses.get_mut(&address) {
-                        Some(mut access) => {
-                            *access = max(*access, AccessType::Write);
-                        },
-                        None => {
-                            accesses.insert(address, AccessType::Write);
-                        }
-                    }
-                }
-                _ => {
 
-                }
+    pub fn accessed_addresses(&self, params: &Vec<Param>) -> Vec<usize> {
+        return self.accesses.iter().map(|access| {
+            match access {
+                StorageAccess::Storage(address) => *address,
+                StorageAccess::Param(param_index) => params[*param_index] as usize,
             }
-        }
-
-        return accesses;
+        }).collect();
     }
+    // pub fn accesses(&self, params: &Vec<Param>) -> BTreeMap<Address, AccessType> {
+    //
+    //     let mut accesses: BTreeMap<Address, AccessType> = BTreeMap::new();
+    //     use SegmentInstruction::*;
+    //     for instr in self.instructions.iter() {
+    //         match instr {
+    //             IncrementFromParam(i) => {
+    //                 let address = params[*i];
+    //                 match accesses.get_mut(&address) {
+    //                     Some(mut access) => {
+    //                         *access = max(*access, AccessType::Write);
+    //                     },
+    //                     None => {
+    //                         accesses.insert(address, AccessType::Write);
+    //                     }
+    //                 }
+    //             },
+    //             DecrementFromParam(i) => {
+    //                 let address = params[*i];
+    //                 match accesses.get_mut(&address) {
+    //                     Some(mut access) => {
+    //                         *access = max(*access, AccessType::Write);
+    //                     },
+    //                     None => {
+    //                         accesses.insert(address, AccessType::Write);
+    //                     }
+    //                 }
+    //             }
+    //             _ => {
+    //
+    //             }
+    //         }
+    //     }
+    //
+    //     return accesses;
+    // }
 }
 
 #[derive(PartialEq, Eq, PartialOrd, Ord, Clone, Copy, Debug)]
@@ -287,10 +318,13 @@ pub enum AccessType {
     Write = 1
 }
 
+#[derive(Clone, Debug)]
 pub enum StorageAccess {
+    Storage(usize),
+    Param(usize)
     // Accessing using a static address
-    Read(Address),
-    Write(Address),
+    // Read(Address),
+    // Write(Address),
     // Accessing using a parameter
     // Write(usize),
     // Read(usize),
@@ -298,6 +332,7 @@ pub enum StorageAccess {
 
 #[derive(Copy, Clone, Debug)]
 pub enum SegmentInstruction {
+    // TODO Add more instructions (incl. instructions to increase storage size, e.g. vec.resize)
     PushParam(usize),
     IncrementFromParam(usize),
     DecrementFromParam(usize),
@@ -384,6 +419,62 @@ pub enum SegmentInstruction {
 //     };
 //
 //     todo!();
+// }
+
+// pub fn assign_workers_contracts(
+//     vm: &mut SerialVM,
+//     nb_workers: usize,
+//     batch: &Vec<ExternalRequest>,
+//     address_to_worker: &mut Vec<AssignedWorker>,
+//     backlog: &mut Vec<ExternalRequest>
+// ) -> Vec<AssignedWorker> {
+//     let mut tx_to_worker = vec![UNASSIGNED; batch.len()];
+//     let mut next_worker = 0 as AssignedWorker;
+//     let nb_workers = nb_workers as AssignedWorker;
+//     let mut accesses: Vec<usize> = vec!();
+//
+//     // TODO Need to translate vec of tx into vec of segments...
+//     for (index, tx) in batch.iter().enumerate() {
+//         let from = tx.from as usize;
+//         let to = tx.to as usize;
+//
+//         if tx.data == Data::None {
+//             // Native transfer
+//             accesses.push(tx.from as usize);
+//             accesses.push(tx.to as usize);
+//         } else {
+//             let contract = vm.contracts.get(tx.to).unwrap();
+//
+//         }
+//
+//         let worker_from = address_to_worker[from];
+//         let worker_to = address_to_worker[to];
+//
+//         if worker_from == UNASSIGNED && worker_to == UNASSIGNED {
+//             let assigned = next_worker + 1;
+//             address_to_worker[from] = assigned;
+//             address_to_worker[to] = assigned;
+//             tx_to_worker[index] = assigned;
+//             next_worker = if next_worker == nb_workers - 1 {
+//                 0
+//             } else {
+//                 next_worker + 1
+//             };
+//         } else if worker_from == UNASSIGNED || worker_to == UNASSIGNED {
+//             let assigned = max(worker_from, worker_to);
+//             address_to_worker[from] = assigned;
+//             address_to_worker[to] = assigned;
+//             tx_to_worker[index] = assigned;
+//
+//         } else if worker_from == worker_to {
+//             tx_to_worker[index] = worker_from;
+//
+//         } else {
+//             backlog.push(tx.clone());
+//         }
+//     }
+//
+//     return tx_to_worker;
 // }
 
 pub fn assign_workers_new_impl(

@@ -7,7 +7,7 @@ use anyhow::Result;
 use crate::{debug, debugging};
 use crate::vm::{CPU, ExecutionResult, Executor, Jobs};
 use crate::vm_utils::VmStorage;
-use crate::wip::{address_translation, Contract, Data, SegmentInstruction, WipTransaction, WipTransactionResult, Word};
+use crate::wip::{address_translation, Contract, Data, SegmentInstruction, ExternalRequest, WipTransactionResult, Word};
 
 //region Serial VM =================================================================================
 pub struct SerialVM {
@@ -23,7 +23,7 @@ impl SerialVM {
         return Ok(vm);
     }
 
-    pub fn execute(&mut self, mut batch: Vec<WipTransaction>) -> Result<Vec<WipTransactionResult>> {
+    pub fn execute(&mut self, mut batch: Vec<ExternalRequest>) -> Result<Vec<WipTransactionResult>> {
 
         let mut results = Vec::with_capacity(batch.len());
 

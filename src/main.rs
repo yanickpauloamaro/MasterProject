@@ -18,9 +18,9 @@ use testbench::transaction::Transaction;
 use testbench::utils::{batch_with_conflicts, batch_with_conflicts_new_impl};
 use testbench::vm::{ExecutionResult, Executor};
 use testbench::vm_a::{SerialVM, VMa};
-use testbench::vm_c::VMc;
+use testbench::vm_c::{ParallelVM, VMc};
 use testbench::vm_utils::{assign_workers, UNASSIGNED, VmStorage};
-use testbench::wip::{AccessType, assign_workers_new_impl, assign_workers_new_impl_2, WipTransaction};
+use testbench::wip::{AccessType, assign_workers_new_impl, assign_workers_new_impl_2, Contract, Data, ExternalRequest};
 use testbench::worker_implementation::WorkerC;
 
 fn main() -> Result<()>{
@@ -34,9 +34,11 @@ fn main() -> Result<()>{
     // benchmarking("benchmark_config.json")?;
     // profiling("benchmark_config.json")?;
 
-    profile_old_tx("benchmark_config.json")?;
-    profile_new_tx("benchmark_config.json")?;
-    profile_new_contract("benchmark_config.json")?;
+    // profile_old_tx("benchmark_config.json")?;
+    // profile_new_tx("benchmark_config.json")?;
+    // profile_new_contract("benchmark_config.json")?;
+
+    profile_parallel_contract()?;
 
     // test_new_transactions()?;
     // test_new_contracts()?;
@@ -58,16 +60,59 @@ fn main() -> Result<()>{
     return Ok(());
 }
 
+fn profile_parallel_contract() -> Result<()> {
+    let mut vm = ParallelVM::new(4)?;
+    let batch_size = 65536;
+    let storage_size = 2 * batch_size;
+    let initial_balance = 10;
+
+    if let Data::NewContract(functions) = ExternalRequest::new_coin().data {
+        let mut storage = VmStorage::new(storage_size);
+        storage.set_storage(initial_balance);
+        let mut new_contract = Contract{
+            storage,
+            functions: functions.clone(),
+        };
+        vm.contracts.push(new_contract);
+
+        let mut rng = StdRng::seed_from_u64(10);
+
+        let batch = ExternalRequest::batch_with_conflicts(
+            storage_size,
+            batch_size,
+            0.0,
+            &mut rng
+        );
+
+        // let batch = vec!(
+        //     ExternalRequest::transfer(0, 1, 1),
+        //     ExternalRequest::transfer(1, 2, 2),
+        //     ExternalRequest::transfer(2, 3, 3),
+        //     ExternalRequest::transfer(3, 4, 4),
+        //     ExternalRequest::transfer(4, 5, 5),
+        // );
+
+        // println!("Accounts balance before execution: {:?}", vm.contracts[0].storage);
+        let a = Instant::now();
+        let _result = vm.execute(batch);
+        let duration = a.elapsed();
+        // println!("Accounts balance after execution: {:?}", vm.contracts[0].storage);
+        println!("Took {:?}", duration);
+    }
+
+    Ok(())
+}
+
 fn test_new_transactions() -> Result<()> {
     let mut serial_vm = SerialVM::new(10)?;
     serial_vm.set_account_balance(10);
 
     let batch = vec!(
-        WipTransaction::transfer(0, 1, 1),
-        WipTransaction::transfer(1, 2, 2),
-        WipTransaction::transfer(2, 3, 3),
-        WipTransaction::transfer(3, 4, 4),
-        WipTransaction::transfer(4, 5, 5),
+        ExternalRequest::transfer(0, 1, 1),
+        ExternalRequest::transfer(1, 2, 2),
+        ExternalRequest::transfer(2, 3, 3),
+        ExternalRequest::transfer(3, 4, 4),
+        ExternalRequest::transfer(4, 5, 5),
     );
 
     println!("Accounts balance before execution: {:?}", serial_vm.accounts);
@@ -81,16 +126,16 @@ fn test_new_contracts() -> Result<()> {
 
     let mut serial_vm = SerialVM::new(0)?;
 
-    let batch = vec!(WipTransaction::new_coin());
+    let batch = vec!(ExternalRequest::new_coin());
     let _result = serial_vm.execute(batch);
     serial_vm.contracts[0].storage.content.resize(10, 10);
 
     let batch = vec!(
-        WipTransaction::call_contract(0, 0, 1, 1),
-        WipTransaction::call_contract(1, 0, 2, 2),
-        WipTransaction::call_contract(2, 0, 3, 3),
-        WipTransaction::call_contract(3, 0, 4, 4),
-        WipTransaction::call_contract(4, 0, 5, 5),
+        ExternalRequest::call_contract(0, 0, 1, 1),
+        ExternalRequest::call_contract(1, 0, 2, 2),
+        ExternalRequest::call_contract(2, 0, 3, 3),
+        ExternalRequest::call_contract(3, 0, 4, 4),
+        ExternalRequest::call_contract(4, 0, 5, 5),
     );
 
     println!("Storage before execution: {:?}", serial_vm.contracts[0].storage);
@@ -167,7 +212,7 @@ fn profile_new_tx(path: &str) -> Result<()> {
 
     for _ in 0..config.repetitions {
         serial_vm.set_account_balance(200);
-        let batch = WipTransaction::batch_with_conflicts(
+        let batch = ExternalRequest::batch_with_conflicts(
             storage_size,
             batch_size,
             conflict_rate,
@@ -205,13 +250,13 @@ fn profile_new_contract(path: &str) -> Result<()> {
 
     let mut latency_exec = Duration::from_nanos(0);
     let mut serial_vm = SerialVM::new(storage_size)?;
-    let batch = vec!(WipTransaction::new_coin());
+    let batch = vec!(ExternalRequest::new_coin());
     let _result = serial_vm.execute(batch);
     serial_vm.contracts[0].storage.content.resize(storage_size, 0);
 
     for _ in 0..config.repetitions {
         serial_vm.contracts[0].storage.set_storage(200);
-        let mut batch = WipTransaction::batch_with_conflicts_contract(
+        let mut batch = ExternalRequest::batch_with_conflicts_contract(
             storage_size,
             batch_size,
             conflict_rate,
