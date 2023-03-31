@@ -8,7 +8,6 @@ use crate::wip::Word;
 
 // pub const CHANNEL_CAPACITY: usize = 200;
 
-pub type Batch = Vec<Transaction>;
 pub type Jobs = Vec<Transaction>;
 pub type BatchResult = Vec<TransactionOutput>;
 

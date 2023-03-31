@@ -2,6 +2,8 @@
 
 use std::cmp::{max, min};
 use std::collections::{BTreeMap, HashMap, VecDeque};
+use std::mem;
+use anyhow::anyhow;
 
 use hwloc::Topology;
 use rand::rngs::StdRng;
@@ -25,6 +27,188 @@ pub type Param = u64;
 pub fn address_translation(addr: &Address) -> usize {
     return *addr as usize;
 }
+
+#[derive(Debug)]
+pub struct ContractVM {
+    storage: Vec<Word>,
+    functions: Vec<ContractFunction>
+}
+
+impl ContractVM {
+    pub fn new(storage_size: usize) -> anyhow::Result<Self> {
+        let storage = vec![0; storage_size];
+        let functions = vec!(ContractFunction::Transfer);
+        let vm = Self{ storage, functions};
+        return Ok(vm);
+    }
+
+    pub fn execute(&mut self, mut batch: Batch) -> anyhow::Result<Vec<ContractStatus>> {
+        let mut results = vec![ContractStatus::Error; batch.len()];
+
+        for (tx_index, tx) in batch.iter().enumerate() {
+            let function = &self.functions[tx.function as usize];
+            match function {
+                ContractFunction::Transfer => {
+                    let from = tx.params[0] as usize;
+                    let to = tx.params[1] as usize;
+                    let amount = tx.params[2] as Word;
+
+                    let balance_from = self.storage[from];
+                    if balance_from >= amount {
+                        self.storage[from] -= amount;
+                        self.storage[to] += amount;
+                        results[tx_index] = ContractStatus::Success;
+                    }
+                }
+            }
+        }
+
+        Ok(results)
+    }
+}
+
+#[derive(Debug)]
+pub struct ParallelContractVM {
+    storage: VmStorage,
+    functions: Vec<ContractFunction>,
+    nb_workers: usize,
+}
+
+impl ParallelContractVM {
+    pub fn new(storage_size: usize, nb_workers: usize) -> anyhow::Result<Self> {
+        let storage = VmStorage::new(storage_size);
+        let functions = vec!(ContractFunction::Transfer);
+        let vm = Self{ storage, functions, nb_workers };
+        return Ok(vm);
+    }
+
+    pub fn execute(&mut self, mut batch: Batch) -> anyhow::Result<Vec<ContractStatus>> {
+        let mut results = vec![ContractStatus::Error; batch.len()];
+
+        loop {
+            // assign workers
+
+            // send to workers
+
+            //
+        }
+
+        Ok(results)
+    }
+
+    fn crossbeam(
+        &mut self,
+        results: &mut Vec<ContractStatus>,
+        batch: &mut Batch,
+        tx_to_worker: &Vec<AssignedWorker>
+    ) -> anyhow::Result<()>
+    {
+        let mut execution_errors: Vec<anyhow::Result<()>> = vec!();
+
+        crossbeam::scope(|s| unsafe {
+            let mut shared_storage = self.storage.get_shared();
+            let mut shared_results = results.as_mut_ptr();
+            let mut handles = Vec::with_capacity(self.nb_workers);
+
+            for i in 0..self.nb_workers {
+                let worker_index = i as AssignedWorker + 1;
+                // let assignment = batch.iter().zip(tx_to_worker.iter());
+                let assigned_tx: Vec<usize> = vec!();
+                let batch_ref = &*batch;
+                let self_ref = &*self;
+
+                handles.push(s.spawn(move |_| {
+                    let mut _accessed = vec!(0);
+                    //let _accessed = vec![0; batch.len()];
+                    let _worker_name = format!("Worker {}", worker_index);
+
+                    let mut stack: VecDeque<Word> = VecDeque::new();
+                    let mut worker_output = vec!();
+                    let mut _worker_backlog: Vec<()> = vec!();
+
+                    for tx_index in assigned_tx {
+                        let mut tx = batch_ref.get(tx_index).unwrap();
+                        let function = &self_ref.functions[tx.function as usize];
+                        match function {
+                            ContractFunction::Transfer => {
+                                let from = tx.params[0] as usize;
+                                let to = tx.params[1] as usize;
+                                let amount = tx.params[2] as Word;
+
+                                let balance_from = shared_storage.get(from);
+                                if balance_from >= amount {
+                                    shared_storage.set(from, balance_from - amount);
+                                    let balance_to = shared_storage.get(to);
+                                    shared_storage.set(to, balance_to + amount);
+                                    // *shared_results.add(tx_index) = ContractResult::Success
+                                    worker_output.push((tx_index, ContractStatus::Success))
+                                } else {
+                                    worker_output.push((tx_index, ContractStatus::Error))
+                                }
+                            }
+                        }
+                    }
+
+                    (_accessed, worker_output, _worker_backlog)
+                }));
+            }
+
+            for (_worker_index, handle) in handles.into_iter().enumerate() {
+                match handle.join() {
+                    Ok((_accessed, mut worker_output, mut worker_backlog)) => {
+                        for (tx_index, result) in worker_output {
+                            results[tx_index] = result;
+                        }
+
+                        // for (tx_index, tx) in worker_backlog {
+                        //     batch[tx_index] = tx;
+                        // }
+                    },
+                    Err(e) => {
+                        execution_errors.push(Err(anyhow!("{:?}", e)));
+                    }
+                }
+            }
+        }).or(Err(anyhow!("Unable to join crossbeam scope")))?;
+
+        return Ok(());
+        // if execution_errors.is_empty() {
+        //     return Ok(());
+        // }
+        //
+        // return Err(anyhow!("Some error occurred during parallel execution: {:?}", execution_errors));
+    }
+}
+
+#[derive(Clone, Debug)]
+pub enum ContractFunction {
+    Transfer
+}
+
+#[derive(Clone, Debug)]
+pub enum ContractStatus { 
+    Running,
+    Success,
+    Error
+}
+pub type SenderAddress = u32;
+pub type FunctionAddress = u32;
+pub type FunctionParameter = u32;
+pub type Batch = Vec<ContractTransaction>;
+const MAX_NB_PARAMETERS: usize = 4;
+
+const MAX_TX_SIZE: usize = mem::size_of::<SenderAddress>() +
+    mem::size_of::<FunctionAddress>() +
+    MAX_NB_PARAMETERS * mem::size_of::<FunctionParameter>();
+
+// TODO Find safe way to have a variable length array?
+#[derive(Clone, Debug)]
+pub struct ContractTransaction {
+    sender: SenderAddress,
+    function: FunctionAddress,
+    params: [FunctionParameter; MAX_NB_PARAMETERS],
+}
+
 
 #[derive(Clone, Debug)]
 pub struct InternalRequest {
@@ -273,6 +457,18 @@ impl Segment {
                 StorageAccess::Param(param_index) => params[*param_index] as usize,
             }
         }).collect();
+    }
+
+    pub fn accessed_addresses_set(&self, params: &Vec<Param>) -> tinyset::SetU64 {
+        let mut set = tinyset::SetU64::with_capacity_and_max(2, 100 * 65536);
+        for access in self.accesses.iter() {
+            let addr = match access {
+                StorageAccess::Storage(address) => *address,
+                StorageAccess::Param(param_index) => params[*param_index] as usize,
+            };
+            set.insert(addr as u64);
+        }
+        set
     }
     // pub fn accesses(&self, params: &Vec<Param>) -> BTreeMap<Address, AccessType> {
     //

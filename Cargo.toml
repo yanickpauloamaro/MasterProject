@@ -27,7 +27,13 @@ crossbeam = "0.8.2"
 crossbeam-utils = "0.8.15"
 core_affinity = "0.8.0"
 ed25519-dalek = "1.0.1"
-
+rayon = "1.7.0"
+thincollections = "0.5.3"
+nohash-hasher = "0.2.0"
+tinyset = "0.4.15"
+voracious_radix_sort = { version = "1.2.0", features = ["voracious_multithread"] }
+itertools = "0.10.5"
+futures = "0.3.27"
 
 [dev-dependencies]
 criterion = { version = "0.4.0", features = ["async_tokio", "async_futures"]}

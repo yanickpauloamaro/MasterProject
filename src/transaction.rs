@@ -18,7 +18,7 @@ pub struct Transaction {
 }
 // type Variable = u64;
 
-#[derive(Debug, Clone)]
+#[derive(Copy, Debug, Clone)]
 pub enum Instruction {
     CreateAccount(TransactionAddress, Amount),
     Increment(TransactionAddress, Amount),

@@ -5,6 +5,7 @@ use std::time::Instant;
 use anyhow::Result;
 
 use crate::{debug, debugging};
+use crate::transaction::Instruction;
 use crate::vm::{CPU, ExecutionResult, Executor, Jobs};
 use crate::vm_utils::VmStorage;
 use crate::wip::{address_translation, Contract, Data, SegmentInstruction, ExternalRequest, WipTransactionResult, Word};
@@ -137,7 +138,7 @@ let start = Instant::now();
         let mut results = Vec::with_capacity(batch.len());
         let mut backlog = Vec::with_capacity(batch.len());
 
-        let mut stack = VecDeque::new();
+        let mut stack: VecDeque<Word> = VecDeque::new();
 
         loop {
             if batch.is_empty() {
@@ -147,9 +148,22 @@ debug!("### Done serial execution in {:?}\n", start.elapsed());
 
             for tx in batch.iter() {
                 stack.clear(); // TODO Does this need to be optimised?
-                for instr in tx.instructions.iter() {
-                    CPU::execute_from_array(instr, &mut stack, &mut self.storage);
+                let first_instr = tx.instructions.get(0).unwrap();
+                let second_instr = tx.instructions.get(1).unwrap();
+
+                if let Instruction::Increment(addr_inc, amount) = first_instr {
+                    let balance_from = *self.storage.get(*addr_inc as usize).unwrap();
+
+                    if let Instruction::Decrement(addr_dec, _) = second_instr {
+                        if balance_from >= *amount {
+                            *self.storage.get_mut(*addr_inc as usize).unwrap() -= *amount;
+                            *self.storage.get_mut(*addr_dec as usize).unwrap() += *amount;
+                        }
+                    }
                 }
+                // for instr in tx.instructions.iter() {
+                //     CPU::execute_from_array(instr, &mut stack, &mut self.storage);
+                // }
                 let result = ExecutionResult::todo();
                 results.push(result);
                 // TODO add to next transaction piece to backlog

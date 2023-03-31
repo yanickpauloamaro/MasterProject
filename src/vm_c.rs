@@ -1,7 +1,8 @@
 use std::cmp::max;
 use std::collections::VecDeque;
 use std::mem;
-use std::time::Instant;
+use std::ops::{Add, BitOr, Div};
+use std::time::{Duration, Instant};
 
 use crate::{debug, debugging};
 use crate::vm::{ExecutionResult, Executor, Jobs};
@@ -100,7 +101,15 @@ let b = a.elapsed();
         let mut backlog: Vec<InternalRequest> = vec!();
 
 let a = Instant::now();
-        self.assign_requests(
+        // self.assign_requests(
+        //     &batch,
+        //     // &mut address_to_worker,
+        //     &mut tx_to_worker,
+        //     self.nb_workers as AssignedWorker,
+        //     &mut backlog
+        // );
+        // println!();
+        self.assign_requests_set(
             &batch,
             // &mut address_to_worker,
             &mut tx_to_worker,
@@ -108,8 +117,9 @@ let a = Instant::now();
             &mut backlog
         );
 
+let elapsed = a.elapsed();
 println!("Mapping external into internal took {:?}", b);
-println!("Assignment took {:?}", a.elapsed());
+println!("Assignment took {:?}", elapsed);
 
         Ok(results)
     }
@@ -169,11 +179,17 @@ println!("Assignment took {:?}", a.elapsed());
         // TODO For now assume there is only one contract: the native transfer
         let contract = self.contracts.get(0).unwrap();
         let mut address_to_worker = vec![UNASSIGNED; contract.storage.len()];
+        let function = contract.functions.get(0).unwrap();
 
         let mut next_worker = 0 as AssignedWorker;
 
+        let a = Instant::now();
+        address_to_worker.fill(UNASSIGNED);
+        let mut reset = a.elapsed();
+        // println!("Resetting takes: {:?}", reset);
+        let mut sum = reset;
         'outer: for (req_index, req) in batch.iter().enumerate() {
-            let function = contract.functions.get(req.function_index).unwrap();
+            let a = Instant::now();
             let segment = function.segments.get(req.segment_index).unwrap();
             let accesses = segment.accessed_addresses(&req.params);
 
@@ -204,7 +220,100 @@ println!("Assignment took {:?}", a.elapsed());
             for access in accesses.iter() {
                 address_to_worker[*access] = current_assigned;
             }
+            sum = a.elapsed().add(sum);
+
             // println!("Tx {}: \n\tfirst loop: {:?}, \n\tsecond loop: {:?}", req_index, b, c.elapsed());
         }
+        // println!("Original: ");
+        // println!("Sum of duration:\t {:?}", sum);
+        // println!("Average duration:\t {:?} per request", sum.div(batch.len() as u32));
+    }
+
+    pub fn assign_requests_set(
+        &mut self,
+        batch: &Vec<InternalRequest>,
+        // address_to_worker: &mut Vec<AssignedWorker>,
+        tx_to_worker: &mut Vec<AssignedWorker>,
+        nb_workers: AssignedWorker,
+        backlog: &mut Vec<InternalRequest>
+    ) {
+        // TODO For now assume there is only one contract: the native transfer
+        let mut worker_accesses = vec![
+            tinyset::SetU64::with_capacity_and_max(2 * batch.len(), 100 * 65536);
+            nb_workers as usize
+        ];
+
+        let _init = Instant::now();
+        let contract = self.contracts.get(0).unwrap();
+        let function = contract.functions.get(0).unwrap();
+
+        let mut next_worker = 0 as AssignedWorker;
+        // println!("initialization took {:?}", _init.elapsed());
+
+        let a = Instant::now();
+        // for worker_access in worker_accesses.iter_mut() {
+        //     let _= worker_access.drain();
+        // }    // 950 ns but 217 ms
+        for w in 0..nb_workers {
+            worker_accesses[w as usize] = tinyset::SetU64::with_capacity_and_max(2 * batch.len(), 100 * 65536);
+        }   // 150 micro and 7 ms
+        // worker_accesses = vec![
+        //     tinyset::SetU64::with_capacity_and_max(2 * batch.len(), 100 * 65536);
+        //     nb_workers as usize
+        // ];  // 1 ms and 8 ms
+        let mut reset = a.elapsed();
+        // println!("Resetting takes: {:?}", reset);
+        let mut sum = reset;
+        'outer: for (req_index, req) in batch.iter().enumerate() {
+            let a = Instant::now();
+
+            let segment = function.segments.get(req.segment_index).unwrap();
+            let tx_accesses = segment.accessed_addresses(&req.params);
+
+            let mut current_assigned = UNASSIGNED;
+            let mut claims = 0;
+            'worker: for (worker_index, worker_access) in worker_accesses.iter().enumerate() {
+                for addr in tx_accesses.iter() {
+                    if worker_access.contains(*addr as u64) {
+                        // if claims == 1 {
+                        //     backlog.push(req.clone());
+                        //     continue 'outer;
+                        // }
+
+                        claims += 1;
+                        current_assigned = worker_index as AssignedWorker + 1;
+                        continue 'worker;
+                    }
+                }
+            }
+            match claims {
+                0 => {
+                    current_assigned = next_worker + 1;
+                    tx_to_worker[req_index] = current_assigned;
+                    for access in tx_accesses.iter() {
+                        worker_accesses[current_assigned as usize - 1].insert(*access as u64);
+                    }
+
+                    next_worker = if next_worker == nb_workers - 1 {
+                        0
+                    } else {
+                        next_worker + 1
+                    };
+                },
+                1 => {
+                    tx_to_worker[req_index] = current_assigned;
+                    for access in tx_accesses.iter() {
+                        worker_accesses[current_assigned as usize - 1].insert(*access as u64);
+                    }
+                },
+                _ => {
+                    backlog.push(req.clone());
+                }
+            }
+            sum = a.elapsed().add(sum);
+        }
+        // println!("Tiny set: ");
+        // println!("Sum of duration:\t {:?}", sum);
+        // println!("Average duration:\t {:?} per request", sum.div(batch.len() as u32));
     }
 }

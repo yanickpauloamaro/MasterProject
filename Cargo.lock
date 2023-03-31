@@ -438,6 +438,17 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "89d422fa3cbe3b40dca574ab087abb5bc98258ea57eea3fd6f1fa7162c778b91"
 
 [[package]]
+name = "futures-macro"
+version = "0.3.27"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3eb14ed937631bd8b8b8977f2c198443447a8355b6e3ca599f38c975e5a963b6"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn",
+]
+
+[[package]]
 name = "futures-sink"
 version = "0.3.27"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -458,6 +469,7 @@ dependencies = [
  "futures-channel",
  "futures-core",
  "futures-io",
+ "futures-macro",
  "futures-sink",
  "futures-task",
  "memchr",
@@ -656,6 +668,12 @@ dependencies = [
  "wasi 0.11.0+wasi-snapshot-preview1",
  "windows-sys",
 ]
+
+[[package]]
+name = "nohash-hasher"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2bf50223579dc7cdcfb3bfcacf7069ff68243f8c363f62ffa99cf000a6b9c451"
 
 [[package]]
 name = "num"
@@ -1049,14 +1067,21 @@ dependencies = [
  "crossbeam-utils",
  "ed25519-dalek",
  "either",
+ "futures",
  "hwloc",
+ "itertools",
  "libnuma",
+ "nohash-hasher",
  "num-traits",
  "rand 0.8.5",
+ "rayon",
  "serde",
  "serde_json",
+ "thincollections",
+ "tinyset",
  "tokio",
  "tokio-util",
+ "voracious_radix_sort",
 ]
 
 [[package]]
@@ -1064,6 +1089,21 @@ name = "textwrap"
 version = "0.16.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "222a222a5bfe1bba4a77b45ec488a741b3cb8872e5e499451fd7d0129c9c7c3d"
+
+[[package]]
+name = "thincollections"
+version = "0.5.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b01816415080bff551717565adfcd5502469ce118170d1a469cdf9563ddafd41"
+
+[[package]]
+name = "tinyset"
+version = "0.4.15"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e2417e47ddd3809ad40222777ac754ee881b3a6401e38cbeeeb3ee1ca5f30aa0"
+dependencies = [
+ "rand 0.8.5",
+]
 
 [[package]]
 name = "tinytemplate"
@@ -1139,6 +1179,15 @@ name = "version_check"
 version = "0.9.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "49874b5167b65d7193b8aba1567f5c7d93d001cafc34600cee003eda787e483f"
+
+[[package]]
+name = "voracious_radix_sort"
+version = "1.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "446e7ffcb6c27a71d05af7e51ef2ee5b71c48424b122a832f2439651e1914899"
+dependencies = [
+ "rayon",
+]
 
 [[package]]
 name = "walkdir"
