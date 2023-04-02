@@ -3,11 +3,16 @@
 use std::cmp::{max, min};
 use std::collections::{BTreeMap, HashMap, VecDeque};
 use std::mem;
+use std::sync::mpsc::channel;
 use anyhow::anyhow;
+
+use strum::{IntoEnumIterator, EnumIter};
 
 use hwloc::Topology;
 use rand::rngs::StdRng;
 use rand::seq::{IteratorRandom, SliceRandom};
+use rayon::iter::{IntoParallelIterator, ParallelIterator};
+use rayon::slice::ParallelSlice;
 use crate::utils::compatible;
 use crate::vm::Jobs;
 use crate::vm_a::SerialVM;
@@ -28,27 +33,198 @@ pub fn address_translation(addr: &Address) -> usize {
     return *addr as usize;
 }
 
-#[derive(Debug)]
-pub struct ContractVM {
-    storage: Vec<Word>,
-    functions: Vec<ContractFunction>
+
+#[derive(Clone, Debug, EnumIter)]
+pub enum AtomicFunction {
+    Transfer = 0,
+    TransferDecrement = 1,
+    TransferIncrement = 2,
 }
 
-impl ContractVM {
+#[derive(Clone, Debug)]
+pub enum FunctionResult<'a> {
+    // Running,
+    Success,
+    Error,
+    ErrorMsg(&'a str)
+}
+pub type SenderAddress = u32;
+pub type FunctionAddress = u32;
+pub type FunctionParameter = u32;
+pub type Batch = Vec<ContractTransaction>;
+const MAX_NB_PARAMETERS: usize = 4;
+
+const MAX_TX_SIZE: usize = mem::size_of::<SenderAddress>() +
+    mem::size_of::<FunctionAddress>() +
+    MAX_NB_PARAMETERS * mem::size_of::<FunctionParameter>();
+
+// TODO Find safe way to have a variable length array?
+#[derive(Clone, Debug)]
+pub struct ContractTransaction {
+    sender: SenderAddress,
+    function: FunctionAddress,
+    params: [FunctionParameter; MAX_NB_PARAMETERS],
+}
+
+#[derive(Debug)]
+pub struct SequentialVM {
+    storage: Vec<Word>,
+    functions: Vec<AtomicFunction>,
+}
+
+impl SequentialVM {
     pub fn new(storage_size: usize) -> anyhow::Result<Self> {
         let storage = vec![0; storage_size];
-        let functions = vec!(ContractFunction::Transfer);
-        let vm = Self{ storage, functions};
+        let functions = AtomicFunction::iter().collect();
+
+        let vm = Self{ storage, functions };
         return Ok(vm);
     }
 
-    pub fn execute(&mut self, mut batch: Batch) -> anyhow::Result<Vec<ContractStatus>> {
-        let mut results = vec![ContractStatus::Error; batch.len()];
+    pub fn execute(&mut self, mut batch: Batch) -> anyhow::Result<Vec<FunctionResult>> {
+        let mut results = vec![FunctionResult::Error; batch.len()];
+
+        // let mut backlog: tinyset::SetUsize = (0..batch.len()).collect();
+        // let mut next_backlog = tinyset::SetUsize::with_capacity_of(&backlog);
+        //
+        // let mut batch = batch;
+        // let mut next_batch = batch.clone();
+
+        'outer: for (tx_index, initial_tx) in batch.iter_mut().enumerate() {
+            let mut tx = initial_tx;
+            loop {
+                let sender = tx.sender;
+                let function = self.functions.get(tx.function as usize).unwrap();
+                let params = tx.params;
+
+                match function {
+                    AtomicFunction::Transfer => {
+                        let from = params[0] as usize;
+                        let to = params[1] as usize;
+                        let amount = params[2] as Word;
+
+                        let balance_from = self.storage[from];
+                        if balance_from >= amount {
+                            self.storage[from] -= amount;
+                            self.storage[to] += amount;
+                            results[tx_index] = FunctionResult::Success;
+                        }
+                    },
+                    AtomicFunction::TransferDecrement => {
+                        // Example of function that output another function
+                        let from = params[0] as usize;
+                        let amount = params[2] as Word;
+                        if self.storage[from] >= amount {
+                            self.storage[from] -= amount;
+
+                            tx.function = AtomicFunction::TransferDecrement as FunctionAddress;
+
+                        } else {
+                            results[tx_index] = FunctionResult::ErrorMsg("Insufficient funds");
+                            continue 'outer;
+                        }
+                    },
+                    AtomicFunction::TransferIncrement => {
+                        let to = params[1] as usize;
+                        let amount = params[2] as Word;
+                        self.storage[to] += amount;
+                        results[tx_index] = FunctionResult::Success;
+                        continue 'outer;
+                    }
+                }
+            }
+        }
+
+        Ok(results)
+    }
+}
+
+#[derive(Debug)]
+pub struct ConcurrentVM {
+    storage: VmStorage,
+    functions: Vec<AtomicFunction>,
+    nb_schedulers: usize,
+    nb_workers: usize,
+}
+
+impl ConcurrentVM {
+    pub fn new(storage_size: usize, nb_schedulers: usize, nb_workers: usize) -> anyhow::Result<Self> {
+        let storage = VmStorage::new(storage_size);
+        let functions = AtomicFunction::iter().collect();
+
+        let vm = Self{ storage, functions, nb_schedulers, nb_workers };
+        return Ok(vm);
+    }
+
+    pub fn execute(&mut self, mut batch: Batch) -> anyhow::Result<Vec<FunctionResult>> {
+        let mut results = vec![FunctionResult::Error; batch.len()];
+
+        // let mut backlog: tinyset::SetUsize = (0..batch.len()).collect();
+        // let mut next_backlog = tinyset::SetUsize::with_capacity_of(&backlog);
+        let mut backlog: Vec<usize> = (0..batch.len()).collect();
+        // let mut next_backlog = Vec::with_capacity(batch.len());
+        //
+        // let mut batch = batch;
+        // let mut next_batch = batch.clone();
+        //
+        // // TODO Add sequential prefix
+        //
+        // let (send_schedule, receive_schedule) = channel();
+        // (0..self.nb_schedulers).into_par_iter().for_each_with(send_schedule, |sender, scheduler_index| {
+        //
+        // });
+        // while !backlog.is_empty() {
+        //
+        //     let (send_schedule, receive_schedule) = channel();
+        //
+        //
+        //     let scheduler_backlog_size = backlog.len()/self.nb_schedulers;
+        //     // Split backlog among schedulers
+        //     let _ = backlog
+        //         .par_chunks(scheduler_backlog_size)
+        //         .map_with(send_schedule, |sender, scheduler_backlog| {
+        //             // let mut scheduler_output =
+        //
+        //             // Split each scheduler backlog into chunks
+        //
+        //             // Send the schedule of each chunk as soon as they are computed
+        //         }
+        //     );
+        // }
+
+        Ok(results)
+    }
+}
+
+//region previous attempt
+#[derive(Debug)]
+pub struct VM {
+    storage: Vec<Word>,
+    functions: Vec<AtomicFunction>,
+}
+
+impl VM {
+    // pub fn new_parallel(storage_size: usize, nb_schedulers: usize, nb_workers: usize) -> anyhow::Result<Self> {
+    //     let storage = vec![0; storage_size];
+    //     let functions = vec!(AtomicFunction::Transfer);
+    //     let vm = Self{ storage, functions, nb_schedulers, nb_workers};
+    //     return Ok(vm);
+    // }
+
+    // pub fn new_serial(storage_size: usize) -> anyhow::Result<Self> {
+    //     let storage = vec![0; storage_size];
+    //     let functions = vec!(AtomicFunction::Transfer);
+    //     let vm = Self{ storage, functions, 1, 1};
+    //     return Ok(vm);
+    // }
+
+    pub fn execute(&mut self, mut batch: Batch) -> anyhow::Result<Vec<FunctionResult>> {
+        let mut results = vec![FunctionResult::Error; batch.len()];
 
         for (tx_index, tx) in batch.iter().enumerate() {
             let function = &self.functions[tx.function as usize];
             match function {
-                ContractFunction::Transfer => {
+                AtomicFunction::Transfer => {
                     let from = tx.params[0] as usize;
                     let to = tx.params[1] as usize;
                     let amount = tx.params[2] as Word;
@@ -57,8 +233,11 @@ impl ContractVM {
                     if balance_from >= amount {
                         self.storage[from] -= amount;
                         self.storage[to] += amount;
-                        results[tx_index] = ContractStatus::Success;
+                        results[tx_index] = FunctionResult::Success;
                     }
+                },
+                _ => {
+
                 }
             }
         }
@@ -70,20 +249,20 @@ impl ContractVM {
 #[derive(Debug)]
 pub struct ParallelContractVM {
     storage: VmStorage,
-    functions: Vec<ContractFunction>,
+    functions: Vec<AtomicFunction>,
     nb_workers: usize,
 }
 
 impl ParallelContractVM {
     pub fn new(storage_size: usize, nb_workers: usize) -> anyhow::Result<Self> {
         let storage = VmStorage::new(storage_size);
-        let functions = vec!(ContractFunction::Transfer);
+        let functions = vec!(AtomicFunction::Transfer);
         let vm = Self{ storage, functions, nb_workers };
         return Ok(vm);
     }
 
-    pub fn execute(&mut self, mut batch: Batch) -> anyhow::Result<Vec<ContractStatus>> {
-        let mut results = vec![ContractStatus::Error; batch.len()];
+    pub fn execute(&mut self, mut batch: Batch) -> anyhow::Result<Vec<FunctionResult>> {
+        let mut results = vec![FunctionResult::Error; batch.len()];
 
         loop {
             // assign workers
@@ -98,7 +277,7 @@ impl ParallelContractVM {
 
     fn crossbeam(
         &mut self,
-        results: &mut Vec<ContractStatus>,
+        results: &mut Vec<FunctionResult>,
         batch: &mut Batch,
         tx_to_worker: &Vec<AssignedWorker>
     ) -> anyhow::Result<()>
@@ -130,7 +309,7 @@ impl ParallelContractVM {
                         let mut tx = batch_ref.get(tx_index).unwrap();
                         let function = &self_ref.functions[tx.function as usize];
                         match function {
-                            ContractFunction::Transfer => {
+                            AtomicFunction::Transfer => {
                                 let from = tx.params[0] as usize;
                                 let to = tx.params[1] as usize;
                                 let amount = tx.params[2] as Word;
@@ -141,10 +320,13 @@ impl ParallelContractVM {
                                     let balance_to = shared_storage.get(to);
                                     shared_storage.set(to, balance_to + amount);
                                     // *shared_results.add(tx_index) = ContractResult::Success
-                                    worker_output.push((tx_index, ContractStatus::Success))
+                                    worker_output.push((tx_index, FunctionResult::Success))
                                 } else {
-                                    worker_output.push((tx_index, ContractStatus::Error))
+                                    worker_output.push((tx_index, FunctionResult::Error))
                                 }
+                            },
+                            _ => {
+
                             }
                         }
                     }
@@ -179,36 +361,6 @@ impl ParallelContractVM {
         // return Err(anyhow!("Some error occurred during parallel execution: {:?}", execution_errors));
     }
 }
-
-#[derive(Clone, Debug)]
-pub enum ContractFunction {
-    Transfer
-}
-
-#[derive(Clone, Debug)]
-pub enum ContractStatus { 
-    Running,
-    Success,
-    Error
-}
-pub type SenderAddress = u32;
-pub type FunctionAddress = u32;
-pub type FunctionParameter = u32;
-pub type Batch = Vec<ContractTransaction>;
-const MAX_NB_PARAMETERS: usize = 4;
-
-const MAX_TX_SIZE: usize = mem::size_of::<SenderAddress>() +
-    mem::size_of::<FunctionAddress>() +
-    MAX_NB_PARAMETERS * mem::size_of::<FunctionParameter>();
-
-// TODO Find safe way to have a variable length array?
-#[derive(Clone, Debug)]
-pub struct ContractTransaction {
-    sender: SenderAddress,
-    function: FunctionAddress,
-    params: [FunctionParameter; MAX_NB_PARAMETERS],
-}
-
 
 #[derive(Clone, Debug)]
 pub struct InternalRequest {
@@ -507,6 +659,7 @@ impl Segment {
     //     return accesses;
     // }
 }
+//endregion
 
 #[derive(PartialEq, Eq, PartialOrd, Ord, Clone, Copy, Debug)]
 pub enum AccessType {
