@@ -3,20 +3,29 @@
 use std::cmp::{max, min};
 use std::collections::{BTreeMap, HashMap, VecDeque};
 use std::mem;
-use std::sync::mpsc::channel;
+use std::ops::Div;
+use std::slice::Iter;
+use std::sync::{Arc, Mutex};
+use std::sync::mpsc::{channel, Receiver, Sender};
+use std::thread::sleep;
+use std::time::{Duration, Instant};
 use anyhow::anyhow;
+use futures::{SinkExt, TryFutureExt};
 
 use strum::{IntoEnumIterator, EnumIter};
 
 use hwloc::Topology;
+use itertools::{enumerate, Itertools};
 use rand::rngs::StdRng;
 use rand::seq::{IteratorRandom, SliceRandom};
-use rayon::iter::{IntoParallelIterator, ParallelIterator};
+use rayon::iter::{IntoParallelIterator, ParallelIterator, IndexedParallelIterator, ParallelDrainRange};
 use rayon::slice::ParallelSlice;
+use crate::{debug, debugging};
 use crate::utils::compatible;
 use crate::vm::Jobs;
 use crate::vm_a::SerialVM;
-use crate::vm_utils::{UNASSIGNED, VmStorage};
+use crate::vm_utils::{SharedStorage, UNASSIGNED, VmStorage};
+use crate::wip::FunctionResult::Another;
 
 pub const CONFLICT_WIP: u8 = u8::MAX;
 pub const DONE: u8 = CONFLICT_WIP - 1;
@@ -41,18 +50,79 @@ pub enum AtomicFunction {
     TransferIncrement = 2,
 }
 
+impl AtomicFunction {
+    pub unsafe fn execute(
+        &self,
+        mut tx: ContractTransaction,
+        mut storage: SharedStorage
+    ) -> FunctionResult {
+        let sender = tx.sender;
+        let addresses = tx.addresses;
+        let params = tx.params;
+
+        // eprintln!("Executing {:?}:", tx);
+        // TODO remove the sleep
+        sleep(Duration::from_nanos(20));
+
+        use AtomicFunction::*;
+        return match self {
+            Transfer => {
+                let from = addresses[0] as usize;
+                let to = addresses[1] as usize;
+                let amount = params[0] as Word;
+
+
+                // eprintln!("Trying to get balance of {}...", from);
+                let balance_from = storage.get(from);
+                // eprintln!("Balance of {} is {}", from, balance_from);
+                if balance_from >= amount {
+                    *storage.get_mut(from) -= amount;
+                    *storage.get_mut(to) += amount;
+                    FunctionResult::Success
+                } else {
+                    // eprintln!("Insufficient funds");
+                    FunctionResult::ErrorMsg("Insufficient funds")
+                }
+            },
+            TransferDecrement => {
+                // Example of function that output another function
+                let from = addresses[0] as usize;
+                let amount = params[0] as Word;
+                if storage.get(from) >= amount {
+                    *storage.get_mut(from) -= amount;
+
+                    tx.function = TransferDecrement as FunctionAddress;
+
+                    FunctionResult::Another(tx)
+                } else {
+                    FunctionResult::ErrorMsg("Insufficient funds")
+                }
+            },
+            TransferIncrement => {
+                let to = addresses[1] as usize;
+                let amount = params[0] as Word;
+                *storage.get_mut(to) += amount;
+                FunctionResult::Success
+            }
+        }
+    }
+}
+
 #[derive(Clone, Debug)]
 pub enum FunctionResult<'a> {
     // Running,
     Success,
+    Another(ContractTransaction),
     Error,
     ErrorMsg(&'a str)
 }
 pub type SenderAddress = u32;
 pub type FunctionAddress = u32;
+pub type StaticAddress = u32;
 pub type FunctionParameter = u32;
 pub type Batch = Vec<ContractTransaction>;
-const MAX_NB_PARAMETERS: usize = 4;
+const MAX_NB_ADDRESSES: usize = 2;
+const MAX_NB_PARAMETERS: usize = 2;
 
 const MAX_TX_SIZE: usize = mem::size_of::<SenderAddress>() +
     mem::size_of::<FunctionAddress>() +
@@ -61,14 +131,15 @@ const MAX_TX_SIZE: usize = mem::size_of::<SenderAddress>() +
 // TODO Find safe way to have a variable length array?
 #[derive(Clone, Debug)]
 pub struct ContractTransaction {
-    sender: SenderAddress,
-    function: FunctionAddress,
-    params: [FunctionParameter; MAX_NB_PARAMETERS],
+    pub sender: SenderAddress,
+    pub function: FunctionAddress,
+    pub addresses: [StaticAddress; MAX_NB_ADDRESSES],
+    pub params: [FunctionParameter; MAX_NB_PARAMETERS],
 }
 
 #[derive(Debug)]
 pub struct SequentialVM {
-    storage: Vec<Word>,
+    pub storage: Vec<Word>,
     functions: Vec<AtomicFunction>,
 }
 
@@ -84,64 +155,29 @@ impl SequentialVM {
     pub fn execute(&mut self, mut batch: Batch) -> anyhow::Result<Vec<FunctionResult>> {
         let mut results = vec![FunctionResult::Error; batch.len()];
 
-        // let mut backlog: tinyset::SetUsize = (0..batch.len()).collect();
-        // let mut next_backlog = tinyset::SetUsize::with_capacity_of(&backlog);
-        //
-        // let mut batch = batch;
-        // let mut next_batch = batch.clone();
-
-        'outer: for (tx_index, initial_tx) in batch.iter_mut().enumerate() {
-            let mut tx = initial_tx;
-            loop {
-                let sender = tx.sender;
-                let function = self.functions.get(tx.function as usize).unwrap();
-                let params = tx.params;
-
-                match function {
-                    AtomicFunction::Transfer => {
-                        let from = params[0] as usize;
-                        let to = params[1] as usize;
-                        let amount = params[2] as Word;
-
-                        let balance_from = self.storage[from];
-                        if balance_from >= amount {
-                            self.storage[from] -= amount;
-                            self.storage[to] += amount;
-                            results[tx_index] = FunctionResult::Success;
-                        }
-                    },
-                    AtomicFunction::TransferDecrement => {
-                        // Example of function that output another function
-                        let from = params[0] as usize;
-                        let amount = params[2] as Word;
-                        if self.storage[from] >= amount {
-                            self.storage[from] -= amount;
-
-                            tx.function = AtomicFunction::TransferDecrement as FunctionAddress;
-
-                        } else {
-                            results[tx_index] = FunctionResult::ErrorMsg("Insufficient funds");
-                            continue 'outer;
-                        }
-                    },
-                    AtomicFunction::TransferIncrement => {
-                        let to = params[1] as usize;
-                        let amount = params[2] as Word;
-                        self.storage[to] += amount;
-                        results[tx_index] = FunctionResult::Success;
-                        continue 'outer;
-                    }
+        let mut storage = SharedStorage{ ptr: self.storage.as_mut_ptr() };
+        let start = Instant::now();
+        while !batch.is_empty() {
+            let mut tx = batch.pop().unwrap();
+            let function = self.functions.get(tx.function as usize).unwrap();
+            match unsafe { function.execute(tx, storage) } {
+                FunctionResult::Another(generated_tx) => {
+                    batch.push(generated_tx);
+                },
+                _ => {
+                    continue;
                 }
             }
         }
+        println!("Sequential took {:?}", start.elapsed());
 
-        Ok(results)
+        return Ok(results);
     }
 }
 
 #[derive(Debug)]
 pub struct ConcurrentVM {
-    storage: VmStorage,
+    pub storage: VmStorage,
     functions: Vec<AtomicFunction>,
     nb_schedulers: usize,
     nb_workers: usize,
@@ -156,43 +192,377 @@ impl ConcurrentVM {
         return Ok(vm);
     }
 
-    pub fn execute(&mut self, mut batch: Batch) -> anyhow::Result<Vec<FunctionResult>> {
+    // Non-deterministic
+    pub fn execute(&mut self, mut batch: Vec<ContractTransaction>) -> anyhow::Result<Vec<FunctionResult>> {
+
+        let prefix_size = 0;
+        let nb_chunks_per_scheduler = 1;
+
         let mut results = vec![FunctionResult::Error; batch.len()];
 
-        // let mut backlog: tinyset::SetUsize = (0..batch.len()).collect();
-        // let mut next_backlog = tinyset::SetUsize::with_capacity_of(&backlog);
         let mut backlog: Vec<usize> = (0..batch.len()).collect();
-        // let mut next_backlog = Vec::with_capacity(batch.len());
-        //
-        // let mut batch = batch;
-        // let mut next_batch = batch.clone();
-        //
-        // // TODO Add sequential prefix
-        //
-        // let (send_schedule, receive_schedule) = channel();
-        // (0..self.nb_schedulers).into_par_iter().for_each_with(send_schedule, |sender, scheduler_index| {
-        //
-        // });
+        let mut next_backlog: Vec<usize> = Vec::with_capacity(batch.len());
+
+        // let (prefix, suffix) = backlog.split_at(prefix_size);
+        let suffix = backlog.split_off(prefix_size);
+        let prefix = backlog;
+
+        let (mut schedule_sender, schedule_receiver) = channel();
+
+        let scheduler_backlog_size = suffix.len()/self.nb_schedulers;
+
+        let scheduling = |schedule_sender: Sender<(usize, Vec<usize>)>, to_schedule: Vec<usize>| {
+            to_schedule
+                .par_chunks(scheduler_backlog_size)
+                .enumerate()
+                .map_with(
+                    schedule_sender,
+                    |sender, (scheduler_index, scheduler_backlog)| {
+                        let chunks = if scheduler_backlog.len() >= nb_chunks_per_scheduler {
+                            let mut chunk_size = scheduler_backlog.len()/nb_chunks_per_scheduler;
+                            scheduler_backlog.chunks(chunk_size)
+                        } else {
+                            scheduler_backlog.chunks(scheduler_backlog.len())
+                        };
+
+                        let mut not_scheduled = Vec::new();
+                        chunks.enumerate().for_each(|(chunk_index, chunk)| {
+                            // TODO schedule tx and return the indexes that can be executed
+                            let mut scheduled = Vec::with_capacity(chunk.len());
+                            let mut addresses = tinyset::SetUsize::new();   // TODO add capacity
+
+                            'outer: for tx_index in chunk {
+                                let tx: &ContractTransaction = batch.get(*tx_index).unwrap();
+                                for addr in tx.params.iter() {
+                                    if addresses.contains(*addr as usize) {
+                                        // Can't add tx to schedule
+                                        not_scheduled.push(*tx_index);
+                                        continue 'outer;
+                                    }
+                                }
+
+                                // Can add tx to schedule
+                                scheduled.push(*tx_index);
+                                for addr in tx.params.iter() {
+                                    addresses.insert(*addr as usize);
+                                }
+                            }
+
+                            // let schedule = chunk;
+                            if let Err(e) = sender.send((scheduler_index, scheduled)) {
+                                debug!(
+                                "Scheduler {} failed to send its {}-th schedule",
+                                scheduler_index, chunk_index
+                            );
+                            }
+                            // TODO Deal with tx that were not executed
+                        });
+
+                        not_scheduled
+                    }
+                ).flatten()
+                .collect::<Vec<usize>>()
+        };
+
+        let execution = |receiver: Receiver<(usize, Vec<usize>)>, prefix: Vec<usize>| {
+            for tx_index in prefix.iter() {
+                // TODO execute tx
+            }
+
+            while let Ok((scheduler_index, scheduled_txs)) = receiver.recv() {
+                let tx_per_worker = if scheduled_txs.len() < self.nb_workers {
+                    1
+                } else {
+                    scheduled_txs.len().div(self.nb_workers) + 1
+                };
+
+                // Using rayon -------------------------------------------------------------------------
+                let workers: Vec<()> = scheduled_txs.par_chunks(tx_per_worker)
+                    .map(|worker_jobs| {
+                        // TODO execute tx
+                    }
+                ).collect();
+
+                // TODO add generated tx to backlog via channel
+            }
+        };
+
+        let _ = rayon::join(
+            || execution(schedule_receiver, prefix),
+            move || {
+
+                let mut to_schedule = suffix;
+                while !to_schedule.is_empty() {
+                    to_schedule = scheduling(
+                        schedule_sender.clone(),
+                        to_schedule
+                    );
+
+                    // TODO add newly generated tx to the backlog too (receive from channel)
+                }
+            },
+        );
+
+        Ok(results)
+    }
+
+    pub fn execute_2(&mut self, mut batch: Vec<ContractTransaction>) -> anyhow::Result<Vec<FunctionResult>> {
+        /*
+            TODO Use VecDequeue?: first half contains tx to execute, the rest contains tx to postpone
+
+         */
+        let mut results = Vec::with_capacity(batch.len());
+
+        // let mut backlog = batch;
+        // let mut next_backlog = Vec::with_capacity(backlog.len());
         // while !backlog.is_empty() {
         //
-        //     let (send_schedule, receive_schedule) = channel();
         //
+        // }
         //
-        //     let scheduler_backlog_size = backlog.len()/self.nb_schedulers;
-        //     // Split backlog among schedulers
-        //     let _ = backlog
+        // let mut backlog: Vec<usize> = (0..batch.len()).collect();
+        // let mut next_backlog: Vec<usize> = Vec::with_capacity(batch.len());
+        //
+        // let (mut schedule_sender, schedule_receiver) = channel();
+        //
+        // let scheduler_backlog_size = backlog.len()/self.nb_schedulers;
+        //
+        // let scheduling = |schedule_sender: Sender<(usize, Vec<usize>)>, mut to_schedule: Vec<usize>| {
+        //
+        //     // while !to_schedule.is_empty() {
+        //     //     let tmp = schedule_once(to_schedule);
+        //     //     let scheduled = tmp.0;
+        //     //     if let Err(e) = schedule_sender.send(scheduled) {
+        //     //         debug!("Scheduler {} failed to send its {}-th schedule", scheduler_index, chunk_index);
+        //     //     }
+        //     //     to_schedule = tmp.1;
+        //     // }
+        //
+        //     to_schedule
         //         .par_chunks(scheduler_backlog_size)
-        //         .map_with(send_schedule, |sender, scheduler_backlog| {
-        //             // let mut scheduler_output =
+        //         .enumerate()
+        //         .map(|(scheduler_index, scheduler_backlog)| {
+        //             let mut scheduled = Vec::with_capacity(scheduler_backlog.len());
+        //             let mut not_scheduled = vec!();
+        //             let mut addresses = tinyset::SetUsize::new();   // TODO add capacity
         //
-        //             // Split each scheduler backlog into chunks
+        //             'outer: for tx_index in scheduler_backlog {
+        //                 let tx: &ContractTransaction = batch.get(*tx_index).unwrap();
+        //                 for addr in tx.params.iter() {
+        //                     if addresses.contains(*addr as usize) {
+        //                         // Can't add tx to schedule
+        //                         not_scheduled.push(tx);
+        //                         continue 'outer;
+        //                     }
+        //                 }
         //
-        //             // Send the schedule of each chunk as soon as they are computed
+        //                 // Can add tx to schedule
+        //                 scheduled.push(tx);
+        //                 for addr in tx.params.iter() {
+        //                     addresses.insert(*addr as usize);
+        //                 }
+        //             }
+        //
+        //             (scheduled, not_scheduled)
         //         }
+        //     )
+        //     .collect::<Vec<(Vec<usize>, Vec<usize>)>>()
+        // };
+        //
+        // let execution = |receiver: Receiver<(usize, Vec<usize>)>| {
+        //
+        //     while let Ok((scheduler_index, scheduled_txs)) = receiver.recv() {
+        //         let tx_per_worker = if scheduled_txs.len() < self.nb_workers {
+        //             1
+        //         } else {
+        //             scheduled_txs.len().div(self.nb_workers) + 1
+        //         };
+        //
+        //         // Using rayon -------------------------------------------------------------------------
+        //         let workers: Vec<()> = scheduled_txs.par_chunks(tx_per_worker)
+        //             .map(|worker_jobs| {
+        //                 // TODO execute tx
+        //             }
+        //             ).collect();
+        //
+        //         // TODO add generated tx to backlog via channel
+        //     }
+        // };
+
+        // let _ = rayon::join(
+        //     || execution(schedule_receiver),
+        //     move || {
+        //
+        //         let mut to_schedule = backlog;
+        //         while !to_schedule.is_empty() {
+        //             to_schedule = scheduling(
+        //                 schedule_sender.clone(),
+        //                 to_schedule
+        //             );
+        //
+        //             // TODO add newly generated tx to the backlog too (receive from channel)
+        //         }
+        //     },
+        // );
+
+        // TODO
+        // let mut new_transactions = batch;
+        // let mut schedule = vec!();
+
+        // let mut i = 0;
+        // while !(new_transactions.is_empty() && schedule.is_empty()) {
+        //     let start = Instant::now();
+        //     let to_schedule = new_transactions.len();
+        //     let to_execute = schedule.len();
+        //     // println!("Iteration {}: {} tx to schedule and {} rounds to execute",
+        //     //     i, new_transactions.len(), schedule.len());
+        //     // // IntelliJ doesn't know that this is ok
+        //     // (schedule, new_transactions) = rayon::join(
+        //     //     move || scheduling(new_transactions),
+        //     //     move || execution(schedule)
+        //     // );
+        //     let tmp = rayon::join(
+        //         move || scheduling(new_transactions),
+        //         move || execution(schedule)
         //     );
+        //     schedule = tmp.0;
+        //     new_transactions = tmp.1;
+        //
+        //     let elapsed = start.elapsed();
+        //     println!("Iteration {}:", i);
+        //     println!("\tScheduling {} tx -> {} rounds of execution", to_schedule, schedule.len());
+        //     println!("\tExecuting {} rounds of tx -> {} new tx to schedule", to_execute, new_transactions.len());
+        //     println!("Took {:?}", elapsed);
+        //     println!();
+        //     // println!("Iteration {} took {:?}:", i, start.elapsed());
+        //     // println!("\tTried to schedule {}")
+        //     i += 1;
         // }
 
         Ok(results)
+    }
+
+    pub fn execute_3(&mut self, mut batch: Vec<ContractTransaction>) -> anyhow::Result<Vec<FunctionResult>> {
+
+        let scheduler_chunk_size = batch.len() / self.nb_schedulers;
+        let worker_chunk_size = scheduler_chunk_size / self.nb_workers;
+
+        let nb_schedulers = self.nb_schedulers;
+        let nb_workers = self.nb_workers;
+
+        let scheduling = move |mut backlog: Vec<ContractTransaction>| {
+            let mut schedule: Vec<Vec<ContractTransaction>> = Vec::with_capacity(nb_schedulers);
+            while !backlog.is_empty() {
+
+                // TODO Choose between static and dynamic chunk sizes
+                let chunk_size = backlog.len();
+                // let chunk_size = backlog.len()/nb_schedulers;
+
+                let rounds: Vec<_> = backlog
+                    .par_drain(..backlog.len())
+                    // .into_par_iter() // Can't reuse the capacity of backlog with into_iter...
+                    .chunks(chunk_size)
+                    .enumerate()
+                    .map(|(scheduler_index, chunk)| {
+                        let mut scheduled = Vec::with_capacity(chunk.len());
+                        let mut postponed = vec!();
+
+                        let mut working_set = tinyset::SetUsize::new();
+                        'outer: for tx in chunk {
+                            for addr in tx.addresses.iter() {
+                                if working_set.contains(*addr as usize) {
+                                    // Can't add tx to schedule
+                                    postponed.push(tx);
+                                    continue 'outer;
+                                }
+                            }
+
+                            // Can add tx to schedule
+                            for addr in tx.addresses.iter() {
+                                working_set.insert(*addr as usize);
+                            }
+                            scheduled.push(tx);
+                        }
+                        (scheduled, postponed)
+                    }).collect();
+
+                // backlog = vec!();
+                for (round, mut postponed) in rounds {
+                    // println!("There are still {} tx to schedule", postponed.len());
+                    schedule.push(round);
+                    backlog.append(&mut postponed);
+                }
+            }
+
+            schedule
+        };
+
+        let execution = |mut schedule: Vec<Vec<ContractTransaction>>, storage: SharedStorage| {
+            // TODO Choose between static and dynamic chunk sizes
+            let get_chunk_size: fn(usize, usize)->usize = |round_size, nb_workers| {
+                if round_size >= nb_workers {
+                    round_size/nb_workers + 1
+                } else {
+                    1
+                    // round_size
+                }
+            };
+
+            let execute_tx = |tx: &ContractTransaction| {
+                // execute the transaction and optionally generate a new tx
+                let function = self.functions.get(tx.function as usize).unwrap();
+                match unsafe { function.execute(tx.clone(), storage) } {
+                    Another(generated_tx) => Some(generated_tx),
+                    _ => None,
+                }
+            };
+
+            let run_worker = |(worker_index, mut worker_backlog): (usize, &[ContractTransaction])| {
+                // execute transactions sequentially and collect the results
+                let worker_generated_tx: Vec<_> = worker_backlog
+                    // .drain(..worker_backlog.len())
+                    .into_iter()
+                    .flat_map(execute_tx)
+                    .collect();
+                worker_generated_tx
+            };
+
+            let execute_round = |(round_index, mut round): (usize, Vec<ContractTransaction>)| {
+                let chunk_size = get_chunk_size(round.len(), nb_workers);
+                let round_generated_tx: Vec<_> = round
+                    // .into_par_iter()
+                    // .par_drain(..round.len())
+                    // .chunks(chunk_size)
+                    .par_chunks(chunk_size)
+                    .enumerate()
+                    .flat_map(run_worker)
+                    .collect();
+                round_generated_tx
+            };
+
+            // For the given schedule: sequentially execute each round an collect the results
+            let new_transactions: Vec<_> = schedule
+                // .drain(..schedule.len())
+                .into_iter()
+                .enumerate()
+                .flat_map(execute_round)
+                .collect();
+
+            new_transactions
+        };
+
+        let mut new_transactions = batch;
+        while !new_transactions.is_empty() {
+            let start = Instant::now();
+            let schedule = scheduling(new_transactions);
+            println!("Scheduling took {:?}", start.elapsed());
+
+            let start = Instant::now();
+            new_transactions = execution(schedule, self.storage.get_shared());
+            println!("Execution took {:?}", start.elapsed());
+        }
+
+        Ok(vec!())
     }
 }
 

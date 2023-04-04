@@ -91,7 +91,6 @@ pub struct SharedStorage {
 }
 
 unsafe impl Send for SharedStorage {}
-
 unsafe impl Sync for SharedStorage {}
 
 impl SharedStorage {
@@ -104,6 +103,12 @@ impl SharedStorage {
     pub fn set(&mut self, index: usize, value: Word) {
         unsafe {
             *self.ptr.add(index) = value;
+        }
+    }
+
+    pub fn get_mut(&mut self, index: usize) -> *mut Word {
+        unsafe {
+            self.ptr.add(index)
         }
     }
 }

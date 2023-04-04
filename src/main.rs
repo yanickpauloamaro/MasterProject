@@ -35,7 +35,7 @@ use testbench::vm::{ExecutionResult, Executor};
 use testbench::vm_a::{SerialVM, VMa};
 use testbench::vm_c::{ParallelVM, VMc};
 use testbench::vm_utils::{assign_workers, UNASSIGNED, VmStorage};
-use testbench::wip::{AccessType, assign_workers_new_impl, assign_workers_new_impl_2, Contract, Data, ExternalRequest, Param};
+use testbench::wip::{AccessType, assign_workers_new_impl, assign_workers_new_impl_2, AtomicFunction, ConcurrentVM, Contract, ContractTransaction, Data, ExternalRequest, FunctionParameter, Param, SenderAddress, SequentialVM, StaticAddress};
 use testbench::worker_implementation::WorkerC;
 
 
@@ -50,6 +50,7 @@ struct T {
 #[tokio::main]
 async fn main() -> Result<()>{
     println!("Hello, world!");
+    let total = Instant::now();
 
     // let _ = BasicWorkload::run(config, 1).await;
     // let _ = ContentionWorkload::run(config, 1).await;
@@ -67,18 +68,17 @@ async fn main() -> Result<()>{
     let batch_size = 65536;
     let storage_size = 100 * batch_size;
 
-    let total = Instant::now();
     print!("Creating batch of size {}... ", batch_size);
     let a = Instant::now();
     let batch: Vec<T> = batch_with_conflicts_new_impl(
         storage_size,
         batch_size,
-        0.5,
+        0.0,    // TODO
         &mut rng
     ).par_iter().map(|tx| T { from: tx.from, to: tx.to}).collect();
     println!("Took {:?}", a.elapsed());
     println!();
-
+    //
     let small_batch_size = 2048;
     let small_storage_size = 100 * batch_size;
     print!("Creating batch of size {}... ", small_batch_size);
@@ -86,194 +86,65 @@ async fn main() -> Result<()>{
     let small_batch: Vec<T> = batch_with_conflicts_new_impl(
         small_storage_size,
         small_batch_size,
-        0.5,
+        0.0,
         &mut rng
-    ).par_iter().map(|tx| T { from: tx.from, to: tx.to}).collect();
+    ).par_iter().map(|tx| T { from: tx.from, to: tx.to }).collect();
 
     println!("Took {:?}", a.elapsed());
     println!();
 
+    // =================================================
+    // let (test_batch, test_storage) = (small_batch, small_storage_size);
+    let (test_batch, test_storage) = (batch, storage_size);
+    let iter = 1;
 
-
-
-    // Estimated from original assign_worker implementation
-    let schedule_latency = Duration::from_nanos(2);
-    let assign_worker_latency = |nb_tx| {
-        Duration::from_micros(900).mul(nb_tx).div(65536)
-    };
-
-    println!("assign_worker latency for 65536 tx: {:?}", assign_worker_latency(65536));
-    println!("assign_worker latency for 16384 tx: {:?}", assign_worker_latency(16384));
-
-    // Estimated from serial vm implementation
-    let tx_execution_latency = Duration::from_nanos(35);
-
-    let nb_tasks = 65536;
-    let nb_schedulers = 2;
-    let nb_workers = 2;
-    let prefix_size = 0;
-    let nb_chunks_per_scheduler = 1;
-
-    let parallel_execution_overhead = 4;
-
-    // parameters corresponding to original implementation
-    // let nb_tasks = 65536;
-    // let nb_schedulers = 1;
-    // let nb_workers = 4;
-    // let prefix_size = 0;
-    // let nb_chunks_per_scheduler = 1;
-    //
-    // let parallel_execution_overhead = 4;
-
-    //region Mock pipeline execution ===================================================================
-    let mut tasks: Vec<usize> = (0..nb_tasks).collect();
-    println!("Computing latency using pipeline:");
-    let pipeline_start = Instant::now();
-
-    let (prefix, suffix) = tasks.split_at(prefix_size);
-    let (mut schedule_sender, schedule_receiver) = channel();
-
-    let scheduler_backlog_size = suffix.len()/nb_schedulers;
-
-    let tmp = suffix
-        .par_chunks(scheduler_backlog_size)
+    let new_batch: Vec<_> = test_batch.par_iter()
         .enumerate()
-        .map_with(
-            schedule_sender,
-            |sender, (scheduler, scheduler_backlog)| {
+        .map(|(tx_index, tx)| ContractTransaction {
+            sender: tx.from as SenderAddress,
+            function: 0,
+            addresses: [tx.from as StaticAddress, tx.to as StaticAddress],
+            params: [2, tx_index as FunctionParameter]
+        }).collect();
 
-                if scheduler_backlog.len() >= nb_chunks_per_scheduler {
-                    let mut chunk_size = scheduler_backlog.len()/nb_chunks_per_scheduler;
+    let mut concurrent = ConcurrentVM::new(
+        test_storage,
+        1,
+        1)?;
+    // TODO have execute return the latency to check best config
+    // TODO Try sequential scheduling here
+    let mut duration = Duration::from_nanos(0);
+    concurrent.storage.set_storage(20 * iter);
 
-                    scheduler_backlog
-                        .chunks(chunk_size)
-                        .enumerate()
-                        .for_each(|(chunk_index, chunk)| {
-                            // let sleep_duration = schedule_latency.clone()
-                            //     .mul(chunk.len() as u32);
-                            let sleep_duration = assign_worker_latency(chunk.len() as u32);
-                            sleep(sleep_duration);
-                            if let Err(e) = sender.send((scheduler, chunk)) {
-                                debug!("Scheduler {} failed to send its schedule", scheduler);
-                            } else {
-                                debug!("Scheduler {} sent the schedule for its {}-th chunk", scheduler, chunk_index);
-                            }
-                        });
-                } else {
-                    // Not enough backlog to split into chunks
-                    // let sleep_duration = schedule_latency.clone()
-                    //     .mul(scheduler_backlog.len() as u32);
-                    let sleep_duration = assign_worker_latency(scheduler_backlog.len() as u32);
-                    sleep(sleep_duration);
-                    if let Err(e) = sender.send((scheduler, scheduler_backlog)) {
-                        debug!("Scheduler {} failed to send its schedule", scheduler);
-                    } else {
-                        debug!("Scheduler {} sent the schedule for its only chunk", scheduler);
-                    }
-                }
+    for _ in 0..iter {
+        let b = new_batch.clone();
+        let s = Instant::now();
+        let _ = concurrent.execute_3(b);
+        duration = duration.add(s.elapsed());
+    }
+    // println!();
+    // println!("Concurrent:");
+    // println!("\t{} iterations took {:?}", iter, duration);
+    // println!("\tAverage latency = {:?}", duration.div(iter as u32));
+    // println!();
 
-            scheduler
-        }
-    );
+    let mut sequential = SequentialVM::new(test_storage)?;
+    let mut duration = Duration::from_nanos(0);
+    sequential.storage.fill(20 * iter);
 
-    let main_thread = |receiver: Receiver<(usize, &[usize])>, prefix: &[usize]| {
-        for i in prefix.iter() {
-            sleep(tx_execution_latency);
-            debug!("main thread executed {}-th tx sequentially", i);
-        }
+    for _ in 0..iter {
+        let b = new_batch.clone();
+        let s = Instant::now();
+        let _ = sequential.execute(b);
+        duration = duration.add(s.elapsed());
+    }
+    // println!("Sequential:");
+    // println!("\t{} iterations took {:?}", iter, duration);
+    // println!("\tAverage latency = {:?}", duration.div(iter as u32));
+    // println!();
 
-        let mut start_parallel = Instant::now();
-        while let Ok((scheduler, chunk)) = receiver.recv() {
-            let waited = start_parallel.elapsed();
-            let exec_start = Instant::now();
-            let jobs_per_worker = if chunk.len() < nb_workers {
-                1
-            } else {
-                chunk.len().div(nb_workers) + 1
-            };
+    return Ok(());
 
-            // Using rayon -------------------------------------------------------------------------
-            let workers: Vec<()> = chunk.par_chunks(jobs_per_worker).map(|worker_jobs| {
-                let sleep_duration = tx_execution_latency.clone()
-                    .mul(parallel_execution_overhead * worker_jobs.len() as u32);
-                sleep(sleep_duration);
-            }).collect();
-            let exec_duration = exec_start.elapsed();
-            debug!("({:.2?}) worker pool executed {:?} tx from scheduler {}.",
-                  waited, chunk.len(), scheduler);
-            debug!("\tTook {:?} using {} workers", exec_duration, workers.len());
-
-            // Using crossbeam ---------------------------------------------------------------------
-            // let _ = crossbeam::scope(|s| {
-            //     let jobs: Vec<_> = chunk.chunks(jobs_per_worker).collect();
-            //     // debug!("There are {} jobs bundles", jobs.len());
-            //
-            //     let mut handles = Vec::with_capacity(nb_workers);
-            //     for i in 0..nb_workers {
-            //         if i < jobs.len() {
-            //             let sleep_duration = tx_execution_latency
-            //                 .clone().mul(
-            //                 2 * jobs.get(i).unwrap().len() as u32
-            //             );
-            //             handles.push(s.spawn(move |_| {
-            //                 sleep(sleep_duration);
-            //             }));
-            //         }
-            //     }
-            //
-            //     for handle in handles {
-            //         match handle.join() {
-            //             _ => {
-            //                 // sleep(Duration::from())
-            //             },
-            //         }
-            //     }
-            //
-            //     let exec_duration = exec_start.elapsed();
-            //     debug!("({:.2?}) worker pool executed {:?} tx from scheduler {}.",
-            //           waited, chunk.len(), scheduler);
-            //     debug!("\tTook {:?} using {} workers", exec_duration, jobs.len());
-            // });
-
-            start_parallel = Instant::now();
-        }
-
-        debug!("Done executing batch");
-    };
-    //endregion
-    let _ = rayon::join(
-      || main_thread(schedule_receiver, prefix),
-        || tmp.collect::<Vec<_>>(),
-    );
-    std::mem::drop(tasks);
-    let pipeline_latency = pipeline_start.elapsed();
-    println!();
-
-    //region Mock sequential execution ===================================================================
-    let mut tasks: Vec<usize> = (0..nb_tasks).collect();
-    println!("Computing latency of sequential execution:");
-    let sequential_start = Instant::now();
-    // for _ in tasks {
-    //     sleep(task_execution_latency);
-    // }
-    sleep(tx_execution_latency.mul(nb_tasks as u32));
-    //endregion
-    let sequential_latency = sequential_start.elapsed();
-    debug!("Done sequential execution");
-    println!();
-
-
-    println!("Using these parameters:");
-    println!("\tscheduling latency: {:?}", schedule_latency);
-    println!("\ttx execution latency: {:?}", tx_execution_latency);
-    println!("\tsequential prefix: {:?}", prefix_size);
-    println!("\tnb schedulers: {:?}", nb_schedulers);
-    println!("\tnb workers: {:?}", nb_workers);
-    println!("\tnb chunks per scheduler: {:?}", nb_chunks_per_scheduler);
-    println!();
-    println!("Mock execution of {} transactions:", nb_tasks);
-    println!("\tPipeline takes {:?}", pipeline_latency);
-    println!("\tSequential takes {:?}", sequential_latency);
 
     // println!("=====================================================");
     // println!();
@@ -342,6 +213,185 @@ async fn main() -> Result<()>{
 
 
     // profile_parallel_contract()?;
+
+    // Estimated from original assign_worker implementation
+    let schedule_latency = Duration::from_nanos(2);
+    let assign_worker_latency = |nb_tx| {
+        Duration::from_micros(900).mul(nb_tx).div(65536)
+    };
+
+    println!("assign_worker latency for 65536 tx: {:?}", assign_worker_latency(65536));
+    println!("assign_worker latency for 16384 tx: {:?}", assign_worker_latency(16384));
+
+    // Estimated from serial vm implementation
+    let tx_execution_latency = Duration::from_nanos(35);
+
+    // let nb_tasks = 65536;
+    // let nb_schedulers = 1;
+    // let nb_workers = 4;
+    // let prefix_size = 0;
+    // let nb_chunks_per_scheduler = 1;
+    //
+    // let parallel_execution_overhead = 1;
+
+    // // parameters corresponding to original implementation
+    let nb_tasks = 65536;
+    let nb_schedulers = 2;
+    let nb_workers = 4;
+    let prefix_size = 0;
+    let nb_chunks_per_scheduler = 2;
+
+    let parallel_execution_overhead = 1;
+
+    //region Mock pipeline execution ===================================================================
+    let mut tasks: Vec<usize> = (0..nb_tasks).collect();
+    println!("Computing latency using pipeline:");
+    let pipeline_start = Instant::now();
+
+    let (prefix, suffix) = tasks.split_at(prefix_size);
+    let (mut schedule_sender, schedule_receiver) = channel();
+
+    let scheduler_backlog_size = suffix.len()/nb_schedulers;
+
+    let tmp = suffix
+        .par_chunks(scheduler_backlog_size)
+        .enumerate()
+        .map_with(
+            schedule_sender,
+            |sender, (scheduler, scheduler_backlog)| {
+
+                if scheduler_backlog.len() >= nb_chunks_per_scheduler {
+                    let mut chunk_size = scheduler_backlog.len()/nb_chunks_per_scheduler;
+
+                    scheduler_backlog
+                        .chunks(chunk_size)
+                        .enumerate()
+                        .for_each(|(chunk_index, chunk)| {
+                            // let sleep_duration = schedule_latency.clone()
+                            //     .mul(chunk.len() as u32);
+                            let sleep_duration = assign_worker_latency(chunk.len() as u32);
+                            sleep(sleep_duration);
+                            if let Err(e) = sender.send((scheduler, chunk)) {
+                                debug!("Scheduler {} failed to send its schedule", scheduler);
+                            } else {
+                                debug!("Scheduler {} sent the schedule for its {}-th chunk", scheduler, chunk_index);
+                            }
+                        });
+                } else {
+                    // Not enough backlog to split into chunks
+                    // let sleep_duration = schedule_latency.clone()
+                    //     .mul(scheduler_backlog.len() as u32);
+                    let sleep_duration = assign_worker_latency(scheduler_backlog.len() as u32);
+                    sleep(sleep_duration);
+                    if let Err(e) = sender.send((scheduler, scheduler_backlog)) {
+                        debug!("Scheduler {} failed to send its schedule", scheduler);
+                    } else {
+                        debug!("Scheduler {} sent the schedule for its only chunk", scheduler);
+                    }
+                }
+
+                scheduler
+            }
+        );
+
+    let main_thread = |receiver: Receiver<(usize, &[usize])>, prefix: &[usize]| {
+        for i in prefix.iter() {
+            sleep(tx_execution_latency);
+            debug!("main thread executed {}-th tx sequentially", i);
+        }
+
+        let mut start_parallel = Instant::now();
+        while let Ok((scheduler, chunk)) = receiver.recv() {
+            let waited = start_parallel.elapsed();
+            let exec_start = Instant::now();
+            let jobs_per_worker = if chunk.len() < nb_workers {
+                1
+            } else {
+                chunk.len().div(nb_workers) + 1
+            };
+
+            // Using rayon -------------------------------------------------------------------------
+            let workers: Vec<()> = chunk.par_chunks(jobs_per_worker).map(|worker_jobs| {
+                let sleep_duration = tx_execution_latency.clone()
+                    .mul(parallel_execution_overhead * worker_jobs.len() as u32);
+                sleep(sleep_duration);
+            }).collect();
+            let exec_duration = exec_start.elapsed();
+            debug!("({:.2?}) worker pool executed {:?} tx from scheduler {}.",
+                  waited, chunk.len(), scheduler);
+            debug!("\tTook {:?} using {} workers", exec_duration, workers.len());
+
+            // Using crossbeam ---------------------------------------------------------------------
+            // let _ = crossbeam::scope(|s| {
+            //     let jobs: Vec<_> = chunk.chunks(jobs_per_worker).collect();
+            //     // debug!("There are {} jobs bundles", jobs.len());
+            //
+            //     let mut handles = Vec::with_capacity(nb_workers);
+            //     for i in 0..nb_workers {
+            //         if i < jobs.len() {
+            //             let sleep_duration = tx_execution_latency
+            //                 .clone().mul(
+            //                 2 * jobs.get(i).unwrap().len() as u32
+            //             );
+            //             handles.push(s.spawn(move |_| {
+            //                 sleep(sleep_duration);
+            //             }));
+            //         }
+            //     }
+            //
+            //     for handle in handles {
+            //         match handle.join() {
+            //             _ => {
+            //                 // sleep(Duration::from())
+            //             },
+            //         }
+            //     }
+            //
+            //     let exec_duration = exec_start.elapsed();
+            //     debug!("({:.2?}) worker pool executed {:?} tx from scheduler {}.",
+            //           waited, chunk.len(), scheduler);
+            //     debug!("\tTook {:?} using {} workers", exec_duration, jobs.len());
+            // });
+
+            start_parallel = Instant::now();
+        }
+
+        debug!("Done executing batch");
+    };
+    //endregion
+    let _ = rayon::join(
+        || main_thread(schedule_receiver, prefix),
+        || tmp.collect::<Vec<_>>(),
+    );
+    std::mem::drop(tasks);
+    let pipeline_latency = pipeline_start.elapsed();
+    println!();
+
+    //region Mock sequential execution ===================================================================
+    let mut tasks: Vec<usize> = (0..nb_tasks).collect();
+    println!("Computing latency of sequential execution:");
+    let sequential_start = Instant::now();
+    // for _ in tasks {
+    //     sleep(task_execution_latency);
+    // }
+    sleep(tx_execution_latency.mul(nb_tasks as u32));
+    //endregion
+    let sequential_latency = sequential_start.elapsed();
+    debug!("Done sequential execution");
+    println!();
+
+
+    println!("Using these parameters:");
+    println!("\tscheduling latency: {:?}", schedule_latency);
+    println!("\ttx execution latency: {:?}", tx_execution_latency);
+    println!("\tsequential prefix: {:?}", prefix_size);
+    println!("\tnb schedulers: {:?}", nb_schedulers);
+    println!("\tnb workers: {:?}", nb_workers);
+    println!("\tnb chunks per scheduler: {:?}", nb_chunks_per_scheduler);
+    println!();
+    println!("Mock execution of {} transactions:", nb_tasks);
+    println!("\tPipeline takes {:?}", pipeline_latency);
+    println!("\tSequential takes {:?}", sequential_latency);
 
     println!("=====================================================");
 
