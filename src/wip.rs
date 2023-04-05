@@ -1,29 +1,29 @@
 #![allow(unused_variables)]
 
+use core::slice;
 use std::cmp::{max, min};
-use std::collections::{BTreeMap, HashMap, VecDeque};
+use std::collections::{HashMap, VecDeque};
 use std::mem;
-use std::ops::Div;
-use std::slice::Iter;
-use std::sync::{Arc, Mutex};
+use std::ops::{Add, Div};
 use std::sync::mpsc::{channel, Receiver, Sender};
 use std::thread::sleep;
 use std::time::{Duration, Instant};
+use std::vec::IntoIter;
+
 use anyhow::anyhow;
-use futures::{SinkExt, TryFutureExt};
-
-use strum::{IntoEnumIterator, EnumIter};
-
+use futures::SinkExt;
+// use futures::SinkExt;
 use hwloc::Topology;
-use itertools::{enumerate, Itertools};
+// use itertools::Itertools;
 use rand::rngs::StdRng;
 use rand::seq::{IteratorRandom, SliceRandom};
-use rayon::iter::{IntoParallelIterator, ParallelIterator, IndexedParallelIterator, ParallelDrainRange};
+use rayon::iter::{IndexedParallelIterator, ParallelDrainRange, ParallelIterator};
 use rayon::slice::ParallelSlice;
+use strum::{EnumIter, IntoEnumIterator};
+
 use crate::{debug, debugging};
 use crate::utils::compatible;
 use crate::vm::Jobs;
-use crate::vm_a::SerialVM;
 use crate::vm_utils::{SharedStorage, UNASSIGNED, VmStorage};
 use crate::wip::FunctionResult::Another;
 
@@ -62,7 +62,7 @@ impl AtomicFunction {
 
         // eprintln!("Executing {:?}:", tx);
         // TODO remove the sleep
-        sleep(Duration::from_nanos(20));
+        // sleep(Duration::from_nanos(20));
 
         use AtomicFunction::*;
         return match self {
@@ -153,12 +153,11 @@ impl SequentialVM {
     }
 
     pub fn execute(&mut self, mut batch: Batch) -> anyhow::Result<Vec<FunctionResult>> {
-        let mut results = vec![FunctionResult::Error; batch.len()];
 
-        let mut storage = SharedStorage{ ptr: self.storage.as_mut_ptr() };
+        let storage = SharedStorage{ ptr: self.storage.as_mut_ptr() };
         let start = Instant::now();
         while !batch.is_empty() {
-            let mut tx = batch.pop().unwrap();
+            let tx = batch.pop().unwrap();
             let function = self.functions.get(tx.function as usize).unwrap();
             match unsafe { function.execute(tx, storage) } {
                 FunctionResult::Another(generated_tx) => {
@@ -171,7 +170,7 @@ impl SequentialVM {
         }
         println!("Sequential took {:?}", start.elapsed());
 
-        return Ok(results);
+        return Ok(vec!());
     }
 }
 
@@ -183,6 +182,9 @@ pub struct ConcurrentVM {
     nb_workers: usize,
 }
 
+pub type Round = Vec<ContractTransaction>;
+pub type Schedule = Vec<Round>;
+
 impl ConcurrentVM {
     pub fn new(storage_size: usize, nb_schedulers: usize, nb_workers: usize) -> anyhow::Result<Self> {
         let storage = VmStorage::new(storage_size);
@@ -192,377 +194,739 @@ impl ConcurrentVM {
         return Ok(vm);
     }
 
-    // Non-deterministic
-    pub fn execute(&mut self, mut batch: Vec<ContractTransaction>) -> anyhow::Result<Vec<FunctionResult>> {
+    #[inline]
+    fn get_chunk_size(&self, round_size: usize) -> usize {
+        if round_size >= self.nb_workers {
+            round_size/self.nb_workers + 1
+        } else {
+            1   // More parallelism but overhead might be bad
+            // round_size
+        }
+    }
 
-        let prefix_size = 0;
-        let nb_chunks_per_scheduler = 1;
+    #[inline]
+    fn get_scheduler_chunk_size(&self, backlog_size: usize) -> usize {
+        if backlog_size >= self.nb_schedulers {
+            backlog_size/self.nb_schedulers + 1
+        } else {
+            1   // More parallelism but overhead might be bad
+            // backlog_size
+        }
+    }
 
-        let mut results = vec![FunctionResult::Error; batch.len()];
+    #[inline]
+    fn get_working_set_capacity(&self, chunk_size: usize) -> usize {
+        // max(2 * chunk_size, 2 * 65536 / (self.nb_schedulers /2))
+        2 * 65536
+        // 2 * chunk_size
+        // 8 * chunk_size
+    }
 
-        let mut backlog: Vec<usize> = (0..batch.len()).collect();
-        let mut next_backlog: Vec<usize> = Vec::with_capacity(batch.len());
+    fn schedule_chunk(&self, scheduler_index: usize, mut chunk: Vec<ContractTransaction>)
+                      -> (Vec<ContractTransaction>, Vec<ContractTransaction>) {
+        let mut scheduled = Vec::with_capacity(chunk.len());
+        let mut postponed = Vec::with_capacity(chunk.len());
 
-        // let (prefix, suffix) = backlog.split_at(prefix_size);
-        let suffix = backlog.split_off(prefix_size);
-        let prefix = backlog;
-
-        let (mut schedule_sender, schedule_receiver) = channel();
-
-        let scheduler_backlog_size = suffix.len()/self.nb_schedulers;
-
-        let scheduling = |schedule_sender: Sender<(usize, Vec<usize>)>, to_schedule: Vec<usize>| {
-            to_schedule
-                .par_chunks(scheduler_backlog_size)
-                .enumerate()
-                .map_with(
-                    schedule_sender,
-                    |sender, (scheduler_index, scheduler_backlog)| {
-                        let chunks = if scheduler_backlog.len() >= nb_chunks_per_scheduler {
-                            let mut chunk_size = scheduler_backlog.len()/nb_chunks_per_scheduler;
-                            scheduler_backlog.chunks(chunk_size)
-                        } else {
-                            scheduler_backlog.chunks(scheduler_backlog.len())
-                        };
-
-                        let mut not_scheduled = Vec::new();
-                        chunks.enumerate().for_each(|(chunk_index, chunk)| {
-                            // TODO schedule tx and return the indexes that can be executed
-                            let mut scheduled = Vec::with_capacity(chunk.len());
-                            let mut addresses = tinyset::SetUsize::new();   // TODO add capacity
-
-                            'outer: for tx_index in chunk {
-                                let tx: &ContractTransaction = batch.get(*tx_index).unwrap();
-                                for addr in tx.params.iter() {
-                                    if addresses.contains(*addr as usize) {
-                                        // Can't add tx to schedule
-                                        not_scheduled.push(*tx_index);
-                                        continue 'outer;
-                                    }
-                                }
-
-                                // Can add tx to schedule
-                                scheduled.push(*tx_index);
-                                for addr in tx.params.iter() {
-                                    addresses.insert(*addr as usize);
-                                }
-                            }
-
-                            // let schedule = chunk;
-                            if let Err(e) = sender.send((scheduler_index, scheduled)) {
-                                debug!(
-                                "Scheduler {} failed to send its {}-th schedule",
-                                scheduler_index, chunk_index
-                            );
-                            }
-                            // TODO Deal with tx that were not executed
-                        });
-
-                        not_scheduled
-                    }
-                ).flatten()
-                .collect::<Vec<usize>>()
-        };
-
-        let execution = |receiver: Receiver<(usize, Vec<usize>)>, prefix: Vec<usize>| {
-            for tx_index in prefix.iter() {
-                // TODO execute tx
-            }
-
-            while let Ok((scheduler_index, scheduled_txs)) = receiver.recv() {
-                let tx_per_worker = if scheduled_txs.len() < self.nb_workers {
-                    1
-                } else {
-                    scheduled_txs.len().div(self.nb_workers) + 1
-                };
-
-                // Using rayon -------------------------------------------------------------------------
-                let workers: Vec<()> = scheduled_txs.par_chunks(tx_per_worker)
-                    .map(|worker_jobs| {
-                        // TODO execute tx
-                    }
-                ).collect();
-
-                // TODO add generated tx to backlog via channel
-            }
-        };
-
-        let _ = rayon::join(
-            || execution(schedule_receiver, prefix),
-            move || {
-
-                let mut to_schedule = suffix;
-                while !to_schedule.is_empty() {
-                    to_schedule = scheduling(
-                        schedule_sender.clone(),
-                        to_schedule
-                    );
-
-                    // TODO add newly generated tx to the backlog too (receive from channel)
-                }
-            },
+        let a = Instant::now();
+        let mut working_set = tinyset::SetU64::with_capacity_and_max(
+            self.get_working_set_capacity(chunk.len()),
+            self.storage.len() as u64
         );
 
-        Ok(results)
-    }
-
-    pub fn execute_2(&mut self, mut batch: Vec<ContractTransaction>) -> anyhow::Result<Vec<FunctionResult>> {
-        /*
-            TODO Use VecDequeue?: first half contains tx to execute, the rest contains tx to postpone
-
-         */
-        let mut results = Vec::with_capacity(batch.len());
-
-        // let mut backlog = batch;
-        // let mut next_backlog = Vec::with_capacity(backlog.len());
-        // while !backlog.is_empty() {
-        //
-        //
-        // }
-        //
-        // let mut backlog: Vec<usize> = (0..batch.len()).collect();
-        // let mut next_backlog: Vec<usize> = Vec::with_capacity(batch.len());
-        //
-        // let (mut schedule_sender, schedule_receiver) = channel();
-        //
-        // let scheduler_backlog_size = backlog.len()/self.nb_schedulers;
-        //
-        // let scheduling = |schedule_sender: Sender<(usize, Vec<usize>)>, mut to_schedule: Vec<usize>| {
-        //
-        //     // while !to_schedule.is_empty() {
-        //     //     let tmp = schedule_once(to_schedule);
-        //     //     let scheduled = tmp.0;
-        //     //     if let Err(e) = schedule_sender.send(scheduled) {
-        //     //         debug!("Scheduler {} failed to send its {}-th schedule", scheduler_index, chunk_index);
-        //     //     }
-        //     //     to_schedule = tmp.1;
-        //     // }
-        //
-        //     to_schedule
-        //         .par_chunks(scheduler_backlog_size)
-        //         .enumerate()
-        //         .map(|(scheduler_index, scheduler_backlog)| {
-        //             let mut scheduled = Vec::with_capacity(scheduler_backlog.len());
-        //             let mut not_scheduled = vec!();
-        //             let mut addresses = tinyset::SetUsize::new();   // TODO add capacity
-        //
-        //             'outer: for tx_index in scheduler_backlog {
-        //                 let tx: &ContractTransaction = batch.get(*tx_index).unwrap();
-        //                 for addr in tx.params.iter() {
-        //                     if addresses.contains(*addr as usize) {
-        //                         // Can't add tx to schedule
-        //                         not_scheduled.push(tx);
-        //                         continue 'outer;
-        //                     }
-        //                 }
-        //
-        //                 // Can add tx to schedule
-        //                 scheduled.push(tx);
-        //                 for addr in tx.params.iter() {
-        //                     addresses.insert(*addr as usize);
-        //                 }
-        //             }
-        //
-        //             (scheduled, not_scheduled)
-        //         }
-        //     )
-        //     .collect::<Vec<(Vec<usize>, Vec<usize>)>>()
-        // };
-        //
-        // let execution = |receiver: Receiver<(usize, Vec<usize>)>| {
-        //
-        //     while let Ok((scheduler_index, scheduled_txs)) = receiver.recv() {
-        //         let tx_per_worker = if scheduled_txs.len() < self.nb_workers {
-        //             1
-        //         } else {
-        //             scheduled_txs.len().div(self.nb_workers) + 1
-        //         };
-        //
-        //         // Using rayon -------------------------------------------------------------------------
-        //         let workers: Vec<()> = scheduled_txs.par_chunks(tx_per_worker)
-        //             .map(|worker_jobs| {
-        //                 // TODO execute tx
-        //             }
-        //             ).collect();
-        //
-        //         // TODO add generated tx to backlog via channel
-        //     }
-        // };
-
-        // let _ = rayon::join(
-        //     || execution(schedule_receiver),
-        //     move || {
-        //
-        //         let mut to_schedule = backlog;
-        //         while !to_schedule.is_empty() {
-        //             to_schedule = scheduling(
-        //                 schedule_sender.clone(),
-        //                 to_schedule
-        //             );
-        //
-        //             // TODO add newly generated tx to the backlog too (receive from channel)
-        //         }
-        //     },
-        // );
-
-        // TODO
-        // let mut new_transactions = batch;
-        // let mut schedule = vec!();
-
-        // let mut i = 0;
-        // while !(new_transactions.is_empty() && schedule.is_empty()) {
-        //     let start = Instant::now();
-        //     let to_schedule = new_transactions.len();
-        //     let to_execute = schedule.len();
-        //     // println!("Iteration {}: {} tx to schedule and {} rounds to execute",
-        //     //     i, new_transactions.len(), schedule.len());
-        //     // // IntelliJ doesn't know that this is ok
-        //     // (schedule, new_transactions) = rayon::join(
-        //     //     move || scheduling(new_transactions),
-        //     //     move || execution(schedule)
-        //     // );
-        //     let tmp = rayon::join(
-        //         move || scheduling(new_transactions),
-        //         move || execution(schedule)
-        //     );
-        //     schedule = tmp.0;
-        //     new_transactions = tmp.1;
-        //
-        //     let elapsed = start.elapsed();
-        //     println!("Iteration {}:", i);
-        //     println!("\tScheduling {} tx -> {} rounds of execution", to_schedule, schedule.len());
-        //     println!("\tExecuting {} rounds of tx -> {} new tx to schedule", to_execute, new_transactions.len());
-        //     println!("Took {:?}", elapsed);
-        //     println!();
-        //     // println!("Iteration {} took {:?}:", i, start.elapsed());
-        //     // println!("\tTried to schedule {}")
-        //     i += 1;
-        // }
-
-        Ok(results)
-    }
-
-    pub fn execute_3(&mut self, mut batch: Vec<ContractTransaction>) -> anyhow::Result<Vec<FunctionResult>> {
-
-        let scheduler_chunk_size = batch.len() / self.nb_schedulers;
-        let worker_chunk_size = scheduler_chunk_size / self.nb_workers;
-
-        let nb_schedulers = self.nb_schedulers;
-        let nb_workers = self.nb_workers;
-
-        let scheduling = move |mut backlog: Vec<ContractTransaction>| {
-            let mut schedule: Vec<Vec<ContractTransaction>> = Vec::with_capacity(nb_schedulers);
-            while !backlog.is_empty() {
-
-                // TODO Choose between static and dynamic chunk sizes
-                let chunk_size = backlog.len();
-                // let chunk_size = backlog.len()/nb_schedulers;
-
-                let rounds: Vec<_> = backlog
-                    .par_drain(..backlog.len())
-                    // .into_par_iter() // Can't reuse the capacity of backlog with into_iter...
-                    .chunks(chunk_size)
-                    .enumerate()
-                    .map(|(scheduler_index, chunk)| {
-                        let mut scheduled = Vec::with_capacity(chunk.len());
-                        let mut postponed = vec!();
-
-                        let mut working_set = tinyset::SetUsize::new();
-                        'outer: for tx in chunk {
-                            for addr in tx.addresses.iter() {
-                                if working_set.contains(*addr as usize) {
-                                    // Can't add tx to schedule
-                                    postponed.push(tx);
-                                    continue 'outer;
-                                }
-                            }
-
-                            // Can add tx to schedule
-                            for addr in tx.addresses.iter() {
-                                working_set.insert(*addr as usize);
-                            }
-                            scheduled.push(tx);
-                        }
-                        (scheduled, postponed)
-                    }).collect();
-
-                // backlog = vec!();
-                for (round, mut postponed) in rounds {
-                    // println!("There are still {} tx to schedule", postponed.len());
-                    schedule.push(round);
-                    backlog.append(&mut postponed);
+        'outer: for tx in chunk {
+            for addr in tx.addresses.iter() {
+                if working_set.contains(*addr as u64) {
+                    // Can't add tx to schedule
+                    postponed.push(tx);
+                    continue 'outer;
                 }
             }
 
-            schedule
+            // Can add tx to schedule
+            for addr in tx.addresses.iter() {
+                working_set.insert(*addr as u64);
+            }
+            scheduled.push(tx);
+        }
+        println!("Scheduler {} took {:?} to schedule {} tx", scheduler_index, a.elapsed(), scheduled.len() + postponed.len());
+
+        (scheduled, postponed)
+    }
+
+    fn schedule_backlog_single_pass(&self, backlog: &mut Vec<ContractTransaction>)
+                                    -> Vec<(usize, (Round, Vec<ContractTransaction>))> {
+        // TODO Only return scheduled and postponed
+        let chunk_size = self.get_scheduler_chunk_size(backlog.len());
+
+        backlog
+            .par_drain(..backlog.len())
+            .chunks(chunk_size)
+            .enumerate()
+            .map(|(scheduler_index, chunk)|
+                (scheduler_index, self.schedule_chunk(scheduler_index, chunk))
+            ).collect()
+    }
+
+    // Send rounds one by one
+    fn schedule_backlog_variant_1(&self, mut backlog: &mut Vec<ContractTransaction>, worker_pool: &Sender<Round>) -> anyhow::Result<()> {
+        while !backlog.is_empty() {
+
+            let rounds = self.schedule_backlog_single_pass(&mut backlog);
+
+            for (scheduler_index, (round, mut postponed)) in rounds {
+                debug!("Scheduler {}: scheduled {}, postponed {}", scheduler_index, round.len(), postponed.len());
+                worker_pool.send(round)?;
+                backlog.append(&mut postponed);
+            }
+        }
+
+        Ok(())
+    }
+
+    // Group rounds and send them after each iteration
+    fn schedule_backlog_variant_2(&self, mut backlog: &mut Vec<ContractTransaction>, worker_pool: &Sender<Schedule>) -> anyhow::Result<()> {
+        while !backlog.is_empty() {
+
+            let rounds = self.schedule_backlog_single_pass(&mut backlog);
+
+            let mut schedule: Schedule = Vec::with_capacity(rounds.len());
+
+            for (scheduler_index, (round, mut postponed)) in rounds {
+                debug!("Scheduler {}: scheduled {}, postponed {}", scheduler_index, round.len(), postponed.len());
+                schedule.push(round);
+                backlog.append(&mut postponed);
+            }
+
+            worker_pool.send(schedule)?;
+        }
+
+        Ok(())
+    }
+
+    // Group rounds and send them once the backlog is empty
+    fn schedule_backlog_variant_3(&self, mut backlog: &mut Vec<ContractTransaction>, worker_pool: &Sender<Schedule>) -> anyhow::Result<()> {
+        if backlog.is_empty() {
+            return Ok(());
+        }
+
+        let mut schedule: Schedule = Vec::with_capacity(self.nb_schedulers);
+
+        while !backlog.is_empty() {
+
+            let rounds = self.schedule_backlog_single_pass(&mut backlog);
+
+            for (scheduler_index, (round, mut postponed)) in rounds {
+                debug!("Scheduler {}: scheduled {}, postponed {}", scheduler_index, round.len(), postponed.len());
+                schedule.push(round);
+                backlog.append(&mut postponed);
+            }
+        }
+
+        worker_pool.send(schedule)?;
+
+        Ok(())
+    }
+
+    fn execute_tx(&self, tx: &ContractTransaction) -> Option<ContractTransaction> {
+        // execute the transaction and optionally generate a new tx
+        let function = self.functions.get(tx.function as usize).unwrap();
+        match unsafe { function.execute(tx.clone(), self.storage.get_shared()) } {
+            Another(generated_tx) => Some(generated_tx),
+            _ => None,
+        }
+    }
+
+    fn execute_chunk(&self, worker_index:usize, mut worker_backlog: &[ContractTransaction]) -> Vec<ContractTransaction> {
+        worker_backlog
+            // .drain(..worker_backlog.len())
+            .into_iter()
+            .flat_map(|tx| self.execute_tx(tx))
+            .collect()
+    }
+
+    fn execute_round(&self, round_index: usize, mut round: Round) -> Vec<ContractTransaction> {
+        let chunk_size = self.get_chunk_size(round.len());
+        round
+            // .into_par_iter()
+            // .par_drain(..round.len())
+            // .chunks(chunk_size)
+            .par_chunks(chunk_size)
+            .enumerate()
+            .flat_map(
+                |(worker_index, worker_backlog)|
+                    self.execute_chunk(worker_index, worker_backlog)
+            ).collect()
+    }
+
+    fn execute_schedule_variant_1(&self, mut schedule: Schedule, scheduling_pool: &Sender<Vec<ContractTransaction>>) -> anyhow::Result<usize> {
+        let mut completed = 0;
+        for (round_index, round) in schedule.into_iter().enumerate() {
+            completed += round.len();
+            let generated_tx = self.execute_round(round_index, round);
+            completed -= generated_tx.len();
+            scheduling_pool.send(generated_tx)?;
+        }
+        Ok(completed)
+    }
+
+    fn execute_schedule_variant_2(&self, mut schedule: Schedule, scheduling_pool: &Sender<Vec<ContractTransaction>>) -> anyhow::Result<usize> {
+        let mut completed = 0;
+        let mut generated_tx = vec!();
+
+        for (round_index, round) in schedule.into_iter().enumerate() {
+            completed += round.len();
+            generated_tx.append(&mut self.execute_round(round_index, round));
+        }
+        completed -= generated_tx.len();
+
+        scheduling_pool.send(generated_tx)?;
+
+        Ok(completed)
+    }
+
+    pub fn execute_variant_1(&mut self, mut batch: Vec<ContractTransaction>) -> anyhow::Result<()> {
+        let batch_size = batch.len();
+
+        let (send_generated_tx, receive_generated_tx) = channel();
+        let (send_rounds, receive_rounds) = channel();
+
+        send_generated_tx.send(batch)?;
+
+        let scheduling = |new_backlog: Receiver<Vec<ContractTransaction>>, mut worker_pool: Sender<Round>| {
+            let mut duration = Duration::from_secs(0);
+            while let Ok(mut backlog) = new_backlog.recv() {
+                let scheduling_start = Instant::now();
+                self.schedule_backlog_variant_1(&mut backlog, &worker_pool)?;
+                duration = duration.add(scheduling_start.elapsed());
+            }
+            anyhow::Ok(duration)
         };
 
-        let execution = |mut schedule: Vec<Vec<ContractTransaction>>, storage: SharedStorage| {
-            // TODO Choose between static and dynamic chunk sizes
-            let get_chunk_size: fn(usize, usize)->usize = |round_size, nb_workers| {
-                if round_size >= nb_workers {
-                    round_size/nb_workers + 1
-                } else {
-                    1
-                    // round_size
+        let execution =
+            |next_round: Receiver<Round>, mut scheduling_pool: Sender<Vec<ContractTransaction>>| {
+                let mut duration = Duration::from_secs(0);
+                let mut executed = 0;
+                while let Ok(round) = next_round.recv() {
+                    let execution_start = Instant::now();
+                    executed += self.execute_schedule_variant_1(vec!(round), &scheduling_pool)?;
+                    duration = duration.add(execution_start.elapsed());
+
+                    if executed >= batch_size {
+                        break;
+                    }
                 }
+                anyhow::Ok(duration)
             };
 
-            let execute_tx = |tx: &ContractTransaction| {
-                // execute the transaction and optionally generate a new tx
-                let function = self.functions.get(tx.function as usize).unwrap();
-                match unsafe { function.execute(tx.clone(), storage) } {
-                    Another(generated_tx) => Some(generated_tx),
-                    _ => None,
+        let (scheduling_res, execution_res) = rayon::join(
+            || scheduling(receive_generated_tx, send_rounds),
+            || execution(receive_rounds, send_generated_tx),
+        );
+
+        let scheduling_duration = scheduling_res.unwrap();
+        let execution_duration = execution_res.unwrap();
+
+        println!("Variant 1 took {:?}", scheduling_duration + execution_duration);
+        println!("\tScheduling (v1): {:?}", scheduling_duration);
+        println!("\tExecution (v1):  {:?}", execution_duration);
+
+        Ok(())
+    }
+
+    pub fn execute_variant_2(&mut self, mut batch: Vec<ContractTransaction>) -> anyhow::Result<()> {
+        let batch_size = batch.len();
+
+        let (send_generated_tx, receive_generated_tx) = channel();
+        let (send_rounds, receive_rounds) = channel();
+
+        send_generated_tx.send(batch)?;
+
+        let scheduling = |new_backlog: Receiver<Vec<ContractTransaction>>, mut worker_pool: Sender<Schedule>| {
+            let mut duration = Duration::from_secs(0);
+            while let Ok(mut backlog) = new_backlog.recv() {
+                let scheduling_start = Instant::now();
+                self.schedule_backlog_variant_2(&mut backlog, &worker_pool)?;
+                duration = duration.add(scheduling_start.elapsed());
+            }
+            anyhow::Ok(duration)
+        };
+
+        let execution =
+            |next_round: Receiver<Schedule>, mut scheduling_pool: Sender<Vec<ContractTransaction>>| {
+                let mut duration = Duration::from_secs(0);
+                let mut executed = 0;
+                while let Ok(schedule) = next_round.recv() {
+                    let execution_start = Instant::now();
+                    executed += self.execute_schedule_variant_1(schedule, &scheduling_pool)?;
+                    duration = duration.add(execution_start.elapsed());
+
+                    if executed >= batch_size {
+                        break;
+                    }
                 }
+                anyhow::Ok(duration)
             };
 
-            let run_worker = |(worker_index, mut worker_backlog): (usize, &[ContractTransaction])| {
-                // execute transactions sequentially and collect the results
-                let worker_generated_tx: Vec<_> = worker_backlog
-                    // .drain(..worker_backlog.len())
-                    .into_iter()
-                    .flat_map(execute_tx)
-                    .collect();
-                worker_generated_tx
+        let (scheduling_res, execution_res) = rayon::join(
+            || scheduling(receive_generated_tx, send_rounds),
+            || execution(receive_rounds, send_generated_tx),
+        );
+
+        let scheduling_duration = scheduling_res.unwrap();
+        let execution_duration = execution_res.unwrap();
+
+        println!("Variant 2 took {:?}", scheduling_duration + execution_duration);
+        println!("\tScheduling (v2): {:?}", scheduling_duration);
+        println!("\tExecution (v1):  {:?}", execution_duration);
+
+        Ok(())
+    }
+
+    pub fn execute_variant_3(&mut self, mut batch: Vec<ContractTransaction>) -> anyhow::Result<()> {
+        let batch_size = batch.len();
+
+        let (send_generated_tx, receive_generated_tx) = channel();
+        let (send_rounds, receive_rounds) = channel();
+
+        send_generated_tx.send(batch)?;
+
+        let scheduling = |new_backlog: Receiver<Vec<ContractTransaction>>, mut worker_pool: Sender<Schedule>| {
+            let mut duration = Duration::from_secs(0);
+            while let Ok(mut backlog) = new_backlog.recv() {
+                let scheduling_start = Instant::now();
+                self.schedule_backlog_variant_2(&mut backlog, &worker_pool)?;
+                duration = duration.add(scheduling_start.elapsed());
+            }
+            anyhow::Ok(duration)
+        };
+
+        let execution =
+            |next_round: Receiver<Schedule>, mut scheduling_pool: Sender<Vec<ContractTransaction>>| {
+                let mut duration = Duration::from_secs(0);
+                let mut executed = 0;
+                while let Ok(schedule) = next_round.recv() {
+                    let execution_start = Instant::now();
+                    executed += self.execute_schedule_variant_2(schedule, &scheduling_pool)?;
+                    duration = duration.add(execution_start.elapsed());
+
+                    if executed >= batch_size {
+                        break;
+                    }
+                }
+                anyhow::Ok(duration)
             };
 
-            let execute_round = |(round_index, mut round): (usize, Vec<ContractTransaction>)| {
-                let chunk_size = get_chunk_size(round.len(), nb_workers);
-                let round_generated_tx: Vec<_> = round
-                    // .into_par_iter()
-                    // .par_drain(..round.len())
-                    // .chunks(chunk_size)
-                    .par_chunks(chunk_size)
-                    .enumerate()
-                    .flat_map(run_worker)
-                    .collect();
-                round_generated_tx
+        let (scheduling_res, execution_res) = rayon::join(
+            || scheduling(receive_generated_tx, send_rounds),
+            || execution(receive_rounds, send_generated_tx),
+        );
+
+        let scheduling_duration = scheduling_res.unwrap();
+        let execution_duration = execution_res.unwrap();
+
+        println!("Variant 3 took {:?}", scheduling_duration + execution_duration);
+        println!("\tScheduling (v2): {:?}", scheduling_duration);
+        println!("\tExecution (v2):  {:?}", execution_duration);
+
+        Ok(())
+    }
+
+    pub fn execute_variant_4(&mut self, mut batch: Vec<ContractTransaction>) -> anyhow::Result<()> {
+        let batch_size = batch.len();
+
+        let (send_generated_tx, receive_generated_tx) = channel();
+        let (send_rounds, receive_rounds) = channel();
+
+        send_generated_tx.send(batch)?;
+
+        let scheduling = |new_backlog: Receiver<Vec<ContractTransaction>>, mut worker_pool: Sender<Schedule>| {
+            let mut duration = Duration::from_secs(0);
+            while let Ok(mut backlog) = new_backlog.recv() {
+                let scheduling_start = Instant::now();
+                self.schedule_backlog_variant_3(&mut backlog, &worker_pool)?;
+                duration = duration.add(scheduling_start.elapsed());
+            }
+            anyhow::Ok(duration)
+        };
+
+        let execution =
+            |next_round: Receiver<Schedule>, mut scheduling_pool: Sender<Vec<ContractTransaction>>| {
+                let mut duration = Duration::from_secs(0);
+                let mut executed = 0;
+                while let Ok(schedule) = next_round.recv() {
+                    let execution_start = Instant::now();
+                    executed += self.execute_schedule_variant_1(schedule, &scheduling_pool)?;
+                    duration = duration.add(execution_start.elapsed());
+
+                    if executed >= batch_size {
+                        break;
+                    }
+                }
+                anyhow::Ok(duration)
             };
 
-            // For the given schedule: sequentially execute each round an collect the results
-            let new_transactions: Vec<_> = schedule
+        let (scheduling_res, execution_res) = rayon::join(
+            || scheduling(receive_generated_tx, send_rounds),
+            || execution(receive_rounds, send_generated_tx),
+        );
+
+        let scheduling_duration = scheduling_res.unwrap();
+        let execution_duration = execution_res.unwrap();
+
+        println!("Variant 4 took {:?}", scheduling_duration + execution_duration);
+        println!("\tScheduling (v3): {:?}", scheduling_duration);
+        println!("\tExecution (v1):  {:?}", execution_duration);
+
+        Ok(())
+    }
+
+    pub fn execute_variant_5(&mut self, mut batch: Vec<ContractTransaction>) -> anyhow::Result<()> {
+        let batch_size = batch.len();
+
+        let (send_generated_tx, receive_generated_tx) = channel();
+        let (send_rounds, receive_rounds) = channel();
+
+        send_generated_tx.send(batch)?;
+
+        let scheduling = |new_backlog: Receiver<Vec<ContractTransaction>>, mut worker_pool: Sender<Schedule>| {
+            let mut duration = Duration::from_secs(0);
+            while let Ok(mut backlog) = new_backlog.recv() {
+                let scheduling_start = Instant::now();
+                self.schedule_backlog_variant_3(&mut backlog, &worker_pool)?;
+                duration = duration.add(scheduling_start.elapsed());
+            }
+            anyhow::Ok(duration)
+        };
+
+        let execution =
+            |next_round: Receiver<Schedule>, mut scheduling_pool: Sender<Vec<ContractTransaction>>| {
+                let mut duration = Duration::from_secs(0);
+                let mut executed = 0;
+                while let Ok(schedule) = next_round.recv() {
+                    let execution_start = Instant::now();
+                    executed += self.execute_schedule_variant_2(schedule, &scheduling_pool)?;
+                    duration = duration.add(execution_start.elapsed());
+
+                    if executed >= batch_size {
+                        break;
+                    }
+                }
+                anyhow::Ok(duration)
+            };
+
+        let (scheduling_res, execution_res) = rayon::join(
+            || scheduling(receive_generated_tx, send_rounds),
+            || execution(receive_rounds, send_generated_tx),
+        );
+
+        let scheduling_duration = scheduling_res.unwrap();
+        let execution_duration = execution_res.unwrap();
+
+        println!("Variant 5 took {:?}", scheduling_duration + execution_duration);
+        println!("\tScheduling (v3): {:?}", scheduling_duration);
+        println!("\tExecution (v2):  {:?}", execution_duration);
+
+        Ok(())
+    }
+
+    // TODO Replaced by the three "schedule_backlog" variants
+    fn multi_pass_schedule(&self, mut backlog: &mut Vec<ContractTransaction>) -> Schedule {
+        let mut schedule: Vec<Vec<ContractTransaction>> = Vec::with_capacity(self.nb_schedulers);
+        while !backlog.is_empty() {
+
+            let rounds = self.schedule_backlog_single_pass(&mut backlog);
+
+            for (scheduler_index, (round, mut postponed)) in rounds {
+                debug!("Scheduler {}: scheduled {}, postponed {}", scheduler_index, round.len(), postponed.len());
+                schedule.push(round);
+                backlog.append(&mut postponed);
+            }
+        }
+
+        schedule
+    }
+
+    // TODO Remove. Replaced by the 5 "execute_variant"
+    // Scheduling: Send scheduled rounds one by one
+    // Execution: Send result one by one
+    pub fn execute_impl_2(&mut self, mut batch: Vec<ContractTransaction>) -> anyhow::Result<Vec<FunctionResult>> {
+
+        let batch_size = batch.len();
+
+        let nb_schedulers = self.nb_schedulers;
+        let fixed_scheduler_chunk_size = batch.len()/nb_schedulers;
+
+        let nb_workers = self.nb_workers;
+
+        let (send_generated_tx, receive_generated_tx) = channel();
+        let (send_rounds, receive_rounds) = channel();
+
+        send_generated_tx.send(batch)?;
+
+        let scheduling =
+            |new_txs: Receiver<Vec<ContractTransaction>>, mut worker_pool: Sender<Vec<_>>| {
+                let mut scheduling_duration = Duration::from_secs(0);
+
+                while let Ok(mut backlog) = new_txs.recv() {
+
+                    let scheduling_start = Instant::now();
+                    while !backlog.is_empty() {
+                        let rounds = self.schedule_backlog_single_pass(&mut backlog);
+
+                        for (scheduler_index, (round, mut postponed)) in rounds {
+                            debug!("Scheduler {}: scheduled {}, postponed {}", scheduler_index, round.len(), postponed.len());
+                            // Send each round individually
+                            worker_pool.send(round)?;
+                            backlog.append(&mut postponed);
+                        }
+                    }
+
+                    // We scheduled the whole backlog
+                    scheduling_duration = scheduling_duration.add(scheduling_start.elapsed());
+                }
+
+                anyhow::Ok(scheduling_duration)
+        };
+
+        let execution =
+            |scheduled_rounds: Receiver<Vec<ContractTransaction>>, mut scheduling_pool: Sender<Vec<ContractTransaction>>| {
+
+            let mut completed_tx = 0;
+            let mut round_index = 0;
+            let mut exec_duration = Duration::from_secs(0);
+            while let Ok(round) = scheduled_rounds.recv() {
+
+                let execution_start = Instant::now();
+                let round_size = round.len();
+
+                let generated_tx = self.execute_round(round_index, round);
+                // If a transaction has not been generated, the original request was completed
+                completed_tx += round_size - generated_tx.len();
+                debug!("\t{} tx were executed to completion", round_size - generated_tx.len());
+                round_index += 1;
+
+                if !generated_tx.is_empty() {
+                    scheduling_pool.send(generated_tx)?;
+                }
+
+                exec_duration = exec_duration.add(execution_start.elapsed());
+
+                if completed_tx >= batch_size {
+                    break;
+                }
+            }
+            anyhow::Ok(exec_duration)
+        };
+
+        let (scheduling_res, execution_res) = rayon::join(
+            || scheduling(receive_generated_tx, send_rounds),
+            || execution(receive_rounds, send_generated_tx),
+        );
+
+        let scheduling_duration = scheduling_res.unwrap();
+        let execution_duration = execution_res.unwrap();
+
+        println!("Concurrent took {:?}", scheduling_duration + execution_duration);
+        println!("\tScheduling (one-by-one): {:?}", scheduling_duration);
+        println!("\tExecution (one-by-one):  {:?}", execution_duration);
+
+        return Ok(vec!());
+    }
+
+    // TODO Remove. Replaced by the 5 "execute_variant"
+    // Scheduling: Send scheduled rounds together
+    // Execution: Send result together
+    pub fn execute_impl_3(&mut self, mut batch: Vec<ContractTransaction>) -> anyhow::Result<Vec<FunctionResult>> {
+
+        while !batch.is_empty() {
+            let start = Instant::now();
+            let schedule = self.multi_pass_schedule(&mut batch);
+            let scheduling_duration = start.elapsed();
+
+            let start = Instant::now();
+
+            batch = schedule
                 // .drain(..schedule.len())
                 .into_iter()
                 .enumerate()
-                .flat_map(execute_round)
-                .collect();
+                .flat_map(
+                    |(round_index, round)|
+                        self.execute_round(round_index, round)
+                ).collect();
+            let execution_duration = start.elapsed();
 
-            new_transactions
-        };
-
-        let mut new_transactions = batch;
-        while !new_transactions.is_empty() {
-            let start = Instant::now();
-            let schedule = scheduling(new_transactions);
-            println!("Scheduling took {:?}", start.elapsed());
-
-            let start = Instant::now();
-            new_transactions = execution(schedule, self.storage.get_shared());
-            println!("Execution took {:?}", start.elapsed());
+            println!("Manual impl took {:?}", scheduling_duration + execution_duration);
+            println!("\tScheduling (grouped) {:?}", start.elapsed());
+            println!("\tExecution (grouped) {:?}", start.elapsed());
         }
 
         Ok(vec!())
+    }
+
+    // TODO Remove. Replaced by the 5 "execute_variant"
+    // Scheduling: Send scheduled rounds together
+    // Execution: Send result one by one
+    pub fn execute_impl_4(&mut self, mut batch: Vec<ContractTransaction>) -> anyhow::Result<Vec<FunctionResult>> {
+
+        let batch_size = batch.len();
+
+        let nb_schedulers = self.nb_schedulers;
+        let fixed_scheduler_chunk_size = batch.len()/nb_schedulers;
+
+        let nb_workers = self.nb_workers;
+
+        let (send_generated_tx, receive_generated_tx) = channel();
+        let (send_rounds, receive_rounds) = channel();
+
+        send_generated_tx.send(batch)?;
+
+        let scheduling =
+            |new_txs: Receiver<Vec<ContractTransaction>>, mut worker_pool: Sender<Vec<Vec<ContractTransaction>>>| {
+                let mut scheduling_duration = Duration::from_secs(0);
+
+                while let Ok(mut backlog) = new_txs.recv() {
+                    let scheduling_start = Instant::now();
+
+                    let schedule = self.multi_pass_schedule(&mut backlog);
+
+                    worker_pool.send(schedule)?;
+                    scheduling_duration = scheduling_duration.add(scheduling_start.elapsed());
+                }
+
+                anyhow::Ok(scheduling_duration)
+            };
+
+        let execution =
+            |scheduled_rounds: Receiver<Vec<Vec<ContractTransaction>>>, mut scheduling_pool: Sender<Vec<ContractTransaction>>| {
+                let mut completed_tx = 0;
+                let mut round_index = 0;
+                let mut exec_duration = Duration::from_secs(0);
+
+                while let Ok(schedule) = scheduled_rounds.recv() {
+
+                    let execution_start = Instant::now();
+                    for round in schedule {
+                        let round_size = round.len();
+
+                        let generated_tx = self.execute_round(round_index, round);
+                        // If a transaction has not been generated, the original request was completed
+                        completed_tx += round_size - generated_tx.len();
+
+                        debug!("\t{} tx were executed to completion", round_size - generated_tx.len());
+
+                        if !generated_tx.is_empty() {
+                            scheduling_pool.send(generated_tx)?;
+                        }
+                        round_index += 1;
+                    }
+
+                    exec_duration = exec_duration.add(execution_start.elapsed());
+
+                    if completed_tx >= batch_size {
+                        break;
+                    }
+                }
+                anyhow::Ok(exec_duration)
+            };
+
+        let (scheduling_res, execution_res) = rayon::join(
+            || scheduling(receive_generated_tx, send_rounds),
+            || execution(receive_rounds, send_generated_tx),
+        );
+
+        let scheduling_duration = scheduling_res.unwrap();
+        let execution_duration = execution_res.unwrap();
+
+        println!("Concurrent took {:?}", scheduling_duration + execution_duration);
+        println!("\tScheduling (grouped): {:?}", scheduling_duration);
+        println!("\tExecution (one-by-one):  {:?}", execution_duration);
+
+        return Ok(vec!());
+    }
+
+    // TODO Remove. Replaced by the 5 "execute_variant"
+    // Scheduling: Send scheduled rounds together
+    // Execution: Send result together
+    pub fn execute_impl_5(&mut self, mut batch: Vec<ContractTransaction>) -> anyhow::Result<Vec<FunctionResult>> {
+
+        let batch_size = batch.len();
+
+        let nb_schedulers = self.nb_schedulers;
+        let fixed_scheduler_chunk_size = batch.len()/nb_schedulers;
+
+        let nb_workers = self.nb_workers;
+
+        let (send_generated_tx, receive_generated_tx) = channel();
+        let (send_rounds, receive_rounds) = channel();
+
+        send_generated_tx.send(batch)?;
+
+        let scheduling =
+            |new_txs: Receiver<Vec<ContractTransaction>>, mut worker_pool: Sender<Vec<Vec<ContractTransaction>>>| {
+                let mut scheduling_duration = Duration::from_secs(0);
+
+                while let Ok(mut backlog) = new_txs.recv() {
+                    let scheduling_start = Instant::now();
+
+                    let schedule = self.multi_pass_schedule(&mut backlog);
+
+                    worker_pool.send(schedule)?;
+                    scheduling_duration = scheduling_duration.add(scheduling_start.elapsed());
+                }
+
+                anyhow::Ok(scheduling_duration)
+            };
+
+        let execution =
+            |scheduled_rounds: Receiver<Vec<Vec<ContractTransaction>>>, mut scheduling_pool: Sender<Vec<ContractTransaction>>| {
+                let mut completed_tx = 0;
+                let mut round_index = 0;
+                let mut exec_duration = Duration::from_secs(0);
+
+                while let Ok(schedule) = scheduled_rounds.recv() {
+                    let mut generated_tx = Vec::with_capacity(nb_workers);
+
+                    let execution_start = Instant::now();
+                    for round in schedule {
+                        let round_size = round.len();
+
+                        let mut round_generated_tx = self.execute_round(round_index, round);
+                        // If a transaction has not been generated, the original request was completed
+                        completed_tx += round_size - round_generated_tx.len();
+                        debug!("\t{} tx were executed to completion", round_size - round_generated_tx.len());
+
+                        generated_tx.append(&mut round_generated_tx);
+
+                        round_index += 1;
+                    }
+
+                    //Executed all rounds in the schedule
+                    if !generated_tx.is_empty() {
+                        scheduling_pool.send(generated_tx)?;
+                    }
+
+                    exec_duration = exec_duration.add(execution_start.elapsed());
+
+                    if completed_tx >= batch_size {
+                        break;
+                    }
+                }
+                anyhow::Ok(exec_duration)
+            };
+
+        let (scheduling_res, execution_res) = rayon::join(
+            || scheduling(receive_generated_tx, send_rounds),
+            || execution(receive_rounds, send_generated_tx),
+        );
+
+        let scheduling_duration = scheduling_res.unwrap();
+        let execution_duration = execution_res.unwrap();
+
+        println!("Concurrent took {:?}", scheduling_duration + execution_duration);
+        println!("\tScheduling (grouped): {:?}", scheduling_duration);
+        println!("\tExecution (grouped):  {:?}", execution_duration);
+
+        return Ok(vec!());
     }
 }
 
@@ -640,9 +1004,9 @@ impl ParallelContractVM {
             // send to workers
 
             //
+            return Ok(results);
         }
 
-        Ok(results)
     }
 
     fn crossbeam(

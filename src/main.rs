@@ -117,10 +117,31 @@ async fn main() -> Result<()>{
     concurrent.storage.set_storage(20 * iter);
 
     for _ in 0..iter {
+        // let b = new_batch.clone();
+        // let s = Instant::now();
+        // let _ = concurrent.execute(b);
+        // duration = duration.add(s.elapsed());
+
         let b = new_batch.clone();
-        let s = Instant::now();
-        let _ = concurrent.execute_3(b);
-        duration = duration.add(s.elapsed());
+        let _ = concurrent.execute_variant_1(b);
+        println!();
+
+        let b = new_batch.clone();
+        let _ = concurrent.execute_variant_2(b);
+        println!();
+
+        let b = new_batch.clone();
+        let _ = concurrent.execute_variant_3(b);
+        println!();
+
+        let b = new_batch.clone();
+        let _ = concurrent.execute_variant_4(b);
+        println!();
+
+        let b = new_batch.clone();
+        let _ = concurrent.execute_variant_5(b);
+        println!();
+
     }
     // println!();
     // println!("Concurrent:");
@@ -794,7 +815,7 @@ fn merge_sort(chunk: &[T], storage_size: usize, depth: usize, depth_limit: usize
         let (mut left, mut right) = rayon::join(
             || merge_sort(lo, storage_size, depth + 1, depth_limit),
             || merge_sort(hi, storage_size, depth + 1, depth_limit)
-        );;
+        );
 
         let mut left_round_index = 0;
 
