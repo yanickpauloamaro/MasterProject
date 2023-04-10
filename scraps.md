@@ -1,3 +1,100 @@
+// Parallel execution debugging v1 ===========================================================================================
+// let new_transactions: Vec<_> = schedule
+//     // .into_iter()
+//     .drain(..schedule.len())
+//     .enumerate()
+//     .flat_map(|(index, mut round)| {
+//         // For a given round:
+//         // execute parallel and collect the result of each worker
+//
+//         let chunk_size = get_chunk_size(round.len(), nb_workers);
+//         let round_size = round.len();
+//         let round_start = Instant::now();
+//         let round_generated_tx: Vec<_> = round
+//             // .into_par_iter()
+//             // .par_drain(..round.len())
+//             // .chunks(chunk_size)
+//             .par_chunks(chunk_size)
+//             .enumerate()
+//             .flat_map(|(worker_index, mut worker_backlog)| {
+//                 // For a given worker:
+//                 // execute transactions sequentially and collect the results
+//                 // let worker_start = Instant::now();
+//                 let worker_generated_tx: Vec<_> = worker_backlog
+//                     // .drain(..worker_backlog.len())
+//                     .into_iter()
+//                     .flat_map(|tx| {
+//                         // For a given transaction:
+//                         // execute the transaction and optionally generate a new tx
+//                         let function = self.functions.get(tx.function as usize).unwrap();
+//                         match unsafe { function.execute(tx.clone(), storage) } {
+//                             Another(generated_tx) => Some(generated_tx),
+//                             _ => None,
+//                         }
+//                     }
+//                 ).collect();
+//                 // eprintln!("** Round {}: Worker {} took {:?} to execute its backlog", index, worker_index, start.elapsed());
+//                 worker_generated_tx
+//             }
+//         ).collect();
+//         println!("Round {} took {:?} for {} tx", index, round_start.elapsed(), round_size);
+//         round_generated_tx
+//     }
+// ).collect();
+
+// Parallel execution debugging v2 ===========================================================================================
+// println!("Executing using {} workers", nb_workers);
+// let mut execution_output = Arc::new(
+//     Mutex::new(Vec::with_capacity(schedule.len()))
+// );
+//
+// // println!("Worker chunk size: {}", worker_chunk_size);
+// for (round_index, mut round) in schedule
+//     .drain(..schedule.len())
+//     .enumerate()
+// {
+//     let chunk_size = get_chunk_size(round.len(), nb_workers);
+//     // println!("Worker backlog size is {}", chunk_size);
+//     let round_size = round.len();
+//     let round_start = Instant::now();
+//     // println!("Round {} has {} tx to execute", round_index, round_size);
+//
+//     let mut round_output: Vec<_> = round
+//         // .chunks(chunk_size)
+//         // .enumerate()
+//         // .map(
+//         //     |(worker_index, worker_backlog)| {
+//         //         let acc = execution_output.clone();
+//         .par_chunks(chunk_size)
+//         .enumerate()
+//         .map_with(
+//             execution_output.clone(),
+//             |acc, (worker_index, worker_backlog)| {
+//         let worker_backlog_size = worker_backlog.len();
+//         let mut worker_output = Vec::with_capacity(worker_backlog_size);
+//         let worker_start = Instant::now();
+//         // println!("\tWorker {} has {} tx to execute.", worker_index, worker_backlog_size);
+//         for (tx_index, tx) in worker_backlog.into_iter().enumerate() {
+//             let function = self.functions.get(tx.function as usize).unwrap();
+//             match unsafe { function.execute(tx.clone(), storage) } {
+//                 Another(generated_tx) => {
+//                     worker_output.push(generated_tx);
+//                 },
+//                 _ => { },
+//             }
+//         }
+//         worker_output
+//         // let mut result = acc.lock().unwrap();
+//         // result.append(&mut worker_output);
+//     }).flatten().collect();
+//     let mut result = execution_output.lock().unwrap();
+//     result.append(&mut round_output);
+// }
+//
+// let new_transactions = Arc::try_unwrap(execution_output).unwrap()
+//     .into_inner().unwrap();
+// ==================================================================================================================
+
 
 // #[tokio::main]
 pub fn benchmark_name(c: &mut Criterion) {
