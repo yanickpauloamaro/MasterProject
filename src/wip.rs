@@ -13,16 +13,17 @@ use std::vec::IntoIter;
 use anyhow::anyhow;
 use futures::SinkExt;
 // use futures::SinkExt;
-use hwloc::Topology;
+// use hwloc::Topology;
 // use itertools::Itertools;
 use rand::rngs::StdRng;
 use rand::seq::{IteratorRandom, SliceRandom};
 use rayon::iter::{IndexedParallelIterator, ParallelDrainRange, ParallelIterator};
 use rayon::slice::ParallelSlice;
 use strum::{EnumIter, IntoEnumIterator};
+use thincollections::thin_set::ThinSet;
 
 use crate::{debug, debugging};
-use crate::utils::compatible;
+// use crate::utils::compatible;
 use crate::vm::Jobs;
 use crate::vm_utils::{SharedStorage, UNASSIGNED, VmStorage};
 use crate::wip::FunctionResult::Another;
@@ -129,7 +130,7 @@ const MAX_TX_SIZE: usize = mem::size_of::<SenderAddress>() +
     MAX_NB_PARAMETERS * mem::size_of::<FunctionParameter>();
 
 // TODO Find safe way to have a variable length array?
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Copy)]
 pub struct ContractTransaction {
     pub sender: SenderAddress,
     pub function: FunctionAddress,
@@ -173,6 +174,30 @@ impl SequentialVM {
         return Ok(vec!());
     }
 }
+
+#[derive(Clone, Debug)]
+pub struct ThinSetWrapper {
+    inner: ThinSet<u64>
+}
+impl ThinSetWrapper {
+    pub fn with_capacity_and_max(cap: usize, max: u64) -> Self {
+        let inner = ThinSet::with_capacity(2 * 65536 / 8);
+        return Self { inner };
+    }
+    #[inline]
+    pub fn contains(&self, el: u64) -> bool {
+        self.inner.contains(&el)
+    }
+    #[inline]
+    pub fn insert(&mut self, el: u64) -> bool {
+        self.inner.insert(el)
+    }
+    #[inline]
+    pub fn sort(&mut self) {
+
+    }
+}
+unsafe impl Send for ThinSetWrapper {}
 
 #[derive(Debug)]
 pub struct ConcurrentVM {
@@ -228,7 +253,12 @@ impl ConcurrentVM {
         let mut postponed = Vec::with_capacity(chunk.len());
 
         let a = Instant::now();
-        let mut working_set = tinyset::SetU64::with_capacity_and_max(
+        // let mut working_set = tinyset::SetU64::with_capacity_and_max(
+        //     self.get_working_set_capacity(chunk.len()),
+        //     self.storage.len() as u64
+        // );
+        // TODO ???
+        let mut working_set = ThinSetWrapper::with_capacity_and_max(
             self.get_working_set_capacity(chunk.len()),
             self.storage.len() as u64
         );
@@ -248,7 +278,10 @@ impl ConcurrentVM {
             }
             scheduled.push(tx);
         }
-        println!("Scheduler {} took {:?} to schedule {} tx", scheduler_index, a.elapsed(), scheduled.len() + postponed.len());
+        // if scheduler_index == 0 {
+        //     println!("\tScheduler {} took {:?} to schedule {} tx", scheduler_index, a.elapsed(), scheduled.len() + postponed.len());
+        // }
+        println!("\tScheduler {} took {:?} to schedule {} tx", scheduler_index, a.elapsed(), scheduled.len() + postponed.len());
 
         (scheduled, postponed)
     }
@@ -257,14 +290,16 @@ impl ConcurrentVM {
                                     -> Vec<(usize, (Round, Vec<ContractTransaction>))> {
         // TODO Only return scheduled and postponed
         let chunk_size = self.get_scheduler_chunk_size(backlog.len());
-
-        backlog
+        let a = Instant::now();
+        let res: Vec<_> = backlog
             .par_drain(..backlog.len())
             .chunks(chunk_size)
             .enumerate()
             .map(|(scheduler_index, chunk)|
                 (scheduler_index, self.schedule_chunk(scheduler_index, chunk))
-            ).collect()
+            ).collect();
+        // println!("single_pass took {:?}", a.elapsed());
+        res
     }
 
     // Send rounds one by one
@@ -1676,15 +1711,15 @@ pub fn assign_workers_new_impl_2(
 // =================================================================================================
 
 pub fn numa_latency() {
-    print!("Checking compatibility with cpu binding...");
-    let topo = Topology::new();
-    if let Err(e) = compatible(&topo) {
-        println!("\n{} not supported", e);
-        return;
-    }
-    println!("Done.\n");
-
-    println!("Displaying NUMA layout:");
+    // print!("Checking compatibility with cpu binding...");
+    // let topo = Topology::new();
+    // if let Err(e) = compatible(&topo) {
+    //     println!("\n{} not supported", e);
+    //     return;
+    // }
+    // println!("Done.\n");
+    //
+    // println!("Displaying NUMA layout:");
     //
     // println!("Enter location of the first thread:");
     // println!("Enter location of the second thread:");

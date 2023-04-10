@@ -1,22 +1,23 @@
 #![allow(unused_imports)]
 extern crate anyhow;
 extern crate either;
-extern crate hwloc;
+// extern crate hwloc;
 extern crate tokio;
 
 
 use futures::future::BoxFuture;
 use itertools::Itertools;
 use voracious_radix_sort::{RadixSort};
-use std::collections::{BTreeSet, HashSet};
-use std::ops::{Add, Div, Mul};
+use std::collections::{BTreeMap, BTreeSet, HashSet};
+use std::ops::{Add, Div, Mul, Sub};
 use std::sync::mpsc::{channel, Receiver};
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 use std::thread::sleep;
-use std::time::{Duration, Instant};
+use tokio::time::{Duration, Instant};
+use std::time::{Instant as StdInstant};
 
 use thincollections::thin_set::ThinSet;
-use nohash_hasher::IntSet;
+use nohash_hasher::{BuildNoHashHasher, IntSet};
 use rayon::prelude::*;
 use anyhow::{anyhow, Context, Result};
 use bloomfilter::Bloom;
@@ -24,6 +25,9 @@ use futures::SinkExt;
 use futures::task::SpawnExt;
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
+use strum::IntoEnumIterator;
+use tinyset::SetU64;
+use tokio::task::JoinHandle;
 // use core_affinity;
 
 use testbench::benchmark::benchmarking;
@@ -36,6 +40,7 @@ use testbench::vm_a::{SerialVM, VMa};
 use testbench::vm_c::{ParallelVM, VMc};
 use testbench::vm_utils::{assign_workers, UNASSIGNED, VmStorage};
 use testbench::wip::{AccessType, assign_workers_new_impl, assign_workers_new_impl_2, AtomicFunction, ConcurrentVM, Contract, ContractTransaction, Data, ExternalRequest, FunctionParameter, Param, SenderAddress, SequentialVM, StaticAddress};
+use testbench::wip::FunctionResult::Another;
 use testbench::worker_implementation::WorkerC;
 
 
@@ -73,7 +78,7 @@ async fn main() -> Result<()>{
     let batch: Vec<T> = batch_with_conflicts_new_impl(
         storage_size,
         batch_size,
-        0.0,    // TODO
+        0.1,    // TODO
         &mut rng
     ).par_iter().map(|tx| T { from: tx.from, to: tx.to}).collect();
     println!("Took {:?}", a.elapsed());
@@ -94,8 +99,8 @@ async fn main() -> Result<()>{
     println!();
 
     // =================================================
-    // let (test_batch, test_storage) = (small_batch, small_storage_size);
-    let (test_batch, test_storage) = (batch, storage_size);
+    // let (test_batch, test_storage) = (small_batch.clone(), small_storage_size);
+    let (test_batch, test_storage) = (batch.clone(), storage_size);
     let iter = 1;
 
     let new_batch: Vec<_> = test_batch.par_iter()
@@ -107,9 +112,10 @@ async fn main() -> Result<()>{
             params: [2, tx_index as FunctionParameter]
         }).collect();
 
+    // ???
     let mut concurrent = ConcurrentVM::new(
         test_storage,
-        1,
+        8,
         1)?;
     // TODO have execute return the latency to check best config
     // TODO Try sequential scheduling here
@@ -122,26 +128,32 @@ async fn main() -> Result<()>{
         // let _ = concurrent.execute(b);
         // duration = duration.add(s.elapsed());
 
+        println!("Variant 1 ---------------------------------");
         let b = new_batch.clone();
         let _ = concurrent.execute_variant_1(b);
         println!();
 
+        println!("Variant 2 ---------------------------------");
         let b = new_batch.clone();
         let _ = concurrent.execute_variant_2(b);
         println!();
 
+        println!("Variant 3 ---------------------------------");
         let b = new_batch.clone();
         let _ = concurrent.execute_variant_3(b);
         println!();
 
+        println!("Variant 4 ---------------------------------");
         let b = new_batch.clone();
         let _ = concurrent.execute_variant_4(b);
         println!();
 
+        println!("Variant 5 ---------------------------------");
         let b = new_batch.clone();
         let _ = concurrent.execute_variant_5(b);
         println!();
 
+        // println!();
     }
     // println!();
     // println!("Concurrent:");
@@ -149,22 +161,226 @@ async fn main() -> Result<()>{
     // println!("\tAverage latency = {:?}", duration.div(iter as u32));
     // println!();
 
-    let mut sequential = SequentialVM::new(test_storage)?;
-    let mut duration = Duration::from_nanos(0);
-    sequential.storage.fill(20 * iter);
-
-    for _ in 0..iter {
-        let b = new_batch.clone();
-        let s = Instant::now();
-        let _ = sequential.execute(b);
-        duration = duration.add(s.elapsed());
-    }
+    // let mut sequential = SequentialVM::new(test_storage)?;
+    // let mut duration = Duration::from_nanos(0);
+    // sequential.storage.fill(20 * iter);
+    //
+    // for _ in 0..iter {
+    //     let b = new_batch.clone();
+    //     let s = Instant::now();
+    //     let _ = sequential.execute(b);
+    //     duration = duration.add(s.elapsed());
+    // }
     // println!("Sequential:");
     // println!("\t{} iterations took {:?}", iter, duration);
     // println!("\tAverage latency = {:?}", duration.div(iter as u32));
     // println!();
-
+    // profile_schedule_chunk(new_batch.clone(), 1);
+    // profile_schedule_backlog_single_pass(new_batch.clone(), 1).await;
+    try_other_method(new_batch.clone(), 1).await;
+    // test_profile_schedule_backlog_single_pass(new_batch.clone(), 1).await;
     return Ok(());
+    // profile_rayon_latency();
+
+    let mut b = new_batch.clone();
+    let a = Instant::now();
+    let nb_tasks = 3;
+    // let tmp: Vec<_> = (0..nb_tasks).map(|_| {
+    //      tokio::spawn(async move {
+    //          // let v: Vec<usize> = vec!();
+    //          let mut v: Vec<usize> = Vec::with_capacity(8000);
+    //          v.push(25);
+    //         sleep(Duration::from_micros(300));
+    //     })
+    // }).collect();
+    // for h in tmp {
+    //     let _ = h.await;
+    // }
+
+
+    let nb_schedulers = 8;
+    let chunk_size = b.len()/nb_schedulers + 1;
+    let mut handles: Vec<JoinHandle<Duration>> = Vec::with_capacity(nb_schedulers);
+    // for scheduler in 0..nb_schedulers {
+    //     let mut scheduled: Box<Vec<ContractTransaction>> = Box::new(Vec::with_capacity(chunk_size));
+    //     let mut postponed: Box<Vec<ContractTransaction>> = Box::new(Vec::with_capacity(chunk_size));
+    //     let mut working_set = Box::new(SetU64::with_capacity_and_max(
+    //         2 * 65536,
+    //         100 * 65536 as u64
+    //     ));
+    //
+    //     handles.push(tokio::spawn(async move {
+    //         sleep(Duration::from_micros(300));
+    //         scheduled.len();
+    //         postponed.len();
+    //         working_set.len();
+    //     }));
+    // }
+
+    let mut data = Vec::with_capacity(nb_schedulers);
+    let chunks: Vec<Vec<ContractTransaction>> = b
+        .into_iter()
+        .chunks(chunk_size)
+        .into_iter()
+        .map(|chunk| chunk.collect())
+        .collect();
+    for chunk in chunks {
+        let mut scheduled: Vec<ContractTransaction> = Vec::with_capacity(chunk_size);
+        let mut postponed: Vec<ContractTransaction> = Vec::with_capacity(chunk_size);
+        let mut working_set = SetU64::with_capacity_and_max(
+            2 * 32,
+            100 * 65536 as u64
+        );
+        // let working_set = Vec::with_capacity(2 * 65536);
+        // let working_set = HashSet::new();
+
+        data.push((chunk, scheduled, postponed, working_set));
+    }
+
+    type ClosureInput = (Vec<ContractTransaction>, Vec<ContractTransaction>, Vec<ContractTransaction>, SetU64);
+    // type ClosureInput = (Vec<ContractTransaction>, Vec<ContractTransaction>, Vec<ContractTransaction>, Vec<StaticAddress>);
+    // type ClosureInput = (Vec<ContractTransaction>, Vec<ContractTransaction>, Vec<ContractTransaction>, HashSet<StaticAddress>);
+    let a = Instant::now();
+    let computation_1 = |(chunk, mut scheduled, mut postponed, mut working_set): ClosureInput| {
+        // 56 micro
+    };
+    let computation_2 = |(chunk, mut scheduled, mut postponed, mut working_set): ClosureInput| {
+        // 200 micro
+        chunk.len();
+        scheduled.len();
+        postponed.len();
+        let _ = working_set.len();
+    };
+    let computation_3 = |(chunk, mut scheduled, mut postponed, mut working_set): ClosureInput| {
+        sleep(Duration::from_micros(700));
+    };
+    let computation_4 = |(chunk, mut scheduled, mut postponed, mut working_set): ClosureInput| {
+        // 800 micro
+        chunk.len();
+        scheduled.len();
+        postponed.len();
+        let _ = working_set.len();
+        sleep(Duration::from_micros(700));
+    };
+    let computation_5 = |(chunk, mut scheduled, mut postponed, mut working_set): ClosureInput| {
+        // 2.2 ms
+        let mut multiple = 1;
+        'outer: for tx in chunk {
+            for addr in tx.addresses.iter() {
+                if working_set.contains(*addr as u64) {
+                    // Can't add tx to schedule
+                    postponed.push(tx.clone());
+                    continue 'outer;
+                }
+                // if working_set.contains(addr) {
+                //     // Can't add tx to schedule
+                //     postponed.push(tx.clone());
+                //     continue 'outer;
+                // }
+                // if let Ok(_) = working_set.binary_search(addr) {
+                //     // Can't add tx to schedule
+                //     postponed.push(tx.clone());
+                //     continue 'outer;
+                // }
+                // if working_set.contains(addr) {
+                //     // Can't add tx to schedule
+                //     postponed.push(tx.clone());
+                //     continue 'outer;
+                // }
+            }
+
+            // Can add tx to schedule
+            scheduled.push(tx.clone());
+            for addr in tx.addresses.iter() {
+                working_set.insert(*addr as u64);
+                // working_set.push(*addr);
+                // match working_set.binary_search(addr) {
+                //     Ok(pos) => {} // element already in vector @ `pos`
+                //     Err(pos) => working_set.insert(pos, *addr),
+                // }
+                // working_set.insert(*addr);
+            }
+            // working_set.extend_from_slice(&tx.addresses)
+
+            if scheduled.len() > 32 * multiple {
+                let _ = working_set.drain();
+                // working_set = SetU64::with_capacity_and_max(
+                //     2 * 32,
+                //     100 * 65536 as u64
+                // );
+            }
+        }
+    };
+
+    let computation_test = |(chunk, mut scheduled, mut postponed, mut working_set): ClosureInput| {
+        // 800 micro
+        chunk.len();
+        // scheduled.push(chunk[0]);
+        // scheduled.extend(chunk.iter());
+        scheduled.len();
+        // postponed.push(chunk[1]);
+        // postponed.extend(chunk.iter());
+        postponed.len();
+        // working_set.insert(chunk[2].addresses[0] as u64);
+        for tx in chunk.iter() {
+            for addr in tx.addresses.iter() {
+                working_set.insert(*addr as u64);
+            }
+        }
+        let _ = working_set.len();
+        sleep(Duration::from_micros(700));
+    };
+
+    let mut index = 0;
+    for (chunk, mut scheduled, mut postponed, mut working_set) in data {
+        // let computation = computation_1;    // 70 micro
+        // let computation = computation_2;    // 100 micro
+        // let computation = computation_3;
+        // let computation = computation_4;    // 600 micro
+        let computation = computation_5;    // 2 ms
+        // let computation = computation_test;
+
+        handles.push(tokio::spawn(async move {
+            let parallel_exec_latency = Instant::now();
+            computation((chunk, scheduled, postponed, working_set));
+            parallel_exec_latency.elapsed()
+        }));
+
+        // let sequential_latency = Instant::now();
+        // computation((chunk, scheduled, postponed, working_set));
+        // println!("Scheduler {} took {:?}", index, sequential_latency.elapsed());
+        // index += 1;
+    }
+
+    for (index, scheduler) in handles.into_iter().enumerate() {
+        let latency = scheduler.await;
+        println!("Scheduler {} took {:?}", index, latency.unwrap());
+    }
+
+    // let _ = crossbeam::scope(|s| {
+    //     let tmp: Vec<_> = (0..nb_tasks).map(|_| {
+    //         s.spawn(|s| {
+    //             sleep(Duration::from_micros(300));
+    //         })
+    //     }).collect();
+    //     for h in tmp {
+    //         let _ = h.join();
+    //     }
+    // });
+
+    // let x = tokio::spawn(async move {
+    //     sleep(Duration::from_micros(300));
+    // });
+    // let y = tokio::spawn(async move {
+    //     sleep(Duration::from_micros(300));
+    // });
+    // let z = tokio::spawn(async move {
+    //     sleep(Duration::from_micros(300));
+    // });
+    // let _ = x.await;
+    // let _ = y.await;
+    // let _ = z.await;
+    println!("Spawn + join took {:?}", a.elapsed());
 
 
     // println!("=====================================================");
@@ -234,6 +450,32 @@ async fn main() -> Result<()>{
 
 
     // profile_parallel_contract()?;
+    println!("=====================================================");
+
+    println!("Total took {:?}", total.elapsed());
+
+
+    // test_new_transactions()?;
+    // test_new_contracts()?;
+
+    // let _ = crossbeam::scope(|s| {
+    //     let start = Instant::now();
+    //     let mut handles = vec!();
+    //     for i in 0..7 {
+    //         handles.push(s.spawn(move |_| {
+    //             println!("Spawn worker {}", i);
+    //             while start.elapsed().as_secs() < 10 {
+    //
+    //             }
+    //             println!("Worker {} done after {:?}", i, start.elapsed());
+    //         }));
+    //     }
+    // }).or(Err(anyhow::anyhow!("Unable to join crossbeam scope")))?;
+
+    return Ok(());
+}
+
+fn mock() {
 
     // Estimated from original assign_worker implementation
     let schedule_latency = Duration::from_nanos(2);
@@ -413,30 +655,985 @@ async fn main() -> Result<()>{
     println!("Mock execution of {} transactions:", nb_tasks);
     println!("\tPipeline takes {:?}", pipeline_latency);
     println!("\tSequential takes {:?}", sequential_latency);
+}
 
-    println!("=====================================================");
+fn profile_rayon_latency() {
+    let iter = 500;
+    let computation_latency = Duration::from_micros(300);
+    let mut duration = Duration::from_nanos(0);
 
-    println!("Total took {:?}", total.elapsed());
+    let n = 65536;
+    let batch: Vec<_> = (0..n).collect();
+
+    let nb_schedulers = 8;
+    let chunk_size = (batch.len()/nb_schedulers) + 1;
+
+    for _ in 0..iter {
+        let mut b = batch.clone();
+        let start = Instant::now();
+
+        // b.par_drain(..b.len())
+        //     .chunks(chunk_size)
+        //     .enumerate()
+        //     .for_each(|(scheduler_index, chunk)| {
+        //         sleep(computation_latency);
+        //     });
+        let res: Vec<_> =
+            b
+                .par_drain(..b.len())//.chunks(65536)
+                .chunks(chunk_size)
+                .enumerate()
+                .map(|(scheduler_index, chunk)| {
+                    let mut scheduled: Vec<i32> = Vec::with_capacity(chunk.len());
+                    let mut postponed: Vec<i32> = Vec::with_capacity(chunk.len());
+                    let mut working_set = tinyset::SetU64::with_capacity_and_max(
+                        2 * 65536,
+                        100 * 65536 as u64
+                    );
+
+                    // sleep(computation_latency);
+
+                    'outer: for (index, tx) in chunk.into_iter().enumerate() {
+                        for addr in [0, 1] {
+                            if working_set.contains(addr as u64) {
+                                // Can't add tx to schedule
+                                postponed.push(tx);
+                                continue 'outer;
+                            }
+                        }
+
+                        // Can add tx to schedule
+                        for addr in [0, 1] {
+                            working_set.insert((2 + 2 * index + addr) as u64);
+                        }
+                        scheduled.push(tx);
+                    }
+
+                    (scheduler_index, (scheduled, postponed))
+                })
+                // .flat_map(|(scheduler_index, chunk)| {
+                //     let mut scheduled: Vec<i32> = Vec::with_capacity(chunk.len());
+                //     let mut postponed: Vec<i32> = Vec::with_capacity(chunk.len());
+                //     let mut working_set = tinyset::SetU64::with_capacity_and_max(
+                //         2 * 65536,
+                //         100 * 65536 as u64
+                //     );
+                //     sleep(computation_latency);
+                //
+                //     scheduled
+                // })
+                .collect();
+        duration = duration.add(start.elapsed())
+    }
+
+    let total_latency = duration.div(iter as u32);
+    println!("rayon latency = {:?}", total_latency.clone());
+    println!("rayon overhead = {:?}", total_latency.sub(computation_latency));
+}
+
+fn profile_template() {
+    let iter = 500;
+    let mut duration = Duration::from_nanos(0);
+
+    for _ in 0..iter {
+        let start = Instant::now();
+
+        duration = duration.add(start.elapsed())
+    }
+
+    let total_latency = duration.div(iter as u32);
+    println!("--- latency = {:?}", total_latency.clone());
+}
+
+fn profile_schedule_chunk(mut batch: Vec<ContractTransaction>, iter: usize) {
+    batch.truncate(65536/8);
+    let mut duration = Duration::from_nanos(0);
+
+    let computation = |(scheduler_index, b): (usize, Vec<ContractTransaction>)| {
+        let mut scheduled = Vec::with_capacity(b.len());
+        let mut postponed = Vec::with_capacity(b.len());
+        let mut working_set = tinyset::SetU64::with_capacity_and_max(
+            // 2 * b.len(),
+            2 * 65536,
+            // 65536,
+            100 * 65536 as u64
+        );
+
+        'outer: for tx in b {
+            for addr in tx.addresses.iter() {
+                if working_set.contains(*addr as u64) {
+                    // Can't add tx to schedule
+                    postponed.push(tx);
+                    continue 'outer;
+                }
+            }
+
+            // Can add tx to schedule
+            for addr in tx.addresses.iter() {
+                working_set.insert(*addr as u64);
+            }
+            scheduled.push(tx);
+        }
+
+        (scheduled, postponed)
+    };
+    for _ in 0..iter {
+        let b = batch.clone();
+        let a = Instant::now();
+        computation((0, b));
+        // let mut scheduled = Vec::with_capacity(b.len());
+        // let mut postponed = Vec::with_capacity(b.len());
+        // let mut working_set = tinyset::SetU64::with_capacity_and_max(
+        //     // 2 * b.len(),
+        //     2 * 65536,
+        //     // 65536,
+        //     100 * 65536 as u64
+        // );
+        //
+        // 'outer: for tx in b {
+        //     for addr in tx.addresses.iter() {
+        //         if working_set.contains(*addr as u64) {
+        //             // Can't add tx to schedule
+        //             postponed.push(tx);
+        //             continue 'outer;
+        //         }
+        //     }
+        //
+        //     // Can add tx to schedule
+        //     for addr in tx.addresses.iter() {
+        //         working_set.insert(*addr as u64);
+        //     }
+        //     scheduled.push(tx);
+        // }
+        let latency = a.elapsed();
+        // println!("** one chunk of length {} took {:?}", batch.len(), latency);
+        duration = duration.add(latency);
+    }
+
+    println!("schedule_chunk latency = {:?}", duration.div(iter as u32));
+}
+
+async fn profile_schedule_backlog_single_pass(mut batch: Vec<ContractTransaction>, iter: usize) {
+    batch.truncate(65536);
+    let nb_schedulers = 8;
+    let mut duration = Duration::from_nanos(0);
+    let computation_latency = Duration::from_micros(250);
+
+    for _ in 0..iter {
+        let mut b = batch.clone();
+        let a = Instant::now();
+        // let res: Vec<_> = b.clone()
+        //     // .chunks(b.len()/nb_schedulers + 1)
+        //
+        //     // .into_par_iter()
+        //     // .chunks(b.len()/nb_schedulers + 1)
+        //
+        //     // .par_drain(..b.len())//.chunks(65536)
+        //     // .chunks(b.len()/nb_schedulers + 1)
+        //
+        //     .par_chunks(b.len()/nb_schedulers + 1)
+        //
+        //     .enumerate()
+        //     .map(|(scheduler_index, chunk)| {
+        //         let a = Instant::now();
+        //         let mut scheduled: Vec<ContractTransaction> = Vec::with_capacity(chunk.len());
+        //         let mut postponed: Vec<ContractTransaction> = Vec::with_capacity(chunk.len());
+        //         // let mut working_set = tinyset::SetU64::with_capacity_and_max(
+        //         //     2 * 65536,
+        //         //     100 * 65536 as u64
+        //         // );
+        //         // let mut working_set: ThinSet<StaticAddress, BuildNoHashHasher<StaticAddress>> = ThinSet::with_capacity_and_hasher(2 * 65536, BuildNoHashHasher::default());
+        //         // let mut working_set: Box<ThinSet<StaticAddress, BuildNoHashHasher<StaticAddress>>> = Box::new(ThinSet::with_capacity_and_hasher(2 * 65536, BuildNoHashHasher::default()));
+        //         let chunk_size = chunk.len();
+        //         // 'outer: for tx in chunk {
+        //         //     for addr in tx.addresses.iter() {
+        //         //         if working_set.contains(addr) {
+        //         //             // Can't add tx to schedule
+        //         //             postponed.push(tx.clone());
+        //         //             continue 'outer;
+        //         //         }
+        //         //     }
+        //         //
+        //         //     // Can add tx to schedule
+        //         //     scheduled.push(tx.clone());
+        //         //     for addr in tx.addresses {
+        //         //         working_set.insert(addr);
+        //         //     }
+        //         // }
+        //         sleep(computation_latency);
+        //         let latency = a.elapsed();
+        //         println!("Scheduler {}: one chunk of length {} took {:?}", scheduler_index, chunk_size, latency);
+        //
+        //         (scheduler_index, (scheduled, postponed))
+        //     }
+        //     ).collect();
+
+        // TODO
+        // let computation = |chunk| {
+        //     let mut scheduled: Vec<ContractTransaction> = Vec::with_capacity(chunk.len());
+        //     let mut postponed: Vec<ContractTransaction> = Vec::with_capacity(chunk.len());
+        //     let mut working_set = tinyset::SetU64::with_capacity_and_max(
+        //         2 * 65536,
+        //         100 * 65536 as u64
+        //     );
+        //
+        //     'outer: for tx in chunk {
+        //         for addr in tx.addresses.iter() {
+        //             if working_set.contains(addr) {
+        //                 // Can't add tx to schedule
+        //                 postponed.push(tx.clone());
+        //                 continue 'outer;
+        //             }
+        //         }
+        //
+        //         // Can add tx to schedule
+        //         scheduled.push(tx.clone());
+        //         for addr in tx.addresses {
+        //             working_set.insert(addr);
+        //         }
+        //     }
+        //
+        //     (scheduled, postponed)
+        // };
+        // let inputs: Vec<_> = b.chunks(b.len()/nb_schedulers + 1).collect();
+        // let one = tokio::spawn(async move {
+        //     sleep(Duration::from_micros(300));
+        // });
 
 
-    // test_new_transactions()?;
-    // test_new_contracts()?;
+        // // ???
+        // // Good indicator that rayon has some overhead that I don't understand
+        // // There must be some false sharing but I don't know where...
+        // let res: Vec<_> = b
+        //     .chunks(65536/nb_schedulers + 1)
+        //     .map(|chunk| {
+        //         let mut scheduled: Vec<ContractTransaction> = Vec::with_capacity(chunk.len());
+        //         let mut postponed: Vec<ContractTransaction> = Vec::with_capacity(chunk.len());
+        //         let mut working_set = tinyset::SetU64::with_capacity_and_max(
+        //             2 * 65536,
+        //             100 * 65536 as u64
+        //         );
+        //         (chunk, scheduled, postponed, working_set)
+        //     })
+        //     .enumerate()
+        //     // .par_bridge()   // TODO what is happening?!?!
+        //     .map(|(
+        //               scheduler_index,
+        //               (chunk, mut scheduled, mut postponed, mut working_set)): (usize, (&[ContractTransaction], Vec<ContractTransaction>, Vec<ContractTransaction>, SetU64))| {
+        //         let a = Instant::now();
+        //
+        //         let chunk_size = chunk.len();
+        //         'outer: for tx in chunk {
+        //             for addr in tx.addresses.iter() {
+        //                 if working_set.contains(*addr as u64) {
+        //                     // Can't add tx to schedule
+        //                     postponed.push(tx.clone());
+        //                     continue 'outer;
+        //                 }
+        //             }
+        //
+        //             // Can add tx to schedule
+        //             for addr in tx.addresses.iter() {
+        //                 working_set.insert(*addr as u64);
+        //             }
+        //             scheduled.push(tx.clone());
+        //         }
+        //         // sleep(computation_latency);
+        //         let latency = a.elapsed();
+        //         println!("Scheduler {}: one chunk of length {} took {:?}", scheduler_index, chunk_size, latency);
+        //
+        //         (scheduler_index, (scheduled, postponed))
+        //     }).collect();
+        type Set = ThinSetWrapper;      // 390 micro, 650 micro <-- need unsafe impl Send...
 
-    // let _ = crossbeam::scope(|s| {
-    //     let start = Instant::now();
-    //     let mut handles = vec!();
-    //     for i in 0..7 {
-    //         handles.push(s.spawn(move |_| {
-    //             println!("Spawn worker {}", i);
-    //             while start.elapsed().as_secs() < 10 {
-    //
-    //             }
-    //             println!("Worker {} done after {:?}", i, start.elapsed());
-    //         }));
-    //     }
-    // }).or(Err(anyhow::anyhow!("Unable to join crossbeam scope")))?;
+        let tmp: Vec<_> = b
+            .chunks(65536/nb_schedulers + 1)
+            .enumerate()
+            .map(|(index, chunk)| {
 
-    return Ok(());
+                let mut scheduled: Box<Vec<ContractTransaction>> = Box::new(Vec::with_capacity(chunk.len()));
+                let mut postponed: Box<Vec<ContractTransaction>> = Box::new(Vec::with_capacity(chunk.len()));
+                // let mut working_set = Box::new(ThinSet::with_capacity_and_hasher(2 * 65536, BuildNoHashHasher::default()));
+                let mut working_set = Box::new(SetU64::with_capacity_and_max( // TODO Is faster with ThinSetWrapper
+                      2 * 65536,
+                      100 * 65536 as u64
+                ));
+                let mut set = IntSet::with_capacity_and_hasher(2 * 65536, BuildNoHashHasher::default());
+
+                // if index == 0 {
+                //     println!("scheduled capacity before: {}", scheduled.capacity());
+                //     println!("postponed capacity before: {}", postponed.capacity());
+                //     println!("working_set capacity before: {}", working_set.capacity());
+                // }
+                // (index, chunk, scheduled, postponed, working_set, set)
+
+                let mut chunk_copy = Vec::with_capacity(chunk.len());
+                chunk.clone_into(&mut chunk_copy);
+                (index, chunk_copy, scheduled, postponed, working_set, set)
+            })
+            .collect();
+        println!("Allocating took {:?}", a.elapsed());
+
+        let res: Vec<(usize, Box<Vec<ContractTransaction>>, Box<Vec<ContractTransaction>>)> = tmp
+            .into_par_iter()
+            // .into_iter()
+            .map(|(scheduler_index, chunk, mut scheduled, mut postponed, mut working_set, mut set):
+                    // (usize, &[ContractTransaction], Box<Vec<ContractTransaction>>, Box<Vec<ContractTransaction>>, Box<SetU64>, HashSet<u64, BuildNoHashHasher<u64>>)| {
+                  (usize, Vec<ContractTransaction>, Box<Vec<ContractTransaction>>, Box<Vec<ContractTransaction>>, Box<SetU64>, HashSet<u64, BuildNoHashHasher<u64>>)| {
+                let a = Instant::now();
+
+                // let mut fast_path = working_set.clone();
+
+                let chunk_size = chunk.len();
+                let mut insertion_latency = Duration::from_micros(0);
+                'outer: for tx in chunk {
+                    for addr in tx.addresses.iter() {
+                        // if set.contains(&(*addr as u64)) {
+                        //     // Can't add tx to schedule
+                        //     postponed.push(tx.clone());
+                        //     continue 'outer;
+                        // }
+                        if working_set.contains(*addr as u64) {
+                            // Can't add tx to schedule
+                            postponed.push(tx.clone());
+                            // fast_path = working_set.clone();
+                            // for rm_addr in tx.addresses.iter() {
+                            //     working_set.remove(*rm_addr as u64);
+                            // }
+                            continue 'outer;
+                        }
+
+                        // fast_path.insert(*addr as u64);
+                        // working_set.insert(*addr as u64);
+                    }
+
+                    // Can add tx to schedule
+                    scheduled.push(tx.clone());
+                    // for addr in tx.addresses {
+                    //     set.insert(addr as u64);
+                    // }
+                    for addr in tx.addresses.iter() {
+                        working_set.insert(*addr as u64);
+                    }
+                    // let insertion_start = Instant::now();
+                    // // for addr in tx.addresses {
+                    // //     working_set.insert(addr as u64);
+                    // // }
+                    // working_set = fast_path;
+                    // fast_path = tinyset::SetU64::with_capacity_and_max(
+                    //     2 * 65536,
+                    //     100 * 65536 as u64
+                    // );
+                    // insertion_latency = insertion_latency.add(insertion_start.elapsed());
+                    // println!("Inserting took {:?}", insertion_start.elapsed());
+                    // println!();
+                }
+
+                // sleep(computation_latency);
+
+                // while a.elapsed() < computation_latency {
+                //
+                // }
+                // if scheduler_index == 0 {
+                //     println!("scheduled capacity after: {}", scheduled.capacity());
+                //     println!("postponed capacity after: {}", postponed.capacity());
+                //     println!("working_set capacity after: {}", working_set.capacity());
+                //     // println!("Inserting took {:?} overall", insertion_latency);
+                // }
+                let latency = a.elapsed();
+                println!("Scheduler {}: one chunk of length {} took {:?}", scheduler_index, chunk_size, latency);
+
+                (scheduler_index, scheduled, postponed)
+            }).collect();
+
+        // let res: Vec<_> = b
+        //     .par_drain(..b.len())//.chunks(65536)
+        //     .chunks(65536/4)
+        //     .enumerate()
+        //     .map(|(scheduler_index, chunk)| {
+        //         let mut scheduled = [None; 65538/8];
+        //         let mut postponed = [None; 65538/8];
+        //         let mut scheduled_len = 0;
+        //         let mut postponed_len = 0;
+        //         let mut working_set = tinyset::SetU64::with_capacity_and_max(
+        //             2 * 65536,
+        //             100 * 65536 as u64
+        //         );
+        //
+        //         'outer: for tx in chunk {
+        //             for addr in tx.addresses.iter() {
+        //                 if working_set.contains(*addr as u64) {
+        //                     // Can't add tx to schedule
+        //                     postponed[postponed_len] = Some(tx);
+        //                     postponed_len += 1;
+        //                     continue 'outer;
+        //                 }
+        //             }
+        //
+        //             // Can add tx to schedule
+        //             for addr in tx.addresses.iter() {
+        //                 working_set.insert(*addr as u64);
+        //             }
+        //             scheduled[postponed_len] = Some(tx);
+        //             scheduled_len += 1;
+        //         }
+        //
+        //         (scheduler_index, (scheduled, postponed))
+        //     }
+        //     ).collect();
+
+        // let res: Vec<_> = b
+        //     .chunks(65536/8)
+        //     .map(|chunk|
+        //         (
+        //             chunk,
+        //             Vec::with_capacity(chunk.len()),
+        //             Vec::with_capacity(chunk.len())
+        //         )
+        //     )
+        //     .enumerate()
+        //     .map(|(scheduler_index, (
+        //         chunk,
+        //         mut scheduled,
+        //         mut postponed)
+        //           )| {
+        //         // let mut scheduled = Vec::with_capacity(chunk.len());
+        //         // let mut postponed = Vec::with_capacity(chunk.len());
+        //         let mut working_set = tinyset::SetU64::with_capacity_and_max(
+        //             2 * 65536,
+        //             100 * 65536 as u64
+        //         );
+        //
+        //         'outer: for tx in chunk {
+        //             for addr in tx.addresses.iter() {
+        //                 if working_set.contains(*addr as u64) {
+        //                     // Can't add tx to schedule
+        //                     postponed.push(tx);
+        //                     continue 'outer;
+        //                 }
+        //             }
+        //
+        //             // Can add tx to schedule
+        //             for addr in tx.addresses.iter() {
+        //                 working_set.insert(*addr as u64);
+        //             }
+        //             scheduled.push(tx);
+        //         }
+        //
+        //         (scheduler_index, (scheduled, postponed))
+        //     }
+        //     ).collect();
+        duration = duration.add(a.elapsed());
+    }
+
+    println!("schedule_backlog_single_pass latency = {:?}", duration.div(iter as u32));
+}
+
+async fn test_profile_schedule_backlog_single_pass(mut batch: Vec<ContractTransaction>, iter: usize) {
+    batch.truncate(65536);
+    let mut duration = Duration::from_nanos(0);
+    for _ in 0..iter {
+        let mut b = batch.clone();
+        let a = Instant::now();
+
+        let nb_schedulers = 8;
+        let mut handles: Vec<_> = b.drain(..b.len())
+            // .into_iter()
+            .chunks(65536/nb_schedulers)
+            .into_iter()
+            .enumerate()
+            .map(|(index, chunk)|{
+                let chunk: Vec<_> = chunk.collect();
+            tokio::task::spawn(async move {
+                let mut scheduled = Vec::with_capacity(65536/nb_schedulers);
+                let mut postponed = Vec::with_capacity(65536/nb_schedulers);
+                let mut working_set = tinyset::SetU64::with_capacity_and_max(
+                    2 * 65536,
+                    100 * 65536 as u64
+                );
+
+                'outer: for tx in chunk {
+                    for addr in tx.addresses.iter() {
+                        if working_set.contains(*addr as u64) {
+                            // Can't add tx to schedule
+                            postponed.push(tx);
+                            continue 'outer;
+                        }
+                    }
+
+                    // Can add tx to schedule
+                    for addr in tx.addresses.iter() {
+                        working_set.insert(*addr as u64);
+                    }
+                    scheduled.push(tx);
+                }
+
+                (0, (scheduled, postponed))
+            })
+        }).collect();
+
+        let mut res = Vec::with_capacity(nb_schedulers);
+        for handle in handles {
+           res.push(handle.await);
+        }
+        duration = duration.add(a.elapsed());
+    }
+
+    println!("schedule_backlog_single_pass latency = {:?}", duration.div(iter as u32));
+}
+
+//region set alternatives
+#[derive(Copy, Clone, Debug)]
+struct MockSet {
+
+}
+impl MockSet {
+    pub fn with_capacity_and_max(cap: usize, max: u64) -> Self {
+        return Self { };
+    }
+    pub fn contains(&self, el: u64) -> bool {
+        false
+    }
+    pub fn insert(&mut self, el: u64) -> bool {
+        false
+    }
+    #[inline]
+    pub fn sort(&mut self) {
+
+    }
+}
+
+
+#[derive(Clone, Debug)]
+struct BloomFilterWrapper {
+    inner: Bloom<u64>
+}
+impl BloomFilterWrapper {
+    pub fn with_capacity_and_max(cap: usize, max: u64) -> Self {
+        let inner = Bloom::new_for_fp_rate(cap, 0.3);
+        return Self { inner };
+    }
+    #[inline]
+    pub fn contains(&self, el: u64) -> bool {
+        self.inner.check(&el)
+    }
+    #[inline]
+    pub fn insert(&mut self, el: u64) -> bool {
+        let prev = self.inner.check(&el);
+        self.inner.set(&el);
+        prev
+    }
+    #[inline]
+    pub fn sort(&mut self) {
+
+    }
+}
+
+#[derive(Clone, Debug)]
+struct BTreeSetWrapper {
+    inner: BTreeSet<u64>
+}
+impl BTreeSetWrapper {
+    pub fn with_capacity_and_max(cap: usize, max: u64) -> Self {
+        let inner = BTreeSet::new();
+        return Self { inner };
+    }
+    #[inline]
+    pub fn contains(&self, el: u64) -> bool {
+        self.inner.contains(&el)
+    }
+    #[inline]
+    pub fn insert(&mut self, el: u64) -> bool {
+        self.inner.insert(el)
+    }
+    #[inline]
+    pub fn sort(&mut self) {
+
+    }
+}
+
+#[derive(Clone, Debug)]
+struct BTreeMapWrapper {
+    pub inner: BTreeMap<u64, bool>
+}
+impl BTreeMapWrapper {
+    pub fn with_capacity_and_max(cap: usize, max: u64) -> Self {
+        let inner = BTreeMap::new();
+        return Self { inner };
+    }
+    #[inline]
+    pub fn contains(&self, el: u64) -> bool {
+        *self.inner.get(&el).unwrap()
+    }
+    #[inline]
+    pub fn insert(&mut self, el: u64) -> bool {
+        match self.inner.insert(el, true) {
+            None => panic!(),
+            Some(status) => status
+        }
+    }
+    #[inline]
+    pub fn sort(&mut self) {
+
+    }
+}
+
+#[derive(Copy, Clone, Debug)]
+struct SingletonSet {
+    el: u64
+}
+impl SingletonSet {
+    pub fn with_capacity_and_max(cap: usize, max: u64) -> Self {
+        return Self { el: 0 };
+    }
+    pub fn contains(&self, el: u64) -> bool {
+        el == self.el
+    }
+    pub fn insert(&mut self, el: u64) -> bool {
+        let prev = self.el;
+        self.el = el;
+        el == prev
+    }
+    #[inline]
+    pub fn sort(&mut self) {
+
+    }
+}
+
+#[derive(Clone, Debug)]
+struct ThinSetWrapper {
+    inner: ThinSet<u64>
+}
+impl ThinSetWrapper {
+    pub fn with_capacity_and_max(cap: usize, max: u64) -> Self {
+        let inner = ThinSet::with_capacity(2 * 65536 / 8);
+        return Self { inner };
+    }
+    #[inline]
+    pub fn contains(&self, el: u64) -> bool {
+        self.inner.contains(&el)
+    }
+    #[inline]
+    pub fn insert(&mut self, el: u64) -> bool {
+        self.inner.insert(el)
+    }
+    #[inline]
+    pub fn sort(&mut self) {
+
+    }
+}
+unsafe impl Send for ThinSetWrapper {}
+
+#[derive(Clone, Debug)]
+struct SortedVecWrapper {
+    inner: Vec<u64>
+}
+impl SortedVecWrapper {
+    pub fn with_capacity_and_max(cap: usize, max: u64) -> Self {
+        let inner = Vec::with_capacity(cap);
+        return Self { inner };
+    }
+    pub fn contains(&self, el: u64) -> bool {
+        self.inner.binary_search(&el).is_ok()
+    }
+    pub fn insert(&mut self, el: u64) -> bool {
+        match self.inner.binary_search(&el) {
+            Ok(pos) => true, // element already in vector @ `pos`
+            Err(pos) => {
+                self.inner.insert(pos, el);
+                false
+            },
+        }
+    }
+    #[inline]
+    pub fn sort(&mut self) {
+        self.inner.voracious_sort();
+    }
+}
+
+#[derive(Clone, Debug)]
+struct SparseSet {
+    inner: Vec<SetU64>,
+    remainder: BTreeSet<u64>
+}
+impl SparseSet {
+    pub fn with_capacity_and_max(cap: usize, max: u64) -> Self {
+        let nb_subset = max as usize /65536;
+        let mut inner = Vec::with_capacity(nb_subset);
+        for i in 0..nb_subset {
+            inner.push(SetU64::with_capacity_and_max(cap/nb_subset, (max/nb_subset as u64)));
+        }
+        let remainder = BTreeSet::new();
+        return Self { inner , remainder };
+    }
+    pub fn contains(&self, el: u64) -> bool {
+        for (index, v) in self.inner.iter().enumerate() {
+            if (el as usize) < 65536 * (index + 1) {
+                let delta = 65536 * index as u64;
+                let value = el - delta;
+                return v.contains(value);
+            }
+        }
+        return self.remainder.contains(&el);
+    }
+    pub fn insert(&mut self, el: u64) -> bool {
+        for (index, v) in self.inner.iter_mut().enumerate() {
+            if (el as usize) < 65536 * (index + 1) {
+                let delta = 65536 * index as u64;
+                return v.insert(el - delta);
+            }
+        }
+        return self.remainder.insert(el);
+    }
+    #[inline]
+    pub fn sort(&mut self) {
+
+    }
+}
+
+// #[derive(Copy, Clone, Debug)]
+// struct ExpensiveSet {
+//     inner: Vec<bool>
+// }
+// impl ExpensiveSet {
+//     pub fn with_capacity_and_max(cap: usize, max: u64) -> Self {
+//         let inner = Vec::with_capacity(max as usize);
+//         return Self { inner };
+//     }
+//     pub fn contains(&self, el: u64) -> bool {
+//         self.inner[el as usize]
+//     }
+//     pub fn insert(&mut self, el: u64) -> bool {
+//         let prev = self.inner[el as usize];
+//         self.inner[el as usize] = true;
+//         prev
+//     }
+// }
+//endregion
+
+// ???
+async fn try_other_method(mut batch: Vec<ContractTransaction>, iter: usize) {
+
+    let mut duration = Duration::from_nanos(0);
+    let nb_schedulers = 8;
+    let nb_workers = 1;
+    let chunk_size = batch.len()/nb_schedulers + 1;
+
+    let parallel_init = true;
+    let parallel = true;
+
+    // // type Set = <ALTERNATIVE>;  // <SEQUENTIAL TIME>, <PARALLEL TIME>
+    // type Set = MockSet;             // 60 micro, 90 micro
+    // type Set = SingletonSet;        // 70 micro, 120 micro
+    // type Set = SetU64;              // 550 micro, 1.9-2.7 ms
+    // type Set = BTreeSetWrapper;     // 2.4 ms, 3.5-4.7 ms
+    type Set = ThinSetWrapper;      // 390 micro, 650 micro <-- need unsafe impl Send...
+    // type Set = SparseSet;           // 1.5 ms, 2.5 ms
+    // type Set = SortedVecWrapper;    // 35 ms, 70 ms
+    // type Set = BTreeMapWrapper;     // 2.25 ms, 2.7-3.5 ms
+    // type Set = BloomFilterWrapper;  // 1.4 ms, 2.4 ms
+
+    for _ in 0..iter {
+        let mut b = batch.clone();
+        let init_start = Instant::now();
+
+        let mut output = Arc::new(Mutex::new(Vec::with_capacity(b.len())));
+
+        // let mut intermediate: Vec<Box<(Vec<ContractTransaction>, Vec<ContractTransaction>, Vec<ContractTransaction>, SetU64)>> =
+        let mut intermediate: Vec<_> =
+            if parallel_init {
+                b
+                    .into_par_iter()
+                    .chunks(chunk_size)
+                    .map(|chunk| {
+                        let scheduled = Vec::with_capacity(chunk.len());
+                        let postponed = Vec::with_capacity(chunk.len());
+                        let mut addresses = Set::with_capacity_and_max(
+                            2 * 65536,
+                            100 * 65536 as u64
+                        );
+
+                        // for tx in chunk.iter() {
+                        //     for addr in tx.addresses.iter() {
+                        //         addresses.inner.insert(*addr as u64, false);
+                        //     }
+                        // }
+                        Box::new((chunk, scheduled, postponed, addresses))
+                    })
+                    .collect()
+            } else
+            {
+                b
+                    .into_iter()
+                    .chunks(chunk_size)
+                    .into_iter()
+                    .map(|chunk| {
+                        let chunk: Vec<_> = chunk.collect();
+                        let scheduled = Vec::with_capacity(chunk.len());
+                        let postponed = Vec::with_capacity(chunk.len());
+                        let addresses = Set::with_capacity_and_max(
+                            2 * 65536,
+                            100 * 65536 as u64
+                        );
+                        Box::new((chunk, scheduled, postponed, addresses))
+                    })
+                    .collect()
+            };
+
+        let mut storage = VmStorage::new(100 * 65536);
+        storage.content.fill(200);
+        println!("Preparing intermediate data took {:?}\n", init_start.elapsed());
+
+        let schedule_exec_start = Instant::now();
+        let mut synchro: Option<JoinHandle<()>> = None;
+        for (index, mut boxed) in intermediate.into_iter().enumerate() {
+
+            let previous = synchro;
+            let acc = output.clone();
+            let mut shared_storage = storage.get_shared();
+            let functions: Vec<_> = AtomicFunction::iter().collect();
+
+            let handle = tokio::spawn(async move {
+                let (chunk, ref mut scheduled, ref mut postponed, ref mut addresses) = boxed.as_mut();
+                let schedule_start = Instant::now();
+
+                // Schedule transactions
+                'outer: for tx in chunk.iter() {
+                    for addr in tx.addresses.iter() {
+                        if addresses.contains(*addr as u64) {
+                            // Can't add tx to schedule
+                            postponed.push(tx.clone());
+                            continue 'outer;
+                        }
+                    }
+
+                    // Can add tx to schedule
+                    for addr in tx.addresses.iter() {
+                        addresses.insert(*addr as u64);
+                    }
+                    // addresses.sort();
+                    scheduled.push(tx.clone());
+                }
+                let scheduling_latency = schedule_start.elapsed();
+                println!("Task {} took {:?} to schedule", index, scheduling_latency);
+
+                match previous {
+                    None => {
+                        // can start execution immediately
+                    },
+                    Some(handle) => {
+                        // can start execution once the previous scheduler is done
+                        let _ = handle.await;
+                    }
+                }
+
+                // println!("Task {} took {:?} to schedule", index, scheduling_latency);
+                // Execute transactions
+                let exec_start = Instant::now();
+                let mut generated: Vec<_> = scheduled
+                    // .into_par_iter()
+                    // .par_drain(..round.len())
+                    // .chunks(chunk_size)
+                    .par_chunks(scheduled.len()/nb_workers)
+                    .enumerate()
+                    .flat_map(
+                        |(worker_index, worker_backlog)|
+                            worker_backlog
+                                // .drain(..worker_backlog.len())
+                                .into_iter()
+                                .flat_map(|tx| {
+                                    let function = functions.get(tx.function as usize).unwrap();
+                                    match unsafe { function.execute(tx.clone(), shared_storage) } {
+                                        Another(generated_tx) => Some(generated_tx),
+                                        _ => None,
+                                    }
+                                })
+                                .collect::<Vec<ContractTransaction>>()
+                    ).collect();
+                let mut generated_tx = acc.lock().unwrap();
+                generated_tx.append(postponed);
+                generated_tx.append(&mut generated);
+                println!("Task {} took {:?} to execute ---------------", index, exec_start.elapsed());
+            });
+
+            if parallel {
+                synchro = Some(handle);
+            } else {
+                let _ = handle.await;
+                synchro = None;
+            }
+        }
+
+        match synchro {
+            Some(handle) => {
+                // Wait last scheduler to finish executing
+                let _ = handle.await;
+                // execution is complete
+
+            },
+            None if parallel => {
+                panic!("Last handle is missing");
+            },
+            _ => {
+
+            }
+        }
+
+        let elapsed = schedule_exec_start.elapsed();
+        // println!("Scheduling-execution loop done in {:?}", schedule_exec_start.elapsed());
+        // let mut generated_tx = output.lock().unwrap();
+        // println!("{} txs have been generated or postponed", generated_tx.len());
+        duration = duration.add(elapsed);
+
+        // let a = Instant::now();
+        // let mut handles: Vec<_> = b
+        //     // .drain(..b.len())
+        //     // // .into_iter()
+        //     // .chunks(65536/nb_schedulers)
+        //     // .into_iter()
+        //     .par_drain(..b.len())
+        //     .chunks(65536/nb_schedulers + 1)
+        //     .enumerate()
+        //     .map(|(index, chunk)|{
+        //         // let chunk: Vec<_> = chunk.collect();
+        //         tokio::spawn(async move {
+        //             let mut scheduled = Vec::with_capacity(65536/nb_schedulers);
+        //             let mut postponed = Vec::with_capacity(65536/nb_schedulers);
+        //             let mut working_set = Set::with_capacity_and_max(
+        //                 2 * 65536,
+        //                 100 * 65536 as u64
+        //             );
+        //
+        //             let schedule_start = Instant::now();
+        //             'outer: for tx in chunk {
+        //                 for addr in tx.addresses.iter() {
+        //                     if working_set.contains(*addr as u64) {
+        //                         // Can't add tx to schedule
+        //                         postponed.push(tx);
+        //                         continue 'outer;
+        //                     }
+        //                 }
+        //
+        //                 // Can add tx to schedule
+        //                 for addr in tx.addresses.iter() {
+        //                     working_set.insert(*addr as u64);
+        //                 }
+        //                 scheduled.push(tx);
+        //             }
+        //             println!("Scheduler {} took {:?}", index, schedule_start.elapsed());
+        //
+        //             (0, (scheduled, postponed))
+        //         })
+        //     }).collect();
+        //
+        // let mut res = Vec::with_capacity(nb_schedulers);
+        // for handle in handles {
+        //     res.push(handle.await);
+        // }
+        // duration = duration.add(a.elapsed());
+    }
+
+    println!("other method latency = {:?}", duration.div(iter as u32));
 }
 
 fn try_scheduling_sequential(batch: &Vec<T>, storage_size: usize) {
@@ -704,6 +1901,37 @@ fn try_scheduling_parallel(batch: &Vec<T>, storage_size: usize) {
 
     // println!("Parallel schedule (merge sort)...");
     {
+        // let nb_workers = 4;
+        // let start = Instant::now();
+        // let rounds = merge_sort(batch.as_slice(), storage_size, 0, 0);
+        // let merge_sort_latency = start.elapsed();
+        // println!("There are {} rounds:", rounds.len());
+        // let mut execution_latency = Duration::from_secs(0);
+        // let mut generated_tx = vec!();
+        // for (round_index, (addr, round)) in rounds.iter().enumerate() {
+        //     println!("Executing round {} ({} tx)", round_index, round.len());
+        //     let start = Instant::now();
+        //     let mut tmp: Vec<_> = round
+        //         .par_chunks(round.len()/4 + 1)
+        //         .enumerate()
+        //         .flat_map(|(worker_index, worker_backlog)| {
+        //             let worker_output: Vec<_> = worker_backlog
+        //                 // .drain(..worker_backlog.len())
+        //                 .into_iter()
+        //                 .flat_map(|tx| {
+        //                     // execute the transaction and optionally generate a new tx
+        //                     let function = self.functions.get(tx.function as usize).unwrap();
+        //                     match unsafe { function.execute(tx.clone(), self.storage.get_shared()) } {
+        //                         Another(generated_tx) => Some(generated_tx),
+        //                         _ => None,
+        //                     }
+        //                 })
+        //                 .collect();
+        //             worker_output
+        //         }).collect();
+        //     generated_tx.append(&mut tmp);
+        //     execution_latency = execution_latency.add(start.elapsed());
+        // }
     //     let set_capacity = 2 * batch.len();
     //
     //     let a = Instant::now();

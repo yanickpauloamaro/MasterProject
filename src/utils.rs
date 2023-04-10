@@ -3,7 +3,7 @@ use std::ops::{Div, Mul};
 use std::time::Duration;
 
 use anyhow::Result;
-use hwloc::{ObjectType, Topology};
+// use hwloc::{ObjectType, Topology};
 use rand::rngs::StdRng;
 use rand::seq::{IteratorRandom, SliceRandom};
 
@@ -33,46 +33,46 @@ macro_rules! debug {
     }};
 }
 
-pub fn check(condition: bool, ctx: &str) -> Result<()> {
-
-    if condition {
-        Ok(())
-    } else {
-        let error_msg = anyhow::anyhow!("Host not compatible. {} not supported", ctx);
-        Err(error_msg)
-    }
-}
-
-pub fn compatible(topo: &Topology) -> Result<()> {
-
-    check(topo.support().cpu().set_current_process(), "CPU Binding (current process)")?;
-    check(topo.support().cpu().set_process(), "CPU Binding (any process)")?;
-    check(topo.support().cpu().set_current_thread(), "CPU Binding (current thread)")?;
-    check(topo.support().cpu().set_thread(), "CPU Binding (any thread)")?;
-
-    Ok(())
-}
-
-pub fn get_nb_cores(topo: &Topology) -> usize {
-    // TODO use num_cpus crate
-    let core_depth = topo.depth_or_below_for_type(&ObjectType::Core).unwrap();
-    let all_cores = topo.objects_at_depth(core_depth);
-    return all_cores.len();
-}
-
-pub fn get_nb_nodes(topo: &Topology, requested_nb_nodes: Option<usize>) -> Result<usize> {
-    let nb_cores = get_nb_cores(&topo);
-    match requested_nb_nodes {
-        Some(nb_nodes) if nb_nodes > nb_cores => {
-            let error_msg = anyhow::anyhow!(
-                "Not enough cores. {} requested but only {} available",
-                nb_nodes, nb_cores);
-            return Err(error_msg);
-        },
-        Some(nb_nodes) => Ok(nb_nodes),
-        None => Ok(nb_cores)
-    }
-}
+// pub fn check(condition: bool, ctx: &str) -> Result<()> {
+//
+//     if condition {
+//         Ok(())
+//     } else {
+//         let error_msg = anyhow::anyhow!("Host not compatible. {} not supported", ctx);
+//         Err(error_msg)
+//     }
+// }
+//
+// pub fn compatible(topo: &Topology) -> Result<()> {
+//
+//     check(topo.support().cpu().set_current_process(), "CPU Binding (current process)")?;
+//     check(topo.support().cpu().set_process(), "CPU Binding (any process)")?;
+//     check(topo.support().cpu().set_current_thread(), "CPU Binding (current thread)")?;
+//     check(topo.support().cpu().set_thread(), "CPU Binding (any thread)")?;
+//
+//     Ok(())
+// }
+//
+// pub fn get_nb_cores(topo: &Topology) -> usize {
+//     // TODO use num_cpus crate
+//     let core_depth = topo.depth_or_below_for_type(&ObjectType::Core).unwrap();
+//     let all_cores = topo.objects_at_depth(core_depth);
+//     return all_cores.len();
+// }
+//
+// pub fn get_nb_nodes(topo: &Topology, requested_nb_nodes: Option<usize>) -> Result<usize> {
+//     let nb_cores = get_nb_cores(&topo);
+//     match requested_nb_nodes {
+//         Some(nb_nodes) if nb_nodes > nb_cores => {
+//             let error_msg = anyhow::anyhow!(
+//                 "Not enough cores. {} requested but only {} available",
+//                 nb_nodes, nb_cores);
+//             return Err(error_msg);
+//         },
+//         Some(nb_nodes) => Ok(nb_nodes),
+//         None => Ok(nb_cores)
+//     }
+// }
 
 pub fn batch_account_creation(batch_size: usize, nb_accounts: usize, amount: u64) -> Vec<Transaction> {
     let mut batch = Vec::with_capacity(batch_size);
