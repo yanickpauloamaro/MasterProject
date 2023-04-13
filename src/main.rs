@@ -36,10 +36,10 @@ use testbench::{debug, debugging};
 use testbench::transaction::{Transaction, TransactionAddress};
 use testbench::utils::{batch_with_conflicts, batch_with_conflicts_new_impl};
 use testbench::vm::{ExecutionResult, Executor};
-use testbench::vm_a::{SerialVM, VMa};
-use testbench::vm_c::{ParallelVM, VMc};
+use testbench::vm_a::{VMa};
+use testbench::vm_c::{VMc};
 use testbench::vm_utils::{assign_workers, UNASSIGNED, VmStorage};
-use testbench::wip::{AccessType, assign_workers_new_impl, assign_workers_new_impl_2, AtomicFunction, ConcurrentVM, Contract, ContractTransaction, Data, ExternalRequest, FunctionParameter, Param, SenderAddress, SequentialVM, StaticAddress};
+use testbench::wip::{assign_workers_new_impl, assign_workers_new_impl_2, AtomicFunction, ConcurrentVM, ContractTransaction, FunctionParameter, Param, SenderAddress, SequentialVM, StaticAddress, Word};
 use testbench::wip::FunctionResult::Another;
 use testbench::worker_implementation::WorkerC;
 
@@ -73,30 +73,30 @@ async fn main() -> Result<()>{
     let batch_size = 65536;
     let storage_size = 100 * batch_size;
 
-    print!("Creating batch of size {}... ", batch_size);
+    // print!("Creating batch of size {}... ", batch_size);
     let a = Instant::now();
     let batch: Vec<T> = batch_with_conflicts_new_impl(
         storage_size,
         batch_size,
-        0.1,    // TODO
+        0.0,    // TODO
         &mut rng
     ).par_iter().map(|tx| T { from: tx.from, to: tx.to}).collect();
     println!("Took {:?}", a.elapsed());
-    println!();
+    // println!();
     //
-    let small_batch_size = 2048;
-    let small_storage_size = 100 * batch_size;
-    print!("Creating batch of size {}... ", small_batch_size);
-    let a = Instant::now();
-    let small_batch: Vec<T> = batch_with_conflicts_new_impl(
-        small_storage_size,
-        small_batch_size,
-        0.0,
-        &mut rng
-    ).par_iter().map(|tx| T { from: tx.from, to: tx.to }).collect();
-
-    println!("Took {:?}", a.elapsed());
-    println!();
+    // let small_batch_size = 2048;
+    // let small_storage_size = 100 * batch_size;
+    // print!("Creating batch of size {}... ", small_batch_size);
+    // let a = Instant::now();
+    // let small_batch: Vec<T> = batch_with_conflicts_new_impl(
+    //     small_storage_size,
+    //     small_batch_size,
+    //     0.0,
+    //     &mut rng
+    // ).par_iter().map(|tx| T { from: tx.from, to: tx.to }).collect();
+    //
+    // println!("Took {:?}", a.elapsed());
+    // println!();
 
     // =================================================
     // let (test_batch, test_storage) = (small_batch.clone(), small_storage_size);
@@ -122,36 +122,38 @@ async fn main() -> Result<()>{
     let mut duration = Duration::from_nanos(0);
     concurrent.storage.set_storage(20 * iter);
 
+    // ???
+    // Multiple variants that are promising (need to test on AWS)
     for _ in 0..iter {
-        // let b = new_batch.clone();
+        let b = new_batch.clone();
         // let s = Instant::now();
         // let _ = concurrent.execute(b);
         // duration = duration.add(s.elapsed());
-
-        println!("Variant 1 ---------------------------------");
-        let b = new_batch.clone();
-        let _ = concurrent.execute_variant_1(b);
-        println!();
-
-        println!("Variant 2 ---------------------------------");
-        let b = new_batch.clone();
-        let _ = concurrent.execute_variant_2(b);
-        println!();
-
-        println!("Variant 3 ---------------------------------");
-        let b = new_batch.clone();
-        let _ = concurrent.execute_variant_3(b);
-        println!();
-
-        println!("Variant 4 ---------------------------------");
-        let b = new_batch.clone();
-        let _ = concurrent.execute_variant_4(b);
-        println!();
-
-        println!("Variant 5 ---------------------------------");
-        let b = new_batch.clone();
-        let _ = concurrent.execute_variant_5(b);
-        println!();
+        //
+        // println!("Variant 1 ---------------------------------");
+        // let b = new_batch.clone();
+        // let _ = concurrent.execute_variant_1(b);
+        // println!();
+        //
+        // println!("Variant 2 ---------------------------------");
+        // let b = new_batch.clone();
+        // let _ = concurrent.execute_variant_2(b);
+        // println!();
+        //
+        // println!("Variant 3 ---------------------------------");
+        // let b = new_batch.clone();
+        // let _ = concurrent.execute_variant_3(b);
+        // println!();
+        //
+        // println!("Variant 4 ---------------------------------");
+        // let b = new_batch.clone();
+        // let _ = concurrent.execute_variant_4(b);
+        // println!();
+        //
+        // println!("Variant 5 ---------------------------------");
+        // let b = new_batch.clone();
+        // let _ = concurrent.execute_variant_5(b);
+        // println!();
 
         // println!();
     }
@@ -175,10 +177,22 @@ async fn main() -> Result<()>{
     // println!("\t{} iterations took {:?}", iter, duration);
     // println!("\tAverage latency = {:?}", duration.div(iter as u32));
     // println!();
-    // profile_schedule_chunk(new_batch.clone(), 1);
-    // profile_schedule_backlog_single_pass(new_batch.clone(), 1).await;
-    try_other_method(new_batch.clone(), 1).await;
+    // profile_schedule_chunk(new_batch.clone(), 100, 4, 8);  // ???
+    // => need to split batch in 8 for the scheduling to be fast enough
+    // => executing one 8th takes the same time in parallel and sequentially?!
+
+    // profile_schedule_backlog_single_pass(new_batch.clone(), 1).await;    // ???
+    // => scheduling a chunk is slower in parallel?!
+
+    // try_other_method(new_batch.clone(), 1, 8, true, 1).await;    // ???
+
     // test_profile_schedule_backlog_single_pass(new_batch.clone(), 1).await;
+    // check_reallocation_overhead(); // ???
+
+    // println!("=====================================================");
+    // println!();
+    // try_merge_sort(&batch, storage_size).await;
+
     return Ok(());
     // profile_rayon_latency();
 
@@ -415,10 +429,6 @@ async fn main() -> Result<()>{
 
     // println!("=====================================================");
     // println!();
-    // try_merge_sort(&batch, storage_size).await;
-
-    // println!("=====================================================");
-    // println!();
     // let start = Instant::now();
     // let set_capacity = batch.len() * 2;
     // // let set_capacity = 65536 * 2;
@@ -473,6 +483,79 @@ async fn main() -> Result<()>{
     // }).or(Err(anyhow::anyhow!("Unable to join crossbeam scope")))?;
 
     return Ok(());
+}
+
+fn check_reallocation_overhead() {
+
+    let timer = std::time::Instant::now();
+    let mut v1 = Vec::<(usize, usize, usize, usize)>::with_capacity(4);
+    let mut v2 = Vec::<(usize, usize, usize, usize)>::with_capacity(4);
+    for _ in 0..100000000 {
+        let random_val1 = rand::random::<usize>();
+        let random_val2 = rand::random::<usize>();
+        v1.truncate(0);
+        v1.push((random_val1, random_val2, random_val1, random_val2));
+        v1.push((random_val2, random_val1, random_val2, random_val1));
+
+        v2.truncate(0);
+        v2.push((random_val2, random_val1, random_val2, random_val1));
+        v2.push((random_val1, random_val2, random_val1, random_val2));
+
+        if v1.len() != 2 && v1[0].0 != random_val1 {
+            println!("v1 is empty");
+        }
+        if v2.len() != 2 && v2[0].0 != random_val2 {
+            println!("v2 is empty");
+        }
+    }
+    println!("Mut Vec: Completed in {:?}", timer.elapsed());
+
+    let timer = std::time::Instant::now();
+    for _ in 0..100000000 {
+        let random_val1 = rand::random::<usize>();
+        let random_val2 = rand::random::<usize>();
+        let v1 = vec![
+            (random_val1, random_val2, random_val1, random_val2),
+            (random_val2, random_val1, random_val2, random_val1),
+        ];
+        let v2 = vec![
+            (random_val2, random_val1, random_val2, random_val1),
+            (random_val1, random_val2, random_val1, random_val2),
+        ];
+
+        if v1.len() != 2 && v1[0].0 != random_val1 {
+            println!("v1 is empty");
+        }
+        if v2.len() != 2 && v2[0].0 != random_val2 {
+            println!("v2 is empty");
+        }
+    }
+    println!("New Vec: Completed in {:?}", timer.elapsed());
+
+    let timer = std::time::Instant::now();
+    for _ in 0..100000000 {
+        let mut v1 = Vec::<(usize, usize, usize, usize)>::with_capacity(2);
+        let mut v2 = Vec::<(usize, usize, usize, usize)>::with_capacity(2);
+
+        let random_val1 = rand::random::<usize>();
+        let random_val2 = rand::random::<usize>();
+        v1.truncate(0);
+        v1.push((random_val1, random_val2, random_val1, random_val2));
+        v1.push((random_val2, random_val1, random_val2, random_val1));
+
+        v2.truncate(0);
+        v2.push((random_val2, random_val1, random_val2, random_val1));
+        v2.push((random_val1, random_val2, random_val1, random_val2));
+
+        if v1.len() != 2 && v1[0].0 != random_val1 {
+            println!("v1 is empty");
+        }
+        if v2.len() != 2 && v2[0].0 != random_val2 {
+            println!("v2 is empty");
+        }
+    }
+    println!("Mut Vec (no macro): Completed in {:?}", timer.elapsed());
+
 }
 
 fn mock() {
@@ -745,14 +828,21 @@ fn profile_template() {
     println!("--- latency = {:?}", total_latency.clone());
 }
 
-fn profile_schedule_chunk(mut batch: Vec<ContractTransaction>, iter: usize) {
-    batch.truncate(65536/8);
-    let mut duration = Duration::from_nanos(0);
+fn profile_schedule_chunk(mut batch: Vec<ContractTransaction>, iter: usize, chunk_fraction: usize, nb_executors: usize) {
+    let mut sequential = SequentialVM::new(100 * batch.len()).unwrap();
+    sequential.storage.fill(20 * iter as Word);
+
+    let mut parallel = ConcurrentVM::new(100 * batch.len(), 1, nb_executors).unwrap();
+    parallel.storage.content.fill(20 * iter as Word);
+
+    let mut schedule_duration = Duration::from_nanos(0);
+    let mut sequential_duration = Duration::from_nanos(0);
+    let mut parallel_duration = Duration::from_nanos(0);
 
     let computation = |(scheduler_index, b): (usize, Vec<ContractTransaction>)| {
         let mut scheduled = Vec::with_capacity(b.len());
         let mut postponed = Vec::with_capacity(b.len());
-        let mut working_set = tinyset::SetU64::with_capacity_and_max(
+        let mut working_set = ThinSetWrapper::with_capacity_and_max(
             // 2 * b.len(),
             2 * 65536,
             // 65536,
@@ -761,7 +851,7 @@ fn profile_schedule_chunk(mut batch: Vec<ContractTransaction>, iter: usize) {
 
         'outer: for tx in b {
             for addr in tx.addresses.iter() {
-                if working_set.contains(*addr as u64) {
+                if !working_set.insert(*addr as u64) {
                     // Can't add tx to schedule
                     postponed.push(tx);
                     continue 'outer;
@@ -769,48 +859,43 @@ fn profile_schedule_chunk(mut batch: Vec<ContractTransaction>, iter: usize) {
             }
 
             // Can add tx to schedule
-            for addr in tx.addresses.iter() {
-                working_set.insert(*addr as u64);
-            }
+            // for addr in tx.addresses.iter() {
+            //     working_set.insert(*addr as u64);
+            // }
             scheduled.push(tx);
         }
 
         (scheduled, postponed)
     };
+
+    batch.truncate(65536/chunk_fraction);
+
     for _ in 0..iter {
-        let b = batch.clone();
+        let mut b = batch.clone();
+        // b.truncate(b.len()/8);
         let a = Instant::now();
         computation((0, b));
-        // let mut scheduled = Vec::with_capacity(b.len());
-        // let mut postponed = Vec::with_capacity(b.len());
-        // let mut working_set = tinyset::SetU64::with_capacity_and_max(
-        //     // 2 * b.len(),
-        //     2 * 65536,
-        //     // 65536,
-        //     100 * 65536 as u64
-        // );
-        //
-        // 'outer: for tx in b {
-        //     for addr in tx.addresses.iter() {
-        //         if working_set.contains(*addr as u64) {
-        //             // Can't add tx to schedule
-        //             postponed.push(tx);
-        //             continue 'outer;
-        //         }
-        //     }
-        //
-        //     // Can add tx to schedule
-        //     for addr in tx.addresses.iter() {
-        //         working_set.insert(*addr as u64);
-        //     }
-        //     scheduled.push(tx);
-        // }
         let latency = a.elapsed();
         // println!("** one chunk of length {} took {:?}", batch.len(), latency);
-        duration = duration.add(latency);
+        schedule_duration = schedule_duration.add(latency);
+
+        let mut b = batch.clone();
+        // b.truncate(b.len()/8);
+        let a = Instant::now();
+        let _ = sequential.execute(b);
+        sequential_duration = sequential_duration.add(a.elapsed());
+
+        let mut b = batch.clone();
+        // b.truncate(b.len()/8);
+        let a = Instant::now();
+        let _ = parallel.execute_round(0, b);
+        parallel_duration = parallel_duration.add(a.elapsed());
     }
 
-    println!("schedule_chunk latency = {:?}", duration.div(iter as u32));
+    println!("For a chunk of {} tx", batch.len());
+    println!("schedule_chunk latency = {:?}", schedule_duration.div(iter as u32));
+    println!("sequential latency = {:?}", sequential_duration.div(iter as u32));
+    println!("parallel latency = {:?}", parallel_duration.div(iter as u32));
 }
 
 async fn profile_schedule_backlog_single_pass(mut batch: Vec<ContractTransaction>, iter: usize) {
@@ -954,7 +1039,7 @@ async fn profile_schedule_backlog_single_pass(mut batch: Vec<ContractTransaction
                 let mut scheduled: Box<Vec<ContractTransaction>> = Box::new(Vec::with_capacity(chunk.len()));
                 let mut postponed: Box<Vec<ContractTransaction>> = Box::new(Vec::with_capacity(chunk.len()));
                 // let mut working_set = Box::new(ThinSet::with_capacity_and_hasher(2 * 65536, BuildNoHashHasher::default()));
-                let mut working_set = Box::new(SetU64::with_capacity_and_max( // TODO Is faster with ThinSetWrapper
+                let mut working_set = Box::new(ThinSetWrapper::with_capacity_and_max( // TODO Is faster with ThinSetWrapper
                       2 * 65536,
                       100 * 65536 as u64
                 ));
@@ -973,13 +1058,15 @@ async fn profile_schedule_backlog_single_pass(mut batch: Vec<ContractTransaction
             })
             .collect();
         println!("Allocating took {:?}", a.elapsed());
+        println!();
 
-        let res: Vec<(usize, Box<Vec<ContractTransaction>>, Box<Vec<ContractTransaction>>)> = tmp
-            .into_par_iter()
-            // .into_iter()
+        println!("Sequentially:");
+        let sequential = Instant::now();
+        let res: Vec<(usize, Box<Vec<ContractTransaction>>, Box<Vec<ContractTransaction>>)> = tmp.clone()
+            .into_iter()
             .map(|(scheduler_index, chunk, mut scheduled, mut postponed, mut working_set, mut set):
                     // (usize, &[ContractTransaction], Box<Vec<ContractTransaction>>, Box<Vec<ContractTransaction>>, Box<SetU64>, HashSet<u64, BuildNoHashHasher<u64>>)| {
-                  (usize, Vec<ContractTransaction>, Box<Vec<ContractTransaction>>, Box<Vec<ContractTransaction>>, Box<SetU64>, HashSet<u64, BuildNoHashHasher<u64>>)| {
+                  (usize, Vec<ContractTransaction>, Box<Vec<ContractTransaction>>, Box<Vec<ContractTransaction>>, Box<ThinSetWrapper>, HashSet<u64, BuildNoHashHasher<u64>>)| {
                 let a = Instant::now();
 
                 // let mut fast_path = working_set.clone();
@@ -993,7 +1080,7 @@ async fn profile_schedule_backlog_single_pass(mut batch: Vec<ContractTransaction
                         //     postponed.push(tx.clone());
                         //     continue 'outer;
                         // }
-                        if working_set.contains(*addr as u64) {
+                        if !working_set.insert(*addr as u64) {
                             // Can't add tx to schedule
                             postponed.push(tx.clone());
                             // fast_path = working_set.clone();
@@ -1012,9 +1099,9 @@ async fn profile_schedule_backlog_single_pass(mut batch: Vec<ContractTransaction
                     // for addr in tx.addresses {
                     //     set.insert(addr as u64);
                     // }
-                    for addr in tx.addresses.iter() {
-                        working_set.insert(*addr as u64);
-                    }
+                    // for addr in tx.addresses.iter() {
+                    //     working_set.insert(*addr as u64);
+                    // }
                     // let insertion_start = Instant::now();
                     // // for addr in tx.addresses {
                     // //     working_set.insert(addr as u64);
@@ -1045,6 +1132,38 @@ async fn profile_schedule_backlog_single_pass(mut batch: Vec<ContractTransaction
 
                 (scheduler_index, scheduled, postponed)
             }).collect();
+        println!("overall latency = {:?}", sequential.elapsed());
+
+        println!();
+        println!("Parallel:");
+        let parallel = Instant::now();
+        let res: Vec<(usize, Box<Vec<ContractTransaction>>, Box<Vec<ContractTransaction>>)> = tmp
+            .into_par_iter()
+            .map(|(scheduler_index, chunk, mut scheduled, mut postponed, mut working_set, mut set):
+                  (usize, Vec<ContractTransaction>, Box<Vec<ContractTransaction>>, Box<Vec<ContractTransaction>>, Box<ThinSetWrapper>, HashSet<u64, BuildNoHashHasher<u64>>)| {
+                let a = Instant::now();
+
+                let chunk_size = chunk.len();
+                'outer: for tx in chunk {
+                    for addr in tx.addresses.iter() {
+
+                        if !working_set.insert(*addr as u64) {
+                            // Can't add tx to schedule
+                            postponed.push(tx.clone());
+                            continue 'outer;
+                        }
+                    }
+
+                    // Can add tx to schedule
+                    scheduled.push(tx.clone());
+                }
+
+                let latency = a.elapsed();
+                println!("Scheduler {}: one chunk of length {} took {:?}", scheduler_index, chunk_size, latency);
+
+                (scheduler_index, scheduled, postponed)
+            }).collect();
+        println!("overall latency = {:?}", parallel.elapsed());
 
         // let res: Vec<_> = b
         //     .par_drain(..b.len())//.chunks(65536)
@@ -1126,7 +1245,7 @@ async fn profile_schedule_backlog_single_pass(mut batch: Vec<ContractTransaction
         duration = duration.add(a.elapsed());
     }
 
-    println!("schedule_backlog_single_pass latency = {:?}", duration.div(iter as u32));
+    // println!("schedule_backlog_single_pass latency = {:?}", duration.div(iter as u32));
 }
 
 async fn test_profile_schedule_backlog_single_pass(mut batch: Vec<ContractTransaction>, iter: usize) {
@@ -1195,7 +1314,7 @@ impl MockSet {
         false
     }
     pub fn insert(&mut self, el: u64) -> bool {
-        false
+        true
     }
     #[inline]
     pub fn sort(&mut self) {
@@ -1268,8 +1387,8 @@ impl BTreeMapWrapper {
     #[inline]
     pub fn insert(&mut self, el: u64) -> bool {
         match self.inner.insert(el, true) {
-            None => panic!(),
-            Some(status) => status
+            None => true,
+            Some(status) => !status
         }
     }
     #[inline]
@@ -1292,7 +1411,7 @@ impl SingletonSet {
     pub fn insert(&mut self, el: u64) -> bool {
         let prev = self.el;
         self.el = el;
-        el == prev
+        el != prev
     }
     #[inline]
     pub fn sort(&mut self) {
@@ -1338,10 +1457,10 @@ impl SortedVecWrapper {
     }
     pub fn insert(&mut self, el: u64) -> bool {
         match self.inner.binary_search(&el) {
-            Ok(pos) => true, // element already in vector @ `pos`
+            Ok(pos) => false, // element already in vector @ `pos`
             Err(pos) => {
                 self.inner.insert(pos, el);
-                false
+                true
             },
         }
     }
@@ -1411,16 +1530,15 @@ impl SparseSet {
 // }
 //endregion
 
-// ???
-async fn try_other_method(mut batch: Vec<ContractTransaction>, iter: usize) {
+async fn try_other_method(mut batch: Vec<ContractTransaction>, iter: usize, nb_schedulers: usize, parallel_schedule: bool, nb_executors: usize,) {
 
     let mut duration = Duration::from_nanos(0);
     let nb_schedulers = 8;
-    let nb_workers = 1;
+    // let nb_executors = 8;
     let chunk_size = batch.len()/nb_schedulers + 1;
 
     let parallel_init = true;
-    let parallel = true;
+    // let parallel_schedule = false;
 
     // // type Set = <ALTERNATIVE>;  // <SEQUENTIAL TIME>, <PARALLEL TIME>
     // type Set = MockSet;             // 60 micro, 90 micro
@@ -1475,6 +1593,7 @@ async fn try_other_method(mut batch: Vec<ContractTransaction>, iter: usize) {
                             2 * 65536,
                             100 * 65536 as u64
                         );
+
                         Box::new((chunk, scheduled, postponed, addresses))
                     })
                     .collect()
@@ -1494,23 +1613,29 @@ async fn try_other_method(mut batch: Vec<ContractTransaction>, iter: usize) {
             let functions: Vec<_> = AtomicFunction::iter().collect();
 
             let handle = tokio::spawn(async move {
-                let (chunk, ref mut scheduled, ref mut postponed, ref mut addresses) = boxed.as_mut();
+                let (
+                    chunk,
+                    ref mut scheduled,
+                    ref mut postponed,
+                    ref mut addresses) = boxed.as_mut();
                 let schedule_start = Instant::now();
 
                 // Schedule transactions
-                'outer: for tx in chunk.iter() {
+                'outer: for (index, tx) in chunk.iter().enumerate() {
                     for addr in tx.addresses.iter() {
-                        if addresses.contains(*addr as u64) {
+                        if !addresses.insert(*addr as u64) {
                             // Can't add tx to schedule
                             postponed.push(tx.clone());
                             continue 'outer;
                         }
+                        // addresses.insert(*addr as u64);
+                        // tmp_addresses.insert(*addr as u64);
                     }
 
                     // Can add tx to schedule
-                    for addr in tx.addresses.iter() {
-                        addresses.insert(*addr as u64);
-                    }
+                    // for addr in tx.addresses.iter() {
+                    //     addresses.insert(*addr as u64);
+                    // }
                     // addresses.sort();
                     scheduled.push(tx.clone());
                 }
@@ -1534,10 +1659,11 @@ async fn try_other_method(mut batch: Vec<ContractTransaction>, iter: usize) {
                     // .into_par_iter()
                     // .par_drain(..round.len())
                     // .chunks(chunk_size)
-                    .par_chunks(scheduled.len()/nb_workers)
+                    .par_chunks(scheduled.len()/ nb_executors + 1)
                     .enumerate()
                     .flat_map(
-                        |(worker_index, worker_backlog)|
+                        |(worker_index, worker_backlog)| {
+                            // println!("Worker {} works on {} tx", worker_index, worker_backlog.len());
                             worker_backlog
                                 // .drain(..worker_backlog.len())
                                 .into_iter()
@@ -1549,6 +1675,7 @@ async fn try_other_method(mut batch: Vec<ContractTransaction>, iter: usize) {
                                     }
                                 })
                                 .collect::<Vec<ContractTransaction>>()
+                        }
                     ).collect();
                 let mut generated_tx = acc.lock().unwrap();
                 generated_tx.append(postponed);
@@ -1556,7 +1683,7 @@ async fn try_other_method(mut batch: Vec<ContractTransaction>, iter: usize) {
                 println!("Task {} took {:?} to execute ---------------", index, exec_start.elapsed());
             });
 
-            if parallel {
+            if parallel_schedule {
                 synchro = Some(handle);
             } else {
                 let _ = handle.await;
@@ -1571,7 +1698,7 @@ async fn try_other_method(mut batch: Vec<ContractTransaction>, iter: usize) {
                 // execution is complete
 
             },
-            None if parallel => {
+            None if parallel_schedule => {
                 panic!("Last handle is missing");
             },
             _ => {
@@ -1584,53 +1711,6 @@ async fn try_other_method(mut batch: Vec<ContractTransaction>, iter: usize) {
         // let mut generated_tx = output.lock().unwrap();
         // println!("{} txs have been generated or postponed", generated_tx.len());
         duration = duration.add(elapsed);
-
-        // let a = Instant::now();
-        // let mut handles: Vec<_> = b
-        //     // .drain(..b.len())
-        //     // // .into_iter()
-        //     // .chunks(65536/nb_schedulers)
-        //     // .into_iter()
-        //     .par_drain(..b.len())
-        //     .chunks(65536/nb_schedulers + 1)
-        //     .enumerate()
-        //     .map(|(index, chunk)|{
-        //         // let chunk: Vec<_> = chunk.collect();
-        //         tokio::spawn(async move {
-        //             let mut scheduled = Vec::with_capacity(65536/nb_schedulers);
-        //             let mut postponed = Vec::with_capacity(65536/nb_schedulers);
-        //             let mut working_set = Set::with_capacity_and_max(
-        //                 2 * 65536,
-        //                 100 * 65536 as u64
-        //             );
-        //
-        //             let schedule_start = Instant::now();
-        //             'outer: for tx in chunk {
-        //                 for addr in tx.addresses.iter() {
-        //                     if working_set.contains(*addr as u64) {
-        //                         // Can't add tx to schedule
-        //                         postponed.push(tx);
-        //                         continue 'outer;
-        //                     }
-        //                 }
-        //
-        //                 // Can add tx to schedule
-        //                 for addr in tx.addresses.iter() {
-        //                     working_set.insert(*addr as u64);
-        //                 }
-        //                 scheduled.push(tx);
-        //             }
-        //             println!("Scheduler {} took {:?}", index, schedule_start.elapsed());
-        //
-        //             (0, (scheduled, postponed))
-        //         })
-        //     }).collect();
-        //
-        // let mut res = Vec::with_capacity(nb_schedulers);
-        // for handle in handles {
-        //     res.push(handle.await);
-        // }
-        // duration = duration.add(a.elapsed());
     }
 
     println!("other method latency = {:?}", duration.div(iter as u32));
@@ -1985,16 +2065,16 @@ fn try_scheduling_parallel(batch: &Vec<T>, storage_size: usize) {
 }
 
 async fn try_merge_sort(batch: &Vec<T>, storage_size: usize) {
-    let depth_limit = 1;
+    let depth_limit = 3;
     println!("Merge with depth {}", depth_limit);
     let start = Instant::now();
     let res = merge_sort(batch.as_slice(), storage_size, 0, depth_limit);
     let duration = start.elapsed();
     println!("Need {} rounds", res.len());
     println!("Took {:?}", duration);
-    for (round, (_, scheduled_tx)) in res.iter().enumerate() {
-        println!("\tRound {} has {} txs", round, scheduled_tx.len());
-    }
+    // for (round, (_, scheduled_tx)) in res.iter().enumerate() {
+    //     println!("\tRound {} has {} txs", round, scheduled_tx.len());
+    // }
 
 //     let _ = tokio::spawn(async move {
 //         let start = Instant::now();
@@ -2006,14 +2086,14 @@ async fn try_merge_sort(batch: &Vec<T>, storage_size: usize) {
 //     }).await;
 }
 
-fn merge_sort(chunk: &[T], storage_size: usize, depth: usize, depth_limit: usize) -> Vec<(tinyset::SetU64, Vec<&T>)> {
+fn merge_sort(chunk: &[T], storage_size: usize, depth: usize, depth_limit: usize) -> Vec<(ThinSetWrapper, Vec<&T>)> {
 
     return if depth >= depth_limit {
         let start = Instant::now();
         let set_capacity = chunk.len() * 2;
         // let set_capacity = 65536 * 2;
         let mut rounds = vec![(
-            tinyset::SetU64::with_capacity_and_max(set_capacity, storage_size as u64),
+            ThinSetWrapper::with_capacity_and_max(set_capacity, storage_size as u64),
             vec!()
         )];
         'outer: for tx in chunk.iter() {
@@ -2027,7 +2107,7 @@ fn merge_sort(chunk: &[T], storage_size: usize, depth: usize, depth_limit: usize
                 }
             }
             // Can't be added to any round
-            let new_round_addr = tinyset::SetU64::with_capacity_and_max(set_capacity, storage_size as u64);
+            let new_round_addr = ThinSetWrapper::with_capacity_and_max(set_capacity, storage_size as u64);
             let new_round_tx = vec!(tx);
             rounds.push((new_round_addr, new_round_tx));
         }
@@ -2047,13 +2127,17 @@ fn merge_sort(chunk: &[T], storage_size: usize, depth: usize, depth_limit: usize
 
         let mut left_round_index = 0;
 
+        left.append(&mut right);
+
+        return left;
+
         let mut additional_rounds = vec!();
         'right: for (mut right_addr, mut right_tx) in right.into_iter() {
             'left: for round in left_round_index..left.len() {
                 let left_addr = &mut left[round].0;
 
-                'addr: for addr in right_addr.iter() {
-                    if left_addr.contains(addr) {
+                'addr: for addr in right_addr.inner.iter() {
+                    if left_addr.contains(*addr) {
                         // An address overlap, can't be added to this round
 
                         // // Try the next rounds
@@ -2524,90 +2608,90 @@ fn try_parallel_without_mutex(batch: &Vec<T>, rng: &mut StdRng, storage_size: us
     //endregion
 }
 
-fn profile_parallel_contract() -> Result<()> {
-    let mut vm = ParallelVM::new(4)?;
-    let batch_size = 65536;
-    let storage_size = 100 * batch_size;
-    let initial_balance = 10;
+// fn profile_parallel_contract() -> Result<()> {
+//     let mut vm = ParallelVM::new(4)?;
+//     let batch_size = 65536;
+//     let storage_size = 100 * batch_size;
+//     let initial_balance = 10;
+//
+//     if let Data::NewContract(functions) = ExternalRequest::new_coin().data {
+//         let mut storage = VmStorage::new(storage_size);
+//         storage.set_storage(initial_balance);
+//         let mut new_contract = Contract{
+//             storage,
+//             functions: functions.clone(),
+//         };
+//         vm.contracts.push(new_contract);
+//
+//         let mut rng = StdRng::seed_from_u64(10);
+//
+//         let batch = ExternalRequest::batch_with_conflicts(
+//             storage_size,
+//             batch_size,
+//             0.0,
+//             &mut rng
+//         );
+//
+//         // let batch = vec!(
+//         //     ExternalRequest::transfer(0, 1, 1),
+//         //     ExternalRequest::transfer(1, 2, 2),
+//         //     ExternalRequest::transfer(2, 3, 3),
+//         //     ExternalRequest::transfer(3, 4, 4),
+//         //     ExternalRequest::transfer(4, 5, 5),
+//         // );
+//
+//         // println!("Accounts balance before execution: {:?}", vm.contracts[0].storage);
+//         let a = Instant::now();
+//         let _result = vm.execute(batch);
+//         let duration = a.elapsed();
+//         // println!("Accounts balance after execution: {:?}", vm.contracts[0].storage);
+//         println!("Took {:?}", duration);
+//     }
+//
+//     Ok(())
+// }
 
-    if let Data::NewContract(functions) = ExternalRequest::new_coin().data {
-        let mut storage = VmStorage::new(storage_size);
-        storage.set_storage(initial_balance);
-        let mut new_contract = Contract{
-            storage,
-            functions: functions.clone(),
-        };
-        vm.contracts.push(new_contract);
+// fn test_new_transactions() -> Result<()> {
+//     let mut serial_vm = SerialVM::new(10)?;
+//     serial_vm.set_account_balance(10);
+//
+//     let batch = vec!(
+//         ExternalRequest::transfer(0, 1, 1),
+//         ExternalRequest::transfer(1, 2, 2),
+//         ExternalRequest::transfer(2, 3, 3),
+//         ExternalRequest::transfer(3, 4, 4),
+//         ExternalRequest::transfer(4, 5, 5),
+//     );
+//
+//     println!("Accounts balance before execution: {:?}", serial_vm.accounts);
+//     let _result = serial_vm.execute(batch);
+//     println!("Accounts balance after execution: {:?}", serial_vm.accounts);
+//
+//     Ok(())
+// }
 
-        let mut rng = StdRng::seed_from_u64(10);
-
-        let batch = ExternalRequest::batch_with_conflicts(
-            storage_size,
-            batch_size,
-            0.0,
-            &mut rng
-        );
-
-        // let batch = vec!(
-        //     ExternalRequest::transfer(0, 1, 1),
-        //     ExternalRequest::transfer(1, 2, 2),
-        //     ExternalRequest::transfer(2, 3, 3),
-        //     ExternalRequest::transfer(3, 4, 4),
-        //     ExternalRequest::transfer(4, 5, 5),
-        // );
-
-        // println!("Accounts balance before execution: {:?}", vm.contracts[0].storage);
-        let a = Instant::now();
-        let _result = vm.execute(batch);
-        let duration = a.elapsed();
-        // println!("Accounts balance after execution: {:?}", vm.contracts[0].storage);
-        println!("Took {:?}", duration);
-    }
-
-    Ok(())
-}
-
-fn test_new_transactions() -> Result<()> {
-    let mut serial_vm = SerialVM::new(10)?;
-    serial_vm.set_account_balance(10);
-
-    let batch = vec!(
-        ExternalRequest::transfer(0, 1, 1),
-        ExternalRequest::transfer(1, 2, 2),
-        ExternalRequest::transfer(2, 3, 3),
-        ExternalRequest::transfer(3, 4, 4),
-        ExternalRequest::transfer(4, 5, 5),
-    );
-
-    println!("Accounts balance before execution: {:?}", serial_vm.accounts);
-    let _result = serial_vm.execute(batch);
-    println!("Accounts balance after execution: {:?}", serial_vm.accounts);
-
-    Ok(())
-}
-
-fn test_new_contracts() -> Result<()> {
-
-    let mut serial_vm = SerialVM::new(0)?;
-
-    let batch = vec!(ExternalRequest::new_coin());
-    let _result = serial_vm.execute(batch);
-    serial_vm.contracts[0].storage.content.resize(10, 10);
-
-    let batch = vec!(
-        ExternalRequest::call_contract(0, 0, 1, 1),
-        ExternalRequest::call_contract(1, 0, 2, 2),
-        ExternalRequest::call_contract(2, 0, 3, 3),
-        ExternalRequest::call_contract(3, 0, 4, 4),
-        ExternalRequest::call_contract(4, 0, 5, 5),
-    );
-
-    println!("Storage before execution: {:?}", serial_vm.contracts[0].storage);
-    let _result = serial_vm.execute(batch);
-    println!("Storage after execution: {:?}", serial_vm.contracts[0].storage);
-
-    Ok(())
-}
+// fn test_new_contracts() -> Result<()> {
+//
+//     let mut serial_vm = SerialVM::new(0)?;
+//
+//     let batch = vec!(ExternalRequest::new_coin());
+//     let _result = serial_vm.execute(batch);
+//     serial_vm.contracts[0].storage.content.resize(10, 10);
+//
+//     let batch = vec!(
+//         ExternalRequest::call_contract(0, 0, 1, 1),
+//         ExternalRequest::call_contract(1, 0, 2, 2),
+//         ExternalRequest::call_contract(2, 0, 3, 3),
+//         ExternalRequest::call_contract(3, 0, 4, 4),
+//         ExternalRequest::call_contract(4, 0, 5, 5),
+//     );
+//
+//     println!("Storage before execution: {:?}", serial_vm.contracts[0].storage);
+//     let _result = serial_vm.execute(batch);
+//     println!("Storage after execution: {:?}", serial_vm.contracts[0].storage);
+//
+//     Ok(())
+// }
 
 fn profile_old_tx(path: &str) -> Result<()> {
     let config = BenchmarkConfig::new(path)
@@ -2654,91 +2738,91 @@ fn profile_old_tx(path: &str) -> Result<()> {
     Ok(())
 }
 
-fn profile_new_tx(path: &str) -> Result<()> {
-    let config = BenchmarkConfig::new(path)
-        .context("Unable to create benchmark config")?;
+// fn profile_new_tx(path: &str) -> Result<()> {
+//     let config = BenchmarkConfig::new(path)
+//         .context("Unable to create benchmark config")?;
+//
+//     let batch_size = config.batch_sizes[0];
+//     let storage_size = batch_size * 100;
+//     // let nb_cores = config.nb_cores[0];
+//     let conflict_rate = config.conflict_rates[0];
+//
+//     let mut rng = match config.seed {
+//         Some(seed) => {
+//             StdRng::seed_from_u64(seed)
+//         },
+//         None => StdRng::seed_from_u64(rand::random())
+//     };
+//
+//     let mut latency_exec = Duration::from_nanos(0);
+//
+//     let mut serial_vm = SerialVM::new(storage_size)?;
+//
+//     for _ in 0..config.repetitions {
+//         serial_vm.set_account_balance(200);
+//         let batch = ExternalRequest::batch_with_conflicts(
+//             storage_size,
+//             batch_size,
+//             conflict_rate,
+//             &mut rng
+//         );
+//         let b =  Instant::now();
+//         serial_vm.execute(batch)?;
+//         latency_exec = latency_exec.add(b.elapsed());
+//     }
+//
+//     println!("new tx: native");
+//     println!("Average latency: {:?}", latency_exec.div(config.repetitions as u32));
+//     let avg = latency_exec.div(config.repetitions as u32);
+//     println!("Throughput = {} tx/µs", batch_size as u128/avg.as_micros());
+//     println!();
+//
+//     Ok(())
+// }
 
-    let batch_size = config.batch_sizes[0];
-    let storage_size = batch_size * 100;
-    // let nb_cores = config.nb_cores[0];
-    let conflict_rate = config.conflict_rates[0];
-
-    let mut rng = match config.seed {
-        Some(seed) => {
-            StdRng::seed_from_u64(seed)
-        },
-        None => StdRng::seed_from_u64(rand::random())
-    };
-
-    let mut latency_exec = Duration::from_nanos(0);
-
-    let mut serial_vm = SerialVM::new(storage_size)?;
-
-    for _ in 0..config.repetitions {
-        serial_vm.set_account_balance(200);
-        let batch = ExternalRequest::batch_with_conflicts(
-            storage_size,
-            batch_size,
-            conflict_rate,
-            &mut rng
-        );
-        let b =  Instant::now();
-        serial_vm.execute(batch)?;
-        latency_exec = latency_exec.add(b.elapsed());
-    }
-
-    println!("new tx: native");
-    println!("Average latency: {:?}", latency_exec.div(config.repetitions as u32));
-    let avg = latency_exec.div(config.repetitions as u32);
-    println!("Throughput = {} tx/µs", batch_size as u128/avg.as_micros());
-    println!();
-
-    Ok(())
-}
-
-fn profile_new_contract(path: &str) -> Result<()> {
-    let config = BenchmarkConfig::new(path)
-        .context("Unable to create benchmark config")?;
-
-    let batch_size = config.batch_sizes[0];
-    let storage_size = batch_size * 100;
-    // let nb_cores = config.nb_cores[0];
-    let conflict_rate = config.conflict_rates[0];
-
-    let mut rng = match config.seed {
-        Some(seed) => {
-            StdRng::seed_from_u64(seed)
-        },
-        None => StdRng::seed_from_u64(rand::random())
-    };
-
-    let mut latency_exec = Duration::from_nanos(0);
-    let mut serial_vm = SerialVM::new(storage_size)?;
-    let batch = vec!(ExternalRequest::new_coin());
-    let _result = serial_vm.execute(batch);
-    serial_vm.contracts[0].storage.content.resize(storage_size, 0);
-
-    for _ in 0..config.repetitions {
-        serial_vm.contracts[0].storage.set_storage(200);
-        let mut batch = ExternalRequest::batch_with_conflicts_contract(
-            storage_size,
-            batch_size,
-            conflict_rate,
-            &mut rng
-        );
-        let b =  Instant::now();
-        serial_vm.execute(batch)?;
-        latency_exec = latency_exec.add(b.elapsed());
-    }
-
-    println!("new tx: contract");
-    println!("Average latency: {:?}", latency_exec.div(config.repetitions as u32));
-    let avg = latency_exec.div(config.repetitions as u32);
-    println!("Throughput = {} tx/µs", batch_size as u128/avg.as_micros());
-    println!();
-
-    Ok(())
-}
+// fn profile_new_contract(path: &str) -> Result<()> {
+//     let config = BenchmarkConfig::new(path)
+//         .context("Unable to create benchmark config")?;
+//
+//     let batch_size = config.batch_sizes[0];
+//     let storage_size = batch_size * 100;
+//     // let nb_cores = config.nb_cores[0];
+//     let conflict_rate = config.conflict_rates[0];
+//
+//     let mut rng = match config.seed {
+//         Some(seed) => {
+//             StdRng::seed_from_u64(seed)
+//         },
+//         None => StdRng::seed_from_u64(rand::random())
+//     };
+//
+//     let mut latency_exec = Duration::from_nanos(0);
+//     let mut serial_vm = SerialVM::new(storage_size)?;
+//     let batch = vec!(ExternalRequest::new_coin());
+//     let _result = serial_vm.execute(batch);
+//     serial_vm.contracts[0].storage.content.resize(storage_size, 0);
+//
+//     for _ in 0..config.repetitions {
+//         serial_vm.contracts[0].storage.set_storage(200);
+//         let mut batch = ExternalRequest::batch_with_conflicts_contract(
+//             storage_size,
+//             batch_size,
+//             conflict_rate,
+//             &mut rng
+//         );
+//         let b =  Instant::now();
+//         serial_vm.execute(batch)?;
+//         latency_exec = latency_exec.add(b.elapsed());
+//     }
+//
+//     println!("new tx: contract");
+//     println!("Average latency: {:?}", latency_exec.div(config.repetitions as u32));
+//     let avg = latency_exec.div(config.repetitions as u32);
+//     println!("Throughput = {} tx/µs", batch_size as u128/avg.as_micros());
+//     println!();
+//
+//     Ok(())
+// }
 
 #[allow(dead_code)]
 fn profiling(path: &str) -> Result<()> {
