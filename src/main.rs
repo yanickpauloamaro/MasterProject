@@ -39,7 +39,7 @@ use testbench::vm::{ExecutionResult, Executor};
 use testbench::vm_a::{VMa};
 use testbench::vm_c::{VMc};
 use testbench::vm_utils::{assign_workers, UNASSIGNED, VmStorage};
-use testbench::wip::{assign_workers_new_impl, assign_workers_new_impl_2, AtomicFunction, ConcurrentVM, ContractTransaction, FunctionParameter, Param, SenderAddress, SequentialVM, StaticAddress, Word};
+use testbench::wip::{assign_workers_new_impl, assign_workers_new_impl_2, AtomicFunction, BackgroundVM, BackgroundVMDeque, ConcurrentVM, ContractTransaction, FunctionParameter, Param, SenderAddress, SequentialVM, StaticAddress, Word};
 use testbench::wip::FunctionResult::Another;
 use testbench::worker_implementation::WorkerC;
 
@@ -69,6 +69,32 @@ async fn main() -> Result<()>{
     // profile_new_tx("benchmark_config.json")?;
     // profile_new_contract("benchmark_config.json")?;
 
+    // let res: Vec<_> = (0..4).into_par_iter().map(|delay| {
+    //     sleep(Duration::from_secs(delay));
+    //     eprintln!("waited {}s", delay);
+    //     delay
+    // }).collect();
+    // for delay in res.iter() {
+    //     eprintln!("collected {}", delay);
+    // }
+    // (0..4).into_par_iter().map(|delay| {
+    //     sleep(Duration::from_secs(delay));
+    //     eprintln!("waited {}s", delay);
+    //     delay
+    // }).collect::<Vec<u64>>().iter().for_each(|delay| {
+    //     eprintln!("collected {}", delay);
+    // });
+
+    // let res: () = (0..10).into_par_iter().map(|delay| {
+    //     sleep(Duration::from_secs(1));
+    //     eprintln!("waited {}s", delay);
+    //     delay
+    // }).fold(|| (), |acc, delay| {
+    //     eprintln!("collected {}", delay);
+    //     acc
+    // }).collect();
+// https://morestina.net/blog/1432/parallel-stream-processing-with-rayon
+
     let mut rng = StdRng::seed_from_u64(10);
     let batch_size = 65536;
     let storage_size = 100 * batch_size;
@@ -78,7 +104,7 @@ async fn main() -> Result<()>{
     let batch: Vec<T> = batch_with_conflicts_new_impl(
         storage_size,
         batch_size,
-        0.0,    // TODO
+        0.5,    // TODO
         &mut rng
     ).par_iter().map(|tx| T { from: tx.from, to: tx.to}).collect();
     println!("Took {:?}", a.elapsed());
@@ -115,13 +141,21 @@ async fn main() -> Result<()>{
     // ???
     let mut concurrent = ConcurrentVM::new(
         test_storage,
+        8,//12
+        1)?;//20
+
+    let mut background = BackgroundVM::new(
+        test_storage,
         8,
         1)?;
-    // TODO have execute return the latency to check best config
-    // TODO Try sequential scheduling here
+
+    // background.stop().await;
+
     let mut duration = Duration::from_nanos(0);
     concurrent.storage.set_storage(20 * iter);
 
+    println!("Testing different variants: ==========================");
+    println!();
     // ???
     // Multiple variants that are promising (need to test on AWS)
     for _ in 0..iter {
@@ -130,30 +164,61 @@ async fn main() -> Result<()>{
         // let _ = concurrent.execute(b);
         // duration = duration.add(s.elapsed());
         //
-        // println!("Variant 1 ---------------------------------");
-        // let b = new_batch.clone();
-        // let _ = concurrent.execute_variant_1(b);
-        // println!();
-        //
-        // println!("Variant 2 ---------------------------------");
-        // let b = new_batch.clone();
-        // let _ = concurrent.execute_variant_2(b);
-        // println!();
-        //
-        // println!("Variant 3 ---------------------------------");
-        // let b = new_batch.clone();
-        // let _ = concurrent.execute_variant_3(b);
-        // println!();
-        //
-        // println!("Variant 4 ---------------------------------");
-        // let b = new_batch.clone();
-        // let _ = concurrent.execute_variant_4(b);
-        // println!();
-        //
-        // println!("Variant 5 ---------------------------------");
-        // let b = new_batch.clone();
-        // let _ = concurrent.execute_variant_5(b);
-        // println!();
+
+        println!("background ---------------------------------");
+        let b = new_batch.clone();
+        let start = Instant::now();
+        let err = background.execute(b).await;
+        // println!("Err? {:?}", err);
+        println!("Background took {:?}", start.elapsed());
+        println!();
+
+        println!("Variant 1 async ---------------------------------");
+        let b = new_batch.clone();
+        let err = concurrent.execute_variant_1_async(b).await;
+        // println!("Err? {:?}", err);
+        println!();
+
+        println!("Variant 1 ---------------------------------");
+        let b = new_batch.clone();
+        let err = concurrent.execute_variant_1(b);
+        // println!("Err? {:?}", err);
+        println!();
+
+        println!("Variant 2 ---------------------------------");
+        let b = new_batch.clone();
+        let err = concurrent.execute_variant_2(b);
+        // println!("Err? {:?}", err);
+        println!();
+
+        println!("Variant 3 ---------------------------------");
+        let b = new_batch.clone();
+        let err = concurrent.execute_variant_3(b);
+        // println!("Err? {:?}", err);
+        println!();
+
+        println!("Variant 4 ---------------------------------");
+        let b = new_batch.clone();
+        let err = concurrent.execute_variant_4(b);
+        // println!("Err? {:?}", err);
+        println!();
+
+        println!("Variant 5 ---------------------------------");
+        let b = new_batch.clone();
+        let err = concurrent.execute_variant_5(b);
+        // println!("Err? {:?}", err);
+        println!();
+
+        println!("Variant 6 ---------------------------------");
+        let b = new_batch.clone();
+        let err = concurrent.execute_variant_6(b);
+        // println!("Err? {:?}", err);
+        println!();
+
+        println!("Variant 7 ---------------------------------");
+        let b = new_batch.clone();
+        let _ = concurrent.execute_variant_7(b);
+        println!();
 
         // println!();
     }
@@ -163,28 +228,38 @@ async fn main() -> Result<()>{
     // println!("\tAverage latency = {:?}", duration.div(iter as u32));
     // println!();
 
-    // let mut sequential = SequentialVM::new(test_storage)?;
-    // let mut duration = Duration::from_nanos(0);
-    // sequential.storage.fill(20 * iter);
-    //
-    // for _ in 0..iter {
-    //     let b = new_batch.clone();
-    //     let s = Instant::now();
-    //     let _ = sequential.execute(b);
-    //     duration = duration.add(s.elapsed());
-    // }
-    // println!("Sequential:");
-    // println!("\t{} iterations took {:?}", iter, duration);
-    // println!("\tAverage latency = {:?}", duration.div(iter as u32));
-    // println!();
-    // profile_schedule_chunk(new_batch.clone(), 100, 4, 8);  // ???
-    // => need to split batch in 8 for the scheduling to be fast enough
-    // => executing one 8th takes the same time in parallel and sequentially?!
+    let mut sequential = SequentialVM::new(test_storage)?;
+    let mut duration = Duration::from_nanos(0);
+    sequential.storage.fill(20 * iter);
 
-    // profile_schedule_backlog_single_pass(new_batch.clone(), 1).await;    // ???
-    // => scheduling a chunk is slower in parallel?!
+    for _ in 0..iter {
+        let b = new_batch.clone();
+        let s = Instant::now();
+        let _ = sequential.execute(b);
+        duration = duration.add(s.elapsed());
+    }
+    println!("Sequential:");
+    println!("\t{} iterations took {:?}", iter, duration);
+    println!("\tAverage latency = {:?}", duration.div(iter as u32));
+    println!();
+    background.stop().await;
 
-    // try_other_method(new_batch.clone(), 1, 8, true, 1).await;    // ???
+
+    println!("\nComparing chunk schedule and exec: ==========================");
+    println!();
+    profile_schedule_chunk(new_batch.clone(), 100, 8, 8);  // ???
+    // // => need to split batch in 8 for the scheduling to be fast enough
+    // // => executing one 8th takes the same time in parallel and sequentially?!
+
+    println!("\nTesting scheduling sequential vs parallel (65536 tx): ==========================");
+    println!();
+    profile_schedule_backlog_single_pass(new_batch.clone(), 1, 8).await;    // ???
+    // // => scheduling a chunk is slower in parallel?!
+    // // This is caused by threads not being equivalent to cores
+
+    println!("\nTesting other method (nested task): ==========================");
+    println!();
+    try_other_method(new_batch.clone(), 1, 8, true, 1).await;    // ???
 
     // test_profile_schedule_backlog_single_pass(new_batch.clone(), 1).await;
     // check_reallocation_overhead(); // ???
@@ -893,14 +968,15 @@ fn profile_schedule_chunk(mut batch: Vec<ContractTransaction>, iter: usize, chun
     }
 
     println!("For a chunk of {} tx", batch.len());
-    println!("schedule_chunk latency = {:?}", schedule_duration.div(iter as u32));
-    println!("sequential latency = {:?}", sequential_duration.div(iter as u32));
-    println!("parallel latency = {:?}", parallel_duration.div(iter as u32));
+    println!("\tschedule_chunk latency = {:?}", schedule_duration.div(iter as u32));
+    let avg_sequential = sequential_duration.div(iter as u32);
+    println!("\tsequential exec latency = {:?} -> {:?}", avg_sequential, avg_sequential.mul(chunk_fraction as u32));
+    let avg_parallel = parallel_duration.div(iter as u32);
+    println!("\tparallel exec latency = {:?} -> {:?}", avg_parallel, avg_parallel.mul(chunk_fraction as u32));
 }
 
-async fn profile_schedule_backlog_single_pass(mut batch: Vec<ContractTransaction>, iter: usize) {
+async fn profile_schedule_backlog_single_pass(mut batch: Vec<ContractTransaction>, iter: usize, nb_schedulers: usize) {
     batch.truncate(65536);
-    let nb_schedulers = 8;
     let mut duration = Duration::from_nanos(0);
     let computation_latency = Duration::from_micros(250);
 
@@ -1128,7 +1204,7 @@ async fn profile_schedule_backlog_single_pass(mut batch: Vec<ContractTransaction
                 //     // println!("Inserting took {:?} overall", insertion_latency);
                 // }
                 let latency = a.elapsed();
-                println!("Scheduler {}: one chunk of length {} took {:?}", scheduler_index, chunk_size, latency);
+                debug!("Scheduler {}: one chunk of length {} took {:?}", scheduler_index, chunk_size, latency);
 
                 (scheduler_index, scheduled, postponed)
             }).collect();
@@ -1159,7 +1235,7 @@ async fn profile_schedule_backlog_single_pass(mut batch: Vec<ContractTransaction
                 }
 
                 let latency = a.elapsed();
-                println!("Scheduler {}: one chunk of length {} took {:?}", scheduler_index, chunk_size, latency);
+                debug!("Scheduler {}: one chunk of length {} took {:?}", scheduler_index, chunk_size, latency);
 
                 (scheduler_index, scheduled, postponed)
             }).collect();
@@ -1640,7 +1716,7 @@ async fn try_other_method(mut batch: Vec<ContractTransaction>, iter: usize, nb_s
                     scheduled.push(tx.clone());
                 }
                 let scheduling_latency = schedule_start.elapsed();
-                println!("Task {} took {:?} to schedule", index, scheduling_latency);
+                debug!("Task {} took {:?} to schedule", index, scheduling_latency);
 
                 match previous {
                     None => {
@@ -1680,7 +1756,7 @@ async fn try_other_method(mut batch: Vec<ContractTransaction>, iter: usize, nb_s
                 let mut generated_tx = acc.lock().unwrap();
                 generated_tx.append(postponed);
                 generated_tx.append(&mut generated);
-                println!("Task {} took {:?} to execute ---------------", index, exec_start.elapsed());
+                debug!("Task {} took {:?} to execute ---------------", index, exec_start.elapsed());
             });
 
             if parallel_schedule {
