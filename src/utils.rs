@@ -14,7 +14,7 @@ use crate::wip::Word;
 #[macro_export]
 macro_rules! debugging {
     () => {
-        true
+        false
     };
 }
 

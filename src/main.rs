@@ -104,10 +104,13 @@ async fn main() -> Result<()>{
     let batch: Vec<T> = batch_with_conflicts_new_impl(
         storage_size,
         batch_size,
-        0.5,    // TODO
+        0.0,    // TODO
         &mut rng
     ).par_iter().map(|tx| T { from: tx.from, to: tx.to}).collect();
     println!("Took {:?}", a.elapsed());
+
+    let nb_schedulers = 8;
+    let nb_executors = 1;
     // println!();
     //
     // let small_batch_size = 2048;
@@ -141,13 +144,13 @@ async fn main() -> Result<()>{
     // ???
     let mut concurrent = ConcurrentVM::new(
         test_storage,
-        8,//12
-        1)?;//20
+        nb_schedulers,
+        nb_executors)?;
 
     let mut background = BackgroundVM::new(
         test_storage,
-        8,
-        1)?;
+        nb_schedulers,
+        nb_executors)?;
 
     // background.stop().await;
 
@@ -175,49 +178,65 @@ async fn main() -> Result<()>{
 
         println!("Variant 1 async ---------------------------------");
         let b = new_batch.clone();
+        let start = Instant::now();
         let err = concurrent.execute_variant_1_async(b).await;
+        println!("Overall: {:?}", start.elapsed());
         // println!("Err? {:?}", err);
         println!();
 
         println!("Variant 1 ---------------------------------");
         let b = new_batch.clone();
+        let start = Instant::now();
         let err = concurrent.execute_variant_1(b);
+        println!("Overall: {:?}", start.elapsed());
         // println!("Err? {:?}", err);
         println!();
 
         println!("Variant 2 ---------------------------------");
         let b = new_batch.clone();
+        let start = Instant::now();
         let err = concurrent.execute_variant_2(b);
+        println!("Overall: {:?}", start.elapsed());
         // println!("Err? {:?}", err);
         println!();
 
         println!("Variant 3 ---------------------------------");
         let b = new_batch.clone();
+        let start = Instant::now();
         let err = concurrent.execute_variant_3(b);
+        println!("Overall: {:?}", start.elapsed());
         // println!("Err? {:?}", err);
         println!();
 
         println!("Variant 4 ---------------------------------");
         let b = new_batch.clone();
+        let start = Instant::now();
         let err = concurrent.execute_variant_4(b);
+        println!("Overall: {:?}", start.elapsed());
         // println!("Err? {:?}", err);
         println!();
 
         println!("Variant 5 ---------------------------------");
         let b = new_batch.clone();
+        let start = Instant::now();
         let err = concurrent.execute_variant_5(b);
+        println!("Overall: {:?}", start.elapsed());
         // println!("Err? {:?}", err);
         println!();
 
         println!("Variant 6 ---------------------------------");
         let b = new_batch.clone();
+        let start = Instant::now();
         let err = concurrent.execute_variant_6(b);
+        println!("Overall: {:?}", start.elapsed());
         // println!("Err? {:?}", err);
         println!();
 
         println!("Variant 7 ---------------------------------");
         let b = new_batch.clone();
+        let start = Instant::now();
         let _ = concurrent.execute_variant_7(b);
+        println!("Overall: {:?}", start.elapsed());
         println!();
 
         // println!();
@@ -249,7 +268,7 @@ async fn main() -> Result<()>{
     println!();
     profile_schedule_chunk(new_batch.clone(), 100, 8, 8);  // ???
     // // => need to split batch in 8 for the scheduling to be fast enough
-    // // => executing one 8th takes the same time in parallel and sequentially?!
+    // // => executing one 8th takes the same time in parallel and sequentially?
 
     println!("\nTesting scheduling sequential vs parallel (65536 tx): ==========================");
     println!();
@@ -1609,7 +1628,7 @@ impl SparseSet {
 async fn try_other_method(mut batch: Vec<ContractTransaction>, iter: usize, nb_schedulers: usize, parallel_schedule: bool, nb_executors: usize,) {
 
     let mut duration = Duration::from_nanos(0);
-    let nb_schedulers = 8;
+    // let nb_schedulers = 8;
     // let nb_executors = 8;
     let chunk_size = batch.len()/nb_schedulers + 1;
 
@@ -1731,13 +1750,13 @@ async fn try_other_method(mut batch: Vec<ContractTransaction>, iter: usize, nb_s
                 // println!("Task {} took {:?} to schedule", index, scheduling_latency);
                 // Execute transactions
                 let exec_start = Instant::now();
-                let mut generated: Vec<_> = scheduled
+                let mut tmp: Vec<_> = scheduled
                     // .into_par_iter()
                     // .par_drain(..round.len())
                     // .chunks(chunk_size)
                     .par_chunks(scheduled.len()/ nb_executors + 1)
                     .enumerate()
-                    .flat_map(
+                    .map(
                         |(worker_index, worker_backlog)| {
                             // println!("Worker {} works on {} tx", worker_index, worker_backlog.len());
                             worker_backlog
@@ -1754,8 +1773,11 @@ async fn try_other_method(mut batch: Vec<ContractTransaction>, iter: usize, nb_s
                         }
                     ).collect();
                 let mut generated_tx = acc.lock().unwrap();
+                for mut generated in tmp {
+                    generated_tx.append(&mut generated);
+                }
                 generated_tx.append(postponed);
-                generated_tx.append(&mut generated);
+                // generated_tx.append(&mut generated);
                 debug!("Task {} took {:?} to execute ---------------", index, exec_start.elapsed());
             });
 

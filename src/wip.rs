@@ -442,6 +442,7 @@ impl ConcurrentVM {
         res
     }
 
+    // TODO replace flatmap with map + for loop?
     pub fn execute_round(&self, round_index: usize, mut round: Round) -> Vec<ContractTransaction> {
         let chunk_size = self.get_chunk_size(round.len());
         round
@@ -620,9 +621,10 @@ impl ConcurrentVM {
         let scheduling_duration = scheduling_res.unwrap();
         let execution_duration = execution_res.unwrap();
 
-        println!("Variant 1 async took {:?}", scheduling_duration + execution_duration);
+        // println!("Variant 1 async:");
         println!("\tScheduling (v1): {:?}", scheduling_duration);
         println!("\tExecution (v1):  {:?}", execution_duration);
+        println!("\tSum: {:?}", scheduling_duration + execution_duration);
 
         Ok(())
     }
@@ -669,9 +671,10 @@ impl ConcurrentVM {
         let scheduling_duration = scheduling_res.unwrap();
         let execution_duration = execution_res.unwrap();
 
-        println!("Variant 1 took {:?}", scheduling_duration + execution_duration);
+        // println!("Variant 1:");
         println!("\tScheduling (v1): {:?}", scheduling_duration);
         println!("\tExecution (v1):  {:?}", execution_duration);
+        println!("\tSum: {:?}", scheduling_duration + execution_duration);
 
         Ok(())
     }
@@ -718,9 +721,10 @@ impl ConcurrentVM {
         let scheduling_duration = scheduling_res.unwrap();
         let execution_duration = execution_res.unwrap();
 
-        println!("Variant 2 took {:?}", scheduling_duration + execution_duration);
+        // println!("Variant 2:");
         println!("\tScheduling (v2): {:?}", scheduling_duration);
         println!("\tExecution (v1):  {:?}", execution_duration);
+        println!("\tSum: {:?}", scheduling_duration + execution_duration);
 
         Ok(())
     }
@@ -767,9 +771,10 @@ impl ConcurrentVM {
         let scheduling_duration = scheduling_res.unwrap();
         let execution_duration = execution_res.unwrap();
 
-        println!("Variant 3 took {:?}", scheduling_duration + execution_duration);
+        // println!("Variant 3:");
         println!("\tScheduling (v2): {:?}", scheduling_duration);
         println!("\tExecution (v2):  {:?}", execution_duration);
+        println!("\tSum: {:?}", scheduling_duration + execution_duration);
 
         Ok(())
     }
@@ -816,9 +821,10 @@ impl ConcurrentVM {
         let scheduling_duration = scheduling_res.unwrap();
         let execution_duration = execution_res.unwrap();
 
-        println!("Variant 4 took {:?}", scheduling_duration + execution_duration);
+        // println!("Variant 4:");
         println!("\tScheduling (v3): {:?}", scheduling_duration);
         println!("\tExecution (v1):  {:?}", execution_duration);
+        println!("\tSum: {:?}", scheduling_duration + execution_duration);
 
         Ok(())
     }
@@ -865,9 +871,10 @@ impl ConcurrentVM {
         let scheduling_duration = scheduling_res.unwrap();
         let execution_duration = execution_res.unwrap();
 
-        println!("Variant 5 took {:?}", scheduling_duration + execution_duration);
+        // println!("Variant 5:");
         println!("\tScheduling (v3): {:?}", scheduling_duration);
         println!("\tExecution (v2):  {:?}", execution_duration);
+        println!("\tSum: {:?}", scheduling_duration + execution_duration);
 
         Ok(())
     }
@@ -903,7 +910,7 @@ impl ConcurrentVM {
                             }
                             postponed
                     }).collect();
-
+// There is a bug here
                     /* TODO move the job of splitting a batch into chunks to the executor pool
                         Otherwise if there are less tx than there are schedulers, the executor pool
                         will end up waiting on a channel that will never receive a msg.
@@ -911,7 +918,7 @@ impl ConcurrentVM {
                         */
                     for i in new_backlog.len()..self.nb_schedulers {
                         if let Err(e) = outputs[i].send(vec!()) {
-                            panic!("Failed to send schedule");
+                            panic!("Failed to send empty schedule");
                         }
                     }
 
@@ -960,9 +967,10 @@ impl ConcurrentVM {
         let scheduling_duration = scheduling_res.unwrap();
         let execution_duration = execution_res.unwrap();
 
-        println!("Variant 6 took {:?}", scheduling_duration + execution_duration);
+        // println!("Variant 6:");
         println!("\tScheduling (v0): {:?}", scheduling_duration);
         println!("\tExecution (v2):  {:?}", execution_duration);
+        println!("\tSum: {:?}", scheduling_duration + execution_duration);
 
         Ok(())
     }
@@ -1058,9 +1066,10 @@ impl ConcurrentVM {
         let scheduling_duration = scheduling_res.unwrap();
         let execution_duration = execution_res.unwrap();
 
-        println!("Variant 7 took {:?}", scheduling_duration + execution_duration);
+        // println!("Variant 7:");
         println!("\tScheduling (v0): {:?}", scheduling_duration);
         println!("\tExecution (v1):  {:?}", execution_duration);
+        println!("\tSum: {:?}", scheduling_duration + execution_duration);
 
         Ok(())
     }
