@@ -63,8 +63,9 @@ struct T {
 async fn main() -> Result<()> {
 
     let total = Instant::now();
-
-    benchmarking("benchmark_config.json")?;
+    tokio::task::spawn_blocking(|| {
+        benchmarking("benchmark_config.json")
+    }).await.expect("Task panicked")?;
 
     // manual_test()?;
 

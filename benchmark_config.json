@@ -1,6 +1,12 @@
 {
   "vm_types": [
-    "Sequential", "ParallelCollect", "ParallelImmediate", "A", "C"
+    "Sequential",
+    "ParallelCollect",
+    "ParallelImmediate",
+    "A",
+    "BTokio",
+    "BStd",
+    "C"
   ],
   "nb_schedulers": [
     8
