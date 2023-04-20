@@ -9,7 +9,7 @@ use crossbeam_utils::thread as crossbeam;
 use tokio::runtime::Handle;
 use tokio::sync::mpsc::{channel as tokio_channel, Receiver as TokioReceiver, Sender as TokioSender};
 
-use crate::transaction::Transaction;
+use crate::transaction::{Instruction, Transaction};
 use crate::vm::{CPU, ExecutionResult, Jobs};
 use crate::vm_utils::{SharedStorage, VmStorage};
 use crate::wip::{AssignedWorker, Word};
@@ -53,9 +53,23 @@ pub trait WorkerB {
         for (tx_index, (tx, assigned_worker)) in assignment.enumerate() {
             if *assigned_worker == worker_index {
                 stack.clear(); // TODO Does this need to be optimised?
-                for instr in tx.instructions.iter() {
-                    CPU::execute_from_shared(instr, &mut stack, &mut shared_storage);
+                let first_instr = tx.instructions.get(0).unwrap();
+                let second_instr = tx.instructions.get(1).unwrap();
+                if let Instruction::Increment(addr_inc, amount) = first_instr {
+                    let balance_from = shared_storage.get(*addr_inc as usize);
+
+                    if let Instruction::Decrement(addr_dec, _) = second_instr {
+                        unsafe {
+                            if balance_from >= *amount {
+                                shared_storage.set(*addr_inc as usize, *amount);
+                                shared_storage.set(*addr_dec as usize, *amount);
+                            }
+                        }
+                    }
                 }
+                // for instr in tx.instructions.iter() {
+                //     CPU::execute_from_shared(instr, &mut stack, &mut shared_storage);
+                // }
                 let result = ExecutionResult::todo();
                 worker_output.push(result);
                 accessed[tx_index] = 1;
@@ -231,6 +245,20 @@ impl WorkerC {
                     for (_tx_index, (tx, assigned_worker)) in assignment.enumerate() {
                         if *assigned_worker == worker_index {
                             stack.clear();
+                            // let first_instr = tx.instructions.get(0).unwrap();
+                            // let second_instr = tx.instructions.get(1).unwrap();
+                            // if let Instruction::Increment(addr_inc, amount) = first_instr {
+                            //     let balance_from = shared_storage.get(*addr_inc as usize);
+                            //
+                            //     if let Instruction::Decrement(addr_dec, _) = second_instr {
+                            //         unsafe {
+                            //             if balance_from >= *amount {
+                            //                 shared_storage.set(*addr_inc as usize, *amount);
+                            //                 shared_storage.set(*addr_dec as usize, *amount);
+                            //             }
+                            //         }
+                            //     }
+                            // }
                             for instr in tx.instructions.iter() {
                                 CPU::execute_from_shared(instr, &mut stack, &mut shared_storage);
                             }
@@ -296,9 +324,23 @@ impl WorkerC {
                     for tx_index in tx_to_worker[i].iter() {
                         let tx = batch.get(tx_index.clone()).unwrap();
                         stack.clear();
-                        for instr in tx.instructions.iter() {
-                            CPU::execute_from_shared(instr, &mut stack, &mut shared_storage);
+                        let first_instr = tx.instructions.get(0).unwrap();
+                        let second_instr = tx.instructions.get(1).unwrap();
+                        if let Instruction::Increment(addr_inc, amount) = first_instr {
+                            let balance_from = shared_storage.get(*addr_inc as usize);
+
+                            if let Instruction::Decrement(addr_dec, _) = second_instr {
+                                unsafe {
+                                    if balance_from >= *amount {
+                                        shared_storage.set(*addr_inc as usize, *amount);
+                                        shared_storage.set(*addr_dec as usize, *amount);
+                                    }
+                                }
+                            }
                         }
+                        // for instr in tx.instructions.iter() {
+                        //     CPU::execute_from_shared(instr, &mut stack, &mut shared_storage);
+                        // }
 
                         let result = ExecutionResult::todo();
                         worker_output.push(result);
@@ -368,9 +410,23 @@ impl WorkerC {
                         let tx = batch.get(tx_index).unwrap();
 
                         stack.clear();
-                        for instr in tx.instructions.iter() {
-                            CPU::execute_from_shared(instr, &mut stack, &mut shared_storage);
+                        let first_instr = tx.instructions.get(0).unwrap();
+                        let second_instr = tx.instructions.get(1).unwrap();
+                        if let Instruction::Increment(addr_inc, amount) = first_instr {
+                            let balance_from = shared_storage.get(*addr_inc as usize);
+
+                            if let Instruction::Decrement(addr_dec, _) = second_instr {
+                                unsafe {
+                                    if balance_from >= *amount {
+                                        shared_storage.set(*addr_inc as usize, *amount);
+                                        shared_storage.set(*addr_dec as usize, *amount);
+                                    }
+                                }
+                            }
                         }
+                        // for instr in tx.instructions.iter() {
+                        //     CPU::execute_from_shared(instr, &mut stack, &mut shared_storage);
+                        // }
 
                         let result = ExecutionResult::todo();
                         worker_output.push(result);

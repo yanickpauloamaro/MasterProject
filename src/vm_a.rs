@@ -6,8 +6,7 @@ use anyhow::Result;
 
 use crate::{debug, debugging};
 use crate::transaction::Instruction;
-use crate::vm::{CPU, ExecutionResult, Executor, Jobs};
-use crate::vm_utils::VmStorage;
+use crate::vm::{ExecutionResult, Executor, Jobs};
 use crate::wip::Word;
 
 //region Serial VM =================================================================================
@@ -25,7 +24,7 @@ impl VMa {
 
 impl Executor for VMa {
     fn execute(&mut self, mut batch: Jobs) -> Result<Vec<ExecutionResult>> {
-let start = Instant::now();
+        let start = Instant::now();
         let mut results = Vec::with_capacity(batch.len());
         let mut backlog = Vec::with_capacity(batch.len());
 
@@ -33,7 +32,7 @@ let start = Instant::now();
 
         loop {
             if batch.is_empty() {
-debug!("### Done serial execution in {:?}\n", start.elapsed());
+                debug!("### Done serial execution in {:?}\n", start.elapsed());
                 return Ok(results);
             }
 

@@ -1,15 +1,18 @@
 {
   "vm_types": [
-    "A", "BStd", "BTokio", "C"
+    "Sequential", "ParallelCollect", "ParallelImmediate", "A", "C"
   ],
-  "nb_cores": [
-    4
+  "nb_schedulers": [
+    8
+  ],
+  "nb_executors": [
+    1
   ],
   "batch_sizes": [
     65536
   ],
   "conflict_rates": [
-    0.5
+    0.0
   ],
   "repetitions": 100,
   "seed": 10

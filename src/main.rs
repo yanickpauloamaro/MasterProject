@@ -1,20 +1,24 @@
+#![allow(unused_variables)]
 #![allow(unused_imports)]
+#![allow(unused_mut)]
+#![allow(dead_code)]
+#![allow(unreachable_code)]
 extern crate anyhow;
 extern crate either;
-// extern crate hwloc;
 extern crate tokio;
 
 
 use futures::future::BoxFuture;
 use itertools::Itertools;
-use voracious_radix_sort::{RadixSort};
+use voracious_radix_sort::RadixSort;
 use std::collections::{BTreeMap, BTreeSet, HashSet};
+use std::mem;
 use std::ops::{Add, Div, Mul, Sub};
 use std::sync::mpsc::{channel, Receiver};
 use std::sync::{Arc, Mutex};
 use std::thread::sleep;
 use tokio::time::{Duration, Instant};
-use std::time::{Instant as StdInstant};
+use std::time::Instant as StdInstant;
 
 use thincollections::thin_set::ThinSet;
 use nohash_hasher::{BuildNoHashHasher, IntSet};
@@ -28,19 +32,22 @@ use rand::{Rng, SeedableRng};
 use strum::IntoEnumIterator;
 use tinyset::SetU64;
 use tokio::task::JoinHandle;
-// use core_affinity;
 
 use testbench::benchmark::benchmarking;
 use testbench::config::{BenchmarkConfig, ConfigFile};
-use testbench::{debug, debugging};
-use testbench::transaction::{Transaction, TransactionAddress};
-use testbench::utils::{batch_with_conflicts, batch_with_conflicts_new_impl};
+use testbench::{bounded_array, contract, debug, debugging, utils};
+use testbench::applications::Currency;
+use testbench::contract::{AtomicFunction, FunctionParameter, SenderAddress, StaticAddress, Transaction};
+use testbench::transaction::{Transaction as BasicTransaction, TransactionAddress};
+use testbench::utils::{batch_with_conflicts, batch_with_conflicts_new_impl, BoundedArray};
 use testbench::vm::{ExecutionResult, Executor};
-use testbench::vm_a::{VMa};
-use testbench::vm_c::{VMc};
+use testbench::vm_a::VMa;
+use testbench::vm_c::VMc;
 use testbench::vm_utils::{assign_workers, UNASSIGNED, VmStorage};
-use testbench::wip::{assign_workers_new_impl, assign_workers_new_impl_2, AtomicFunction, BackgroundVM, BackgroundVMDeque, ConcurrentVM, ContractTransaction, FunctionParameter, Param, SenderAddress, SequentialVM, StaticAddress, Word};
-use testbench::wip::FunctionResult::Another;
+use testbench::wip::{assign_workers_new_impl, assign_workers_new_impl_2, BackgroundVM, BackgroundVMDeque, ConcurrentVM, Param, Word};
+use testbench::contract::FunctionResult::Another;
+use testbench::parallel_vm::{ParallelVM, ParallelVmCollect, ParallelVmImmediate, WipOptimizedParallelVM};
+use testbench::sequential_vm::SequentialVM;
 use testbench::worker_implementation::WorkerC;
 
 
@@ -53,7 +60,180 @@ struct T {
 }
 
 #[tokio::main]
-async fn main() -> Result<()>{
+async fn main() -> Result<()> {
+
+    let total = Instant::now();
+
+    benchmarking("benchmark_config.json")?;
+
+    // manual_test()?;
+
+    // profiling("benchmark_config.json")?; // ???
+    // wip_main().await;
+
+    // println!("\nComparing chunk schedule and exec: ==========================");
+    // println!();
+    // profile_schedule_chunk(batch.clone(), 100, 8, 8);  // ???
+
+    println!("main took {:?}", total.elapsed());
+
+    Ok(())
+}
+
+fn manual_test() -> Result<()> {
+    let mut rng = StdRng::seed_from_u64(10);
+    let batch_size = 65536;
+    let storage_size = 100 * batch_size;
+
+    let nb_schedulers = 8;
+    let nb_workers = 1;
+
+    let iter = 100;
+
+    let a = Instant::now();
+    let batch: Vec<Transaction> = Currency::transfers_workload(
+        storage_size,
+        batch_size,
+        0.0,
+        &mut rng
+    );
+    println!("Creating batch of size {} took {:?}", batch_size, a.elapsed());
+
+    let a = Instant::now();
+    let mut concurrent = ConcurrentVM::new(storage_size, nb_schedulers, nb_workers)?;
+    concurrent.storage.set_storage(20 * iter);
+
+    let mut parallel_collect = ParallelVmCollect::new(storage_size, nb_schedulers, nb_workers)?;
+    parallel_collect.vm.storage.set_storage(20 * iter);
+
+    let mut parallel_immediate = ParallelVmImmediate::new(storage_size, nb_schedulers, nb_workers)?;
+    parallel_immediate.vm.storage.set_storage(20 * iter);
+
+    println!("Creating vms took {:?}", a.elapsed());
+
+    // let mut concurrent_latency_v3 = Vec::with_capacity(iter as usize);
+    // let mut concurrent_latency_v5 = Vec::with_capacity(iter as usize);
+
+    // for _ in 0..iter {
+    //     let b = batch.clone();
+    //     let start = Instant::now();
+    //     let _ = concurrent.execute_variant_3(b)?;
+    //     concurrent_latency_v3.push(start.elapsed());
+    //
+    //     let b = batch.clone();
+    //     let start = Instant::now();
+    //     let _ = concurrent.execute_variant_5(b)?;
+    //     concurrent_latency_v5.push(start.elapsed());
+    // }
+    // println!("Concurrent v3:");
+    // println!("\tAverage latency = {}", utils::mean_ci_str(&concurrent_latency_v3));
+    // println!();
+    //
+    // println!("Concurrent v5:");
+    // println!("\tAverage latency = {}", utils::mean_ci_str(&concurrent_latency_v5));
+    // println!();
+
+    println!("====================");
+
+    let mut parallel_latency_v6 = Vec::with_capacity(iter as usize);
+    let mut parallel_scheduling_v6 = Vec::with_capacity(iter as usize);
+    let mut parallel_execution_v6 = Vec::with_capacity(iter as usize);
+
+    let mut parallel_latency_v7 = Vec::with_capacity(iter as usize);
+    let mut parallel_scheduling_v7 = Vec::with_capacity(iter as usize);
+    let mut parallel_execution_v7 = Vec::with_capacity(iter as usize);
+
+    for _ in 0..iter {
+        let b = batch.clone();
+        let (scheduling, execution) = parallel_collect.execute(b)?;
+
+        let b = batch.clone();
+        let (scheduling, execution) = parallel_immediate.execute(b)?;
+    }
+    parallel_collect.vm.storage.set_storage(20 * iter);
+    parallel_immediate.vm.storage.set_storage(20 * iter);
+
+    for _ in 0..iter {
+        let b = batch.clone();
+        let start = Instant::now();
+        let (scheduling, execution) = parallel_collect.execute(b)?;
+        parallel_latency_v6.push(start.elapsed());
+        parallel_scheduling_v6.push(scheduling);
+        parallel_execution_v6.push(execution);
+
+        let b = batch.clone();
+        let start = Instant::now();
+        let (scheduling, execution) = parallel_immediate.execute(b)?;
+        parallel_latency_v7.push(start.elapsed());
+        parallel_scheduling_v7.push(scheduling);
+        parallel_execution_v7.push(execution);
+    }
+    println!("ParallelCollect (v6):");
+    println!("\tAverage latency = {}", utils::mean_ci_str(&parallel_latency_v6));
+    println!("\tAvg scheduling latency = {}", utils::mean_ci_str(&parallel_scheduling_v6));
+    println!("\tAvg execution latency = {}", utils::mean_ci_str(&parallel_execution_v6));
+    println!();
+
+    println!("ParallelImmediate (v7):");
+    println!("\tAverage latency = {}", utils::mean_ci_str(&parallel_latency_v7));
+    println!("\tAvg scheduling latency = {}", utils::mean_ci_str(&parallel_scheduling_v7));
+    println!("\tAvg execution latency = {}", utils::mean_ci_str(&parallel_execution_v7));
+    println!();
+
+
+    /* TODO To be able to have split transfers, we need to have tx pieces with different number of addresses.
+        or use options to prevent the schedulers to think a transaction conflict with itself
+        /!\ Even adding a usize inside the Transaction struct makes things slower...
+
+     */
+    // println!("========= Testing Transaction pieces ===========");
+    // let mut rng = StdRng::seed_from_u64(10);
+    // let a = Instant::now();
+    // let batch_pieces: Vec<Transaction> = Currency::split_transfers_workload(
+    //     storage_size,
+    //     batch_size,
+    //     0.0,
+    //     &mut rng
+    // );
+    // println!("Creating batch of size {} took {:?}", batch_size, a.elapsed());
+    // let mut parallel_latency_v6 = Vec::with_capacity(iter as usize);
+    // let mut parallel_scheduling_v6 = Vec::with_capacity(iter as usize);
+    // let mut parallel_execution_v6 = Vec::with_capacity(iter as usize);
+    //
+    // let mut parallel_latency_v7 = Vec::with_capacity(iter as usize);
+    // let mut parallel_scheduling_v7 = Vec::with_capacity(iter as usize);
+    // let mut parallel_execution_v7 = Vec::with_capacity(iter as usize);
+    // for _ in 0..iter {
+    //     let b = batch_pieces.clone();
+    //     let start = Instant::now();
+    //     let (scheduling, execution) = parallel_collect.execute(b)?;
+    //     parallel_latency_v6.push(start.elapsed());
+    //     parallel_scheduling_v6.push(scheduling);
+    //     parallel_execution_v6.push(execution);
+    //
+    //     let b = batch_pieces.clone();
+    //     let start = Instant::now();
+    //     let (scheduling, execution) = parallel_immediate.execute(b)?;
+    //     parallel_latency_v7.push(start.elapsed());
+    //     parallel_scheduling_v7.push(scheduling);
+    //     parallel_execution_v7.push(execution);
+    // }
+    // println!("Parallel v6 (split transfer):");
+    // println!("\tAverage latency = {}", utils::mean_ci_str(&parallel_latency_v6));
+    // println!("\tAvg scheduling latency = {}", utils::mean_ci_str(&parallel_scheduling_v6));
+    // println!("\tAvg execution latency = {}", utils::mean_ci_str(&parallel_execution_v6));
+    // println!();
+    //
+    // println!("Parallel v7 (split transfer):");
+    // println!("\tAverage latency = {}", utils::mean_ci_str(&parallel_latency_v7));
+    // println!("\tAvg scheduling latency = {}", utils::mean_ci_str(&parallel_scheduling_v7));
+    // println!("\tAvg execution latency = {}", utils::mean_ci_str(&parallel_execution_v7));
+    // println!();
+
+    Ok(())
+}
+
+async fn wip_main() -> Result<()>{
     println!("Hello, world!");
     let total = Instant::now();
 
@@ -63,7 +243,7 @@ async fn main() -> Result<()>{
     // let _ = ConflictWorkload::run(config, 1);
 
     // benchmarking("benchmark_config.json")?;
-    // profiling("benchmark_config.json")?;
+    // profiling("benchmark_config.json")?; // ???
 
     // profile_old_tx("benchmark_config.json")?;
     // profile_new_tx("benchmark_config.json")?;
@@ -132,14 +312,17 @@ async fn main() -> Result<()>{
     let (test_batch, test_storage) = (batch.clone(), storage_size);
     let iter = 1;
 
+    let xyz = Instant::now();
     let new_batch: Vec<_> = test_batch.par_iter()
         .enumerate()
-        .map(|(tx_index, tx)| ContractTransaction {
+        .map(|(tx_index, tx)| Transaction {
             sender: tx.from as SenderAddress,
             function: 0,
-            addresses: [tx.from as StaticAddress, tx.to as StaticAddress],
-            params: [2, tx_index as FunctionParameter]
+            // nb_addresses: 2,
+            addresses: bounded_array![tx.from as StaticAddress, tx.to as StaticAddress],
+            params: bounded_array![2, tx_index as FunctionParameter]
         }).collect();
+    println!("Mapping took {:?}", xyz.elapsed());
 
     // ???
     let mut concurrent = ConcurrentVM::new(
@@ -152,10 +335,23 @@ async fn main() -> Result<()>{
         nb_schedulers,
         nb_executors)?;
 
+    let mut parallel = WipOptimizedParallelVM::new(
+        test_storage,
+        nb_schedulers,
+        nb_executors)?;
+
+    let mut wtf = ParallelVmCollect::new(
+        test_storage,
+        nb_schedulers,
+        nb_executors)?;
+
     // background.stop().await;
 
     let mut duration = Duration::from_nanos(0);
     concurrent.storage.set_storage(20 * iter);
+    background.storage.set_storage(20 * iter);
+    parallel.storage.set_storage(20 * iter);
+    wtf.vm.storage.set_storage(20 * iter);
 
     println!("Testing different variants: ==========================");
     println!();
@@ -168,6 +364,22 @@ async fn main() -> Result<()>{
         // duration = duration.add(s.elapsed());
         //
 
+        // println!("Variant 6 cleaned ---------------------------------");
+        // let b = new_batch.clone();
+        // let start = Instant::now();
+        // let err = parallel.execute(b);
+        // println!("Overall: {:?}", start.elapsed());
+        // // println!("Err? {:?}", err);
+        // println!();
+        //
+        println!("Variant 6 WTF ---------------------------------");
+        let b = new_batch.clone();
+        let start = Instant::now();
+        let err = wtf.execute(b);
+        println!("Overall: {:?}", start.elapsed());
+        println!("Err? {:?}", err.unwrap().0);
+        println!();
+
         println!("background ---------------------------------");
         let b = new_batch.clone();
         let start = Instant::now();
@@ -175,46 +387,46 @@ async fn main() -> Result<()>{
         // println!("Err? {:?}", err);
         println!("Background took {:?}", start.elapsed());
         println!();
-
-        println!("Variant 1 async ---------------------------------");
-        let b = new_batch.clone();
-        let start = Instant::now();
-        let err = concurrent.execute_variant_1_async(b).await;
-        println!("Overall: {:?}", start.elapsed());
-        // println!("Err? {:?}", err);
-        println!();
-
-        println!("Variant 1 ---------------------------------");
-        let b = new_batch.clone();
-        let start = Instant::now();
-        let err = concurrent.execute_variant_1(b);
-        println!("Overall: {:?}", start.elapsed());
-        // println!("Err? {:?}", err);
-        println!();
-
-        println!("Variant 2 ---------------------------------");
-        let b = new_batch.clone();
-        let start = Instant::now();
-        let err = concurrent.execute_variant_2(b);
-        println!("Overall: {:?}", start.elapsed());
-        // println!("Err? {:?}", err);
-        println!();
-
-        println!("Variant 3 ---------------------------------");
-        let b = new_batch.clone();
-        let start = Instant::now();
-        let err = concurrent.execute_variant_3(b);
-        println!("Overall: {:?}", start.elapsed());
-        // println!("Err? {:?}", err);
-        println!();
-
-        println!("Variant 4 ---------------------------------");
-        let b = new_batch.clone();
-        let start = Instant::now();
-        let err = concurrent.execute_variant_4(b);
-        println!("Overall: {:?}", start.elapsed());
-        // println!("Err? {:?}", err);
-        println!();
+        //
+        // println!("Variant 1 async ---------------------------------");
+        // let b = new_batch.clone();
+        // let start = Instant::now();
+        // let err = concurrent.execute_variant_1_async(b).await;
+        // println!("Overall: {:?}", start.elapsed());
+        // // println!("Err? {:?}", err);
+        // println!();
+        //
+        // println!("Variant 1 ---------------------------------");
+        // let b = new_batch.clone();
+        // let start = Instant::now();
+        // let err = concurrent.execute_variant_1(b);
+        // println!("Overall: {:?}", start.elapsed());
+        // // println!("Err? {:?}", err);
+        // println!();
+        //
+        // println!("Variant 2 ---------------------------------");
+        // let b = new_batch.clone();
+        // let start = Instant::now();
+        // let err = concurrent.execute_variant_2(b);
+        // println!("Overall: {:?}", start.elapsed());
+        // // println!("Err? {:?}", err);
+        // println!();
+        //
+        // println!("Variant 3 ---------------------------------");
+        // let b = new_batch.clone();
+        // let start = Instant::now();
+        // let err = concurrent.execute_variant_3(b);
+        // println!("Overall: {:?}", start.elapsed());
+        // // println!("Err? {:?}", err);
+        // println!();
+        //
+        // println!("Variant 4 ---------------------------------");
+        // let b = new_batch.clone();
+        // let start = Instant::now();
+        // let err = concurrent.execute_variant_4(b);
+        // println!("Overall: {:?}", start.elapsed());
+        // // println!("Err? {:?}", err);
+        // println!();
 
         println!("Variant 5 ---------------------------------");
         let b = new_batch.clone();
@@ -231,13 +443,13 @@ async fn main() -> Result<()>{
         println!("Overall: {:?}", start.elapsed());
         // println!("Err? {:?}", err);
         println!();
-
-        println!("Variant 7 ---------------------------------");
-        let b = new_batch.clone();
-        let start = Instant::now();
-        let _ = concurrent.execute_variant_7(b);
-        println!("Overall: {:?}", start.elapsed());
-        println!();
+        //
+        // println!("Variant 7 ---------------------------------");
+        // let b = new_batch.clone();
+        // let start = Instant::now();
+        // let _ = concurrent.execute_variant_7(b);
+        // println!("Overall: {:?}", start.elapsed());
+        // println!();
 
         // println!();
     }
@@ -261,24 +473,39 @@ async fn main() -> Result<()>{
     println!("\t{} iterations took {:?}", iter, duration);
     println!("\tAverage latency = {:?}", duration.div(iter as u32));
     println!();
+
+    let mut duration = Duration::from_nanos(0);
+    sequential.storage.fill(20 * iter);
+    for _ in 0..iter {
+        let b = new_batch.clone();
+        let s = Instant::now();
+        let _res = sequential.execute_with_results(b);
+        // println!("{:?}", _res.unwrap().into_iter().take(10).collect::<Vec<contract::FunctionResult>>());
+        duration = duration.add(s.elapsed());
+    }
+
+    println!("Sequential with result:");
+    println!("\t{} iterations took {:?}", iter, duration);
+    println!("\tAverage latency = {:?}", duration.div(iter as u32));
+    println!();
     background.stop().await;
 
 
-    println!("\nComparing chunk schedule and exec: ==========================");
-    println!();
-    profile_schedule_chunk(new_batch.clone(), 100, 8, 8);  // ???
+    // println!("\nComparing chunk schedule and exec: ==========================");
+    // println!();
+    // profile_schedule_chunk(new_batch.clone(), 100, 8, 8);  // ???
     // // => need to split batch in 8 for the scheduling to be fast enough
     // // => executing one 8th takes the same time in parallel and sequentially?
 
-    println!("\nTesting scheduling sequential vs parallel (65536 tx): ==========================");
-    println!();
-    profile_schedule_backlog_single_pass(new_batch.clone(), 1, 8).await;    // ???
-    // // => scheduling a chunk is slower in parallel?!
-    // // This is caused by threads not being equivalent to cores
-
-    println!("\nTesting other method (nested task): ==========================");
-    println!();
-    try_other_method(new_batch.clone(), 1, 8, true, 1).await;    // ???
+    // println!("\nTesting scheduling sequential vs parallel (65536 tx): ==========================");
+    // println!();
+    // profile_schedule_backlog_single_pass(new_batch.clone(), 1, 8).await;    // ???
+    // // // => scheduling a chunk is slower in parallel?!
+    // // // This is caused by threads not being equivalent to cores
+    //
+    // println!("\nTesting other method (nested task): ==========================");
+    // println!();
+    // try_other_method(new_batch.clone(), 1, 8, true, 1).await;    // ???
 
     // test_profile_schedule_backlog_single_pass(new_batch.clone(), 1).await;
     // check_reallocation_overhead(); // ???
@@ -326,15 +553,15 @@ async fn main() -> Result<()>{
     // }
 
     let mut data = Vec::with_capacity(nb_schedulers);
-    let chunks: Vec<Vec<ContractTransaction>> = b
+    let chunks: Vec<Vec<Transaction>> = b
         .into_iter()
         .chunks(chunk_size)
         .into_iter()
         .map(|chunk| chunk.collect())
         .collect();
     for chunk in chunks {
-        let mut scheduled: Vec<ContractTransaction> = Vec::with_capacity(chunk_size);
-        let mut postponed: Vec<ContractTransaction> = Vec::with_capacity(chunk_size);
+        let mut scheduled: Vec<Transaction> = Vec::with_capacity(chunk_size);
+        let mut postponed: Vec<Transaction> = Vec::with_capacity(chunk_size);
         let mut working_set = SetU64::with_capacity_and_max(
             2 * 32,
             100 * 65536 as u64
@@ -345,7 +572,7 @@ async fn main() -> Result<()>{
         data.push((chunk, scheduled, postponed, working_set));
     }
 
-    type ClosureInput = (Vec<ContractTransaction>, Vec<ContractTransaction>, Vec<ContractTransaction>, SetU64);
+    type ClosureInput = (Vec<Transaction>, Vec<Transaction>, Vec<Transaction>, SetU64);
     // type ClosureInput = (Vec<ContractTransaction>, Vec<ContractTransaction>, Vec<ContractTransaction>, Vec<StaticAddress>);
     // type ClosureInput = (Vec<ContractTransaction>, Vec<ContractTransaction>, Vec<ContractTransaction>, HashSet<StaticAddress>);
     let a = Instant::now();
@@ -922,18 +1149,21 @@ fn profile_template() {
     println!("--- latency = {:?}", total_latency.clone());
 }
 
-fn profile_schedule_chunk(mut batch: Vec<ContractTransaction>, iter: usize, chunk_fraction: usize, nb_executors: usize) {
+fn profile_schedule_chunk(mut batch: Vec<Transaction>, iter: usize, chunk_fraction: usize, nb_executors: usize) {
     let mut sequential = SequentialVM::new(100 * batch.len()).unwrap();
     sequential.storage.fill(20 * iter as Word);
 
     let mut parallel = ConcurrentVM::new(100 * batch.len(), 1, nb_executors).unwrap();
     parallel.storage.content.fill(20 * iter as Word);
 
+    // let mut test = ParallelVM::new(100 * batch.len(), 1, nb_executors).unwrap();
+    // test.storage.content.fill(20 * iter as Word);
+
     let mut schedule_duration = Duration::from_nanos(0);
     let mut sequential_duration = Duration::from_nanos(0);
     let mut parallel_duration = Duration::from_nanos(0);
 
-    let computation = |(scheduler_index, b): (usize, Vec<ContractTransaction>)| {
+    let computation = |(scheduler_index, b): (usize, Vec<Transaction>)| {
         let mut scheduled = Vec::with_capacity(b.len());
         let mut postponed = Vec::with_capacity(b.len());
         let mut working_set = ThinSetWrapper::with_capacity_and_max(
@@ -969,6 +1199,7 @@ fn profile_schedule_chunk(mut batch: Vec<ContractTransaction>, iter: usize, chun
         // b.truncate(b.len()/8);
         let a = Instant::now();
         computation((0, b));
+        // test.schedule_chunk(b);
         let latency = a.elapsed();
         // println!("** one chunk of length {} took {:?}", batch.len(), latency);
         schedule_duration = schedule_duration.add(latency);
@@ -994,7 +1225,7 @@ fn profile_schedule_chunk(mut batch: Vec<ContractTransaction>, iter: usize, chun
     println!("\tparallel exec latency = {:?} -> {:?}", avg_parallel, avg_parallel.mul(chunk_fraction as u32));
 }
 
-async fn profile_schedule_backlog_single_pass(mut batch: Vec<ContractTransaction>, iter: usize, nb_schedulers: usize) {
+async fn profile_schedule_backlog_single_pass(mut batch: Vec<Transaction>, iter: usize, nb_schedulers: usize) {
     batch.truncate(65536);
     let mut duration = Duration::from_nanos(0);
     let computation_latency = Duration::from_micros(250);
@@ -1131,8 +1362,8 @@ async fn profile_schedule_backlog_single_pass(mut batch: Vec<ContractTransaction
             .enumerate()
             .map(|(index, chunk)| {
 
-                let mut scheduled: Box<Vec<ContractTransaction>> = Box::new(Vec::with_capacity(chunk.len()));
-                let mut postponed: Box<Vec<ContractTransaction>> = Box::new(Vec::with_capacity(chunk.len()));
+                let mut scheduled: Box<Vec<Transaction>> = Box::new(Vec::with_capacity(chunk.len()));
+                let mut postponed: Box<Vec<Transaction>> = Box::new(Vec::with_capacity(chunk.len()));
                 // let mut working_set = Box::new(ThinSet::with_capacity_and_hasher(2 * 65536, BuildNoHashHasher::default()));
                 let mut working_set = Box::new(ThinSetWrapper::with_capacity_and_max( // TODO Is faster with ThinSetWrapper
                       2 * 65536,
@@ -1157,11 +1388,11 @@ async fn profile_schedule_backlog_single_pass(mut batch: Vec<ContractTransaction
 
         println!("Sequentially:");
         let sequential = Instant::now();
-        let res: Vec<(usize, Box<Vec<ContractTransaction>>, Box<Vec<ContractTransaction>>)> = tmp.clone()
+        let res: Vec<(usize, Box<Vec<Transaction>>, Box<Vec<Transaction>>)> = tmp.clone()
             .into_iter()
             .map(|(scheduler_index, chunk, mut scheduled, mut postponed, mut working_set, mut set):
                     // (usize, &[ContractTransaction], Box<Vec<ContractTransaction>>, Box<Vec<ContractTransaction>>, Box<SetU64>, HashSet<u64, BuildNoHashHasher<u64>>)| {
-                  (usize, Vec<ContractTransaction>, Box<Vec<ContractTransaction>>, Box<Vec<ContractTransaction>>, Box<ThinSetWrapper>, HashSet<u64, BuildNoHashHasher<u64>>)| {
+                  (usize, Vec<Transaction>, Box<Vec<Transaction>>, Box<Vec<Transaction>>, Box<ThinSetWrapper>, HashSet<u64, BuildNoHashHasher<u64>>)| {
                 let a = Instant::now();
 
                 // let mut fast_path = working_set.clone();
@@ -1232,10 +1463,10 @@ async fn profile_schedule_backlog_single_pass(mut batch: Vec<ContractTransaction
         println!();
         println!("Parallel:");
         let parallel = Instant::now();
-        let res: Vec<(usize, Box<Vec<ContractTransaction>>, Box<Vec<ContractTransaction>>)> = tmp
+        let res: Vec<(usize, Box<Vec<Transaction>>, Box<Vec<Transaction>>)> = tmp
             .into_par_iter()
             .map(|(scheduler_index, chunk, mut scheduled, mut postponed, mut working_set, mut set):
-                  (usize, Vec<ContractTransaction>, Box<Vec<ContractTransaction>>, Box<Vec<ContractTransaction>>, Box<ThinSetWrapper>, HashSet<u64, BuildNoHashHasher<u64>>)| {
+                  (usize, Vec<Transaction>, Box<Vec<Transaction>>, Box<Vec<Transaction>>, Box<ThinSetWrapper>, HashSet<u64, BuildNoHashHasher<u64>>)| {
                 let a = Instant::now();
 
                 let chunk_size = chunk.len();
@@ -1343,7 +1574,7 @@ async fn profile_schedule_backlog_single_pass(mut batch: Vec<ContractTransaction
     // println!("schedule_backlog_single_pass latency = {:?}", duration.div(iter as u32));
 }
 
-async fn test_profile_schedule_backlog_single_pass(mut batch: Vec<ContractTransaction>, iter: usize) {
+async fn test_profile_schedule_backlog_single_pass(mut batch: Vec<Transaction>, iter: usize) {
     batch.truncate(65536);
     let mut duration = Duration::from_nanos(0);
     for _ in 0..iter {
@@ -1575,7 +1806,7 @@ impl SparseSet {
         let nb_subset = max as usize /65536;
         let mut inner = Vec::with_capacity(nb_subset);
         for i in 0..nb_subset {
-            inner.push(SetU64::with_capacity_and_max(cap/nb_subset, (max/nb_subset as u64)));
+            inner.push(SetU64::with_capacity_and_max(cap/nb_subset, max/nb_subset as u64));
         }
         let remainder = BTreeSet::new();
         return Self { inner , remainder };
@@ -1625,7 +1856,7 @@ impl SparseSet {
 // }
 //endregion
 
-async fn try_other_method(mut batch: Vec<ContractTransaction>, iter: usize, nb_schedulers: usize, parallel_schedule: bool, nb_executors: usize,) {
+async fn try_other_method(mut batch: Vec<Transaction>, iter: usize, nb_schedulers: usize, parallel_schedule: bool, nb_executors: usize,) {
 
     let mut duration = Duration::from_nanos(0);
     // let nb_schedulers = 8;
@@ -1769,7 +2000,7 @@ async fn try_other_method(mut batch: Vec<ContractTransaction>, iter: usize, nb_s
                                         _ => None,
                                     }
                                 })
-                                .collect::<Vec<ContractTransaction>>()
+                                .collect::<Vec<Transaction>>()
                         }
                     ).collect();
                 let mut generated_tx = acc.lock().unwrap();
@@ -2930,7 +3161,7 @@ fn profiling(path: &str) -> Result<()> {
 
     let batch_size = config.batch_sizes[0];
     let storage_size = batch_size * 100;
-    let nb_cores = config.nb_cores[0];
+    let nb_cores = config.nb_executors[0];
     let conflict_rate = config.conflict_rates[0];
 
     let mut rng = match config.seed {
@@ -2940,7 +3171,7 @@ fn profiling(path: &str) -> Result<()> {
         None => StdRng::seed_from_u64(rand::random())
     };
 
-    let mut _initial_batch: Vec<Transaction> = batch_with_conflicts_new_impl(
+    let mut _initial_batch: Vec<BasicTransaction> = batch_with_conflicts_new_impl(
         storage_size,
         batch_size,
         conflict_rate,
@@ -2951,7 +3182,7 @@ fn profiling(path: &str) -> Result<()> {
     //     conflict_rate,
     //     &mut rng
     // );
-    let mut backlog: Vec<Transaction> = Vec::with_capacity(_initial_batch.len());
+    let mut backlog: Vec<BasicTransaction> = Vec::with_capacity(_initial_batch.len());
 
     let reduced_vm_size = storage_size;
     // let reduced_vm_size = storage_size >> 1; // 50%       = 65536

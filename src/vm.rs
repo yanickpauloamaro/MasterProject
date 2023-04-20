@@ -3,7 +3,7 @@ use std::collections::{HashMap, VecDeque};
 use anyhow::Result;
 
 use crate::transaction::{Instruction, Transaction, TransactionAddress, TransactionOutput};
-use crate::vm_utils::SharedStorage;
+use crate::vm_utils::{SharedStorage};
 use crate::wip::Word;
 
 // pub const CHANNEL_CAPACITY: usize = 200;

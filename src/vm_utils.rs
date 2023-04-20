@@ -1,7 +1,10 @@
 use std::cmp::max;
 
 use serde::{Deserialize, Serialize};
+use thincollections::thin_set::ThinSet;
 
+use crate::config::RunParameter;
+use crate::contract::StaticAddress;
 use crate::vm::{Executor, Jobs};
 use crate::vm_a::VMa;
 use crate::vm_b::VMb;
@@ -10,12 +13,15 @@ use crate::wip::{AssignedWorker, Word};
 use crate::worker_implementation::{WorkerBStd, WorkerBTokio};
 
 //region VM Types ==================================================================================
-#[derive(Debug, Serialize, Deserialize, Copy, Clone)]
+#[derive(Debug, Serialize, Deserialize, Copy, Clone, PartialEq)]
 pub enum VmType {
     A,
     BTokio,
     BStd,
-    C
+    C,
+    Sequential,
+    ParallelCollect,
+    ParallelImmediate,
 }
 
 impl VmType {
@@ -25,6 +31,18 @@ impl VmType {
             VmType::BTokio => String::from("VmB_Tokio"),
             VmType::BStd => String::from("VmB_Std"),
             VmType::C => String::from("VmC"),
+            VmType::Sequential => String::from("Sequential"),
+            VmType::ParallelCollect => String::from("ParallelCollect"),
+            VmType::ParallelImmediate => String::from("ParallelImmediate"),
+        }
+    }
+
+    pub fn new(&self) -> bool {
+        match self {
+            VmType::Sequential => true,
+            VmType::ParallelCollect => true,
+            VmType::ParallelImmediate => true,
+            _ => false
         }
     }
 }
@@ -33,12 +51,13 @@ impl VmType {
 //region VM Factory ================================================================================
 pub struct VmFactory;
 impl VmFactory {
-    pub fn new_vm(tpe: &VmType, storage_size: usize, nb_cores: usize, batch_size: usize) -> Box<dyn Executor> {
-        match tpe {
-            VmType::A => Box::new(VMa::new(storage_size).unwrap()),
-            VmType::BTokio => Box::new(VMb::<WorkerBTokio>::new(storage_size, nb_cores, batch_size).unwrap()),
-            VmType::BStd => Box::new(VMb::<WorkerBStd>::new(storage_size, nb_cores, batch_size).unwrap()),
-            VmType::C => Box::new(VMc::new(storage_size, nb_cores, batch_size).unwrap()),
+    pub fn from(p: &RunParameter) -> Box<dyn Executor> {
+        match p.vm_type {
+            VmType::A => Box::new(VMa::new(p.storage_size).unwrap()),
+            VmType::BTokio => Box::new(VMb::<WorkerBTokio>::new(p. storage_size, p.nb_executors, p.batch_size).unwrap()),
+            VmType::BStd => Box::new(VMb::<WorkerBStd>::new(p. storage_size, p.nb_executors, p.batch_size).unwrap()),
+            VmType::C => Box::new(VMc::new(p. storage_size, p.nb_executors, p.batch_size).unwrap()),
+            _ => todo!()
         }
     }
 }
@@ -114,9 +133,38 @@ impl SharedStorage {
 }
 //endregion
 
+#[derive(Clone, Debug)]
+pub struct AddressSet {
+    pub inner: ThinSet<StaticAddress>
+}
+unsafe impl Send for AddressSet {}
+// unsafe impl Sync for AddressSet {}
+
+impl AddressSet {
+    pub fn with_capacity_and_max(cap: usize, _max: StaticAddress) -> Self {
+        let inner = ThinSet::with_capacity(cap);
+        return Self { inner };
+    }
+    pub fn with_capacity(cap: usize) -> Self {
+        let inner = ThinSet::with_capacity(cap);
+        return Self { inner };
+    }
+    #[inline]
+    pub fn contains(&self, el: StaticAddress) -> bool {
+        self.inner.contains(&el)
+    }
+    #[inline]
+    pub fn insert(&mut self, el: StaticAddress) -> bool {
+        self.inner.insert(el)
+    }
+    #[inline]
+    pub fn clear(&mut self) {
+        self.inner.clear()
+    }
+}
+
 pub const UNASSIGNED: AssignedWorker = 0;
 pub const CONFLICTING: AssignedWorker = AssignedWorker::MAX-1;
-// pub const EXECUTED: AssignedWorker = AssignedWorker::MAX-2;
 
 pub fn assign_workers(
     nb_workers: usize,

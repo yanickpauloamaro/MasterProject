@@ -1,11 +1,13 @@
 use std::collections::HashMap;
-use std::ops::{Div, Mul};
+use std::ops::{Add, Div, Index, IndexMut, Mul};
 use std::time::Duration;
 
-use anyhow::Result;
 // use hwloc::{ObjectType, Topology};
 use rand::rngs::StdRng;
 use rand::seq::{IteratorRandom, SliceRandom};
+use std::fmt::Debug;
+use std::iter::Take;
+use std::slice::Iter;
 
 use crate::transaction::{Instruction, Transaction, TransactionAddress};
 use crate::vm::Jobs;
@@ -27,52 +29,127 @@ macro_rules! debug {
     };
     ($($arg:tt)*) => {{
         if debugging!() {
-            // print!("**");
             println!($($arg)*);
         }
     }};
 }
 
-// pub fn check(condition: bool, ctx: &str) -> Result<()> {
-//
-//     if condition {
-//         Ok(())
-//     } else {
-//         let error_msg = anyhow::anyhow!("Host not compatible. {} not supported", ctx);
-//         Err(error_msg)
-//     }
-// }
-//
-// pub fn compatible(topo: &Topology) -> Result<()> {
-//
-//     check(topo.support().cpu().set_current_process(), "CPU Binding (current process)")?;
-//     check(topo.support().cpu().set_process(), "CPU Binding (any process)")?;
-//     check(topo.support().cpu().set_current_thread(), "CPU Binding (current thread)")?;
-//     check(topo.support().cpu().set_thread(), "CPU Binding (any thread)")?;
-//
-//     Ok(())
-// }
-//
-// pub fn get_nb_cores(topo: &Topology) -> usize {
-//     // TODO use num_cpus crate
-//     let core_depth = topo.depth_or_below_for_type(&ObjectType::Core).unwrap();
-//     let all_cores = topo.objects_at_depth(core_depth);
-//     return all_cores.len();
-// }
-//
-// pub fn get_nb_nodes(topo: &Topology, requested_nb_nodes: Option<usize>) -> Result<usize> {
-//     let nb_cores = get_nb_cores(&topo);
-//     match requested_nb_nodes {
-//         Some(nb_nodes) if nb_nodes > nb_cores => {
-//             let error_msg = anyhow::anyhow!(
-//                 "Not enough cores. {} requested but only {} available",
-//                 nb_nodes, nb_cores);
-//             return Err(error_msg);
-//         },
-//         Some(nb_nodes) => Ok(nb_nodes),
-//         None => Ok(nb_cores)
-//     }
-// }
+//region BoundedArray
+#[macro_export]
+macro_rules! bounded_array {
+    () => (
+        $BoundedArray::new()
+    );
+    ($elem:expr; $n:expr) => (
+        // BoundedArray::from_elem($elem, $n)
+        [$elem;$n]
+    );
+    ($($x:expr),+ $(,)?) => (
+        // BoundedArray::from_slice([$($x),+].as_slice())
+        [$($x),+]
+    );
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct BoundedArray<T: Sized + Copy + Default + Debug, const COUNT: usize> {
+    pub content: [T; COUNT],
+    pub occupied: usize
+}
+
+impl<T: Sized + Copy + Default + Debug, const COUNT: usize> BoundedArray<T, COUNT> {
+    pub fn new() -> Self {
+        BoundedArray{
+            content: [T::default(); COUNT],
+            occupied: 0
+        }
+    }
+
+    pub fn from_elem(elem: T, n: usize) -> Self {
+        let mut res = Self::new();
+        if n > COUNT {
+            panic!("Size too big");
+        }
+        res.occupied = n;
+        for i in 0..n {
+            res.content[i] = elem;
+        }
+        res
+    }
+
+    pub fn from_slice(iter: &[T]) -> Self {
+        let mut res = Self::new();
+        if iter.len() > COUNT {
+            panic!("Size too big");
+        }
+        res.occupied = iter.len();
+        for (i, el) in iter.iter().enumerate() {
+            res.content[i] = *el;
+        }
+        res
+    }
+
+    pub fn get(&self, i: usize) -> Option<&T> {
+        self.content.get(i)
+    }
+
+    pub fn get_mut(&mut self, i: usize) -> Option<&mut T> {
+        self.content.get_mut(i)
+    }
+
+    pub fn set(&mut self, i: usize, el: T) {
+        self.content[i] = el;
+    }
+
+    pub fn iter(&self) -> Take<Iter<T>>{
+        self.content.iter().take(self.occupied)
+    }
+}
+
+impl<T: Sized + Copy + Default + Debug, const COUNT: usize> Index<usize> for BoundedArray<T, COUNT> {
+    type Output = T;
+
+    fn index(&self, index: usize) -> &Self::Output {
+        &self.content[index]
+    }
+}
+
+impl<T: Sized + Copy + Default + Debug, const COUNT: usize> IndexMut<usize> for BoundedArray<T, COUNT> {
+    fn index_mut(&mut self, index: usize) -> &mut Self::Output {
+        &mut self.content[index]
+    }
+}
+//endregion
+
+//region confidence interval
+pub fn mean_ci_str(data: &Vec<Duration>) -> String {
+    let (mean, ci) = mean_ci(data);
+    format!("{:?} ± {:?}", mean, ci)
+}
+
+pub fn mean_ci(data: &Vec<Duration>) -> (Duration, Duration) {
+    // Assumes data iid, well defined mean and variance and large N (good enough for N >= 30)
+    let n = data.len();
+    let eta = 1.96;
+
+    let mean_estimate = data.iter()
+        .fold(Duration::from_nanos(0), |a, b| a.add(*b))
+        .div(n as u32)
+        .as_micros() as i128;
+
+    let mut sum = 0;
+
+    for point in data.iter() {
+        let diff = point.as_micros() as i128 - mean_estimate;
+        sum += diff * diff;
+    }
+
+    let std_estimate = f64::sqrt(sum as f64/n as f64);
+
+    let ci_delta = eta * std_estimate / f64::sqrt(n as f64);
+
+    (Duration::from_micros(mean_estimate as u64), Duration::from_micros(ci_delta as u64))
+}
+//endregion
 
 pub fn batch_account_creation(batch_size: usize, nb_accounts: usize, amount: u64) -> Vec<Transaction> {
     let mut batch = Vec::with_capacity(batch_size);

@@ -1,41 +1,25 @@
 #![allow(unused_variables)]
-
-use core::slice;
+#![allow(unused_mut)]
 use std::cmp::{max, min};
-use std::collections::{HashMap, VecDeque};
-use std::iter::Enumerate;
-use std::mem;
-use std::ops::{Add, Div};
-use std::sync::{Arc, Mutex};
-use std::sync::atomic::AtomicU8;
-use std::sync::mpsc::{channel, Receiver, Sender};
-use crossbeam::channel::{unbounded, Receiver as CrossbeamReceiver, Sender as CrossbeamSender};
-use std::thread::sleep;
+use std::collections::VecDeque;
+use std::ops::Add;
+use std::sync::Arc;
+use crossbeam::channel::{Receiver as CrossbeamReceiver, Sender as CrossbeamSender, unbounded};
 use std::time::{Duration, Instant};
-use std::vec::IntoIter;
 use tokio::sync::mpsc::{channel as tokio_channel, Receiver as TokioReceiver, Sender as TokioSender};
-use anyhow::anyhow;
-use crossbeam_utils::atomic::AtomicCell;
-use futures::{SinkExt, StreamExt};
-use itertools::Itertools;
-// use futures::SinkExt;
-// use hwloc::Topology;
 // use itertools::Itertools;
-use rand::rngs::StdRng;
-use rand::seq::{IteratorRandom, SliceRandom};
-use rayon::iter::{Chunks, IndexedParallelIterator, IntoParallelIterator, Map, ParallelDrainRange, ParallelIterator};
+use rayon::iter::{IndexedParallelIterator, ParallelDrainRange, ParallelIterator};
 use rayon::slice::ParallelSlice;
 use rayon::prelude::*;
 // use rayon::vec::Drain;
-use strum::{EnumIter, IntoEnumIterator};
-use thincollections::thin_set::ThinSet;
-use tokio::sync::RwLock;
+use strum::IntoEnumIterator;
 use tokio::task::JoinHandle;
 
 use crate::{debug, debugging};
+use crate::contract::{AtomicFunction, Round, Schedule, StaticAddress, Transaction};
 use crate::vm::Jobs;
-use crate::vm_utils::{SharedStorage, UNASSIGNED, VmStorage};
-use crate::wip::FunctionResult::Another;
+use crate::vm_utils::{AddressSet, UNASSIGNED, VmStorage};
+use crate::contract::FunctionResult::Another;
 
 pub const CONFLICT_WIP: u8 = u8::MAX;
 pub const DONE: u8 = CONFLICT_WIP - 1;
@@ -52,161 +36,7 @@ pub fn address_translation(addr: &Address) -> usize {
     return *addr as usize;
 }
 
-
-#[derive(Clone, Debug, EnumIter)]
-pub enum AtomicFunction {
-    Transfer = 0,
-    TransferDecrement = 1,
-    TransferIncrement = 2,
-}
-
-impl AtomicFunction {
-    pub unsafe fn execute(
-        &self,
-        mut tx: ContractTransaction,
-        mut storage: SharedStorage
-    ) -> FunctionResult {
-        let sender = tx.sender;
-        let addresses = tx.addresses;
-        let params = tx.params;
-
-        // eprintln!("Executing {:?}:", tx);
-        // TODO remove the sleep
-        // sleep(Duration::from_nanos(2));
-
-        use AtomicFunction::*;
-        return match self {
-            Transfer => {
-                let from = addresses[0] as usize;
-                let to = addresses[1] as usize;
-                let amount = params[0] as Word;
-
-
-                // eprintln!("Trying to get balance of {}...", from);
-                let balance_from = storage.get(from);
-                // eprintln!("Balance of {} is {}", from, balance_from);
-                if balance_from >= amount {
-                    *storage.get_mut(from) -= amount;
-                    *storage.get_mut(to) += amount;
-                    FunctionResult::Success
-                } else {
-                    // eprintln!("Insufficient funds");
-                    FunctionResult::ErrorMsg("Insufficient funds")
-                }
-            },
-            TransferDecrement => {
-                // Example of function that output another function
-                let from = addresses[0] as usize;
-                let amount = params[0] as Word;
-                if storage.get(from) >= amount {
-                    *storage.get_mut(from) -= amount;
-
-                    tx.function = TransferDecrement as FunctionAddress;
-
-                    FunctionResult::Another(tx)
-                } else {
-                    FunctionResult::ErrorMsg("Insufficient funds")
-                }
-            },
-            TransferIncrement => {
-                let to = addresses[1] as usize;
-                let amount = params[0] as Word;
-                *storage.get_mut(to) += amount;
-                FunctionResult::Success
-            }
-        }
-    }
-}
-
-#[derive(Clone, Debug)]
-pub enum FunctionResult<'a> {
-    // Running,
-    Success,
-    Another(ContractTransaction),
-    Error,
-    ErrorMsg(&'a str)
-}
-pub type SenderAddress = u32;
-pub type FunctionAddress = u32;
-pub type StaticAddress = u32;
-pub type FunctionParameter = u32;
-pub type Batch = Vec<ContractTransaction>;
-const MAX_NB_ADDRESSES: usize = 2;
-const MAX_NB_PARAMETERS: usize = 2;
-
-const MAX_TX_SIZE: usize = mem::size_of::<SenderAddress>() +
-    mem::size_of::<FunctionAddress>() +
-    MAX_NB_PARAMETERS * mem::size_of::<FunctionParameter>();
-
-// TODO Find safe way to have a variable length array?
-#[derive(Clone, Debug, Copy)]
-pub struct ContractTransaction {
-    pub sender: SenderAddress,
-    pub function: FunctionAddress,
-    pub addresses: [StaticAddress; MAX_NB_ADDRESSES],
-    pub params: [FunctionParameter; MAX_NB_PARAMETERS],
-}
-
-#[derive(Debug)]
-pub struct SequentialVM {
-    pub storage: Vec<Word>,
-    functions: Vec<AtomicFunction>,
-}
-
-impl SequentialVM {
-    pub fn new(storage_size: usize) -> anyhow::Result<Self> {
-        let storage = vec![0; storage_size];
-        let functions = AtomicFunction::iter().collect();
-
-        let vm = Self{ storage, functions };
-        return Ok(vm);
-    }
-
-    pub fn execute(&mut self, mut batch: Batch) -> anyhow::Result<Vec<FunctionResult>> {
-
-        let storage = SharedStorage{ ptr: self.storage.as_mut_ptr() };
-        let start = Instant::now();
-        while !batch.is_empty() {
-            let tx = batch.pop().unwrap();
-            let function = self.functions.get(tx.function as usize).unwrap();
-            match unsafe { function.execute(tx, storage) } {
-                FunctionResult::Another(generated_tx) => {
-                    batch.push(generated_tx);
-                },
-                _ => {
-                    continue;
-                }
-            }
-        }
-        // println!("Sequential took {:?}", start.elapsed());
-
-        return Ok(vec!());
-    }
-}
-
-#[derive(Clone, Debug)]
-pub struct ThinSetWrapper {
-    inner: ThinSet<StaticAddress>
-}
-impl ThinSetWrapper {
-    pub fn with_capacity_and_max(cap: usize, max: StaticAddress) -> Self {
-        let inner = ThinSet::with_capacity(2 * 65536 / 8);
-        return Self { inner };
-    }
-    #[inline]
-    pub fn contains(&self, el: StaticAddress) -> bool {
-        self.inner.contains(&el)
-    }
-    #[inline]
-    pub fn insert(&mut self, el: StaticAddress) -> bool {
-        self.inner.insert(el)
-    }
-    #[inline]
-    pub fn clear(&mut self) {
-        self.inner.clear()
-    }
-}
-unsafe impl Send for ThinSetWrapper {}
+pub type Batch = Vec<Transaction>;
 
 #[derive(Debug)]
 pub struct ConcurrentVM {
@@ -215,9 +45,6 @@ pub struct ConcurrentVM {
     nb_schedulers: usize,
     nb_workers: usize,
 }
-
-pub type Round = Vec<ContractTransaction>;
-pub type Schedule = Vec<Round>;
 
 impl ConcurrentVM {
     pub fn new(storage_size: usize, nb_schedulers: usize, nb_workers: usize) -> anyhow::Result<Self> {
@@ -257,13 +84,13 @@ impl ConcurrentVM {
         // 8 * chunk_size
     }
 
-    fn schedule_chunk(&self, scheduler_index: usize, mut chunk: Vec<ContractTransaction>)
-                      -> (Vec<ContractTransaction>, Vec<ContractTransaction>) {
+    fn schedule_chunk(&self, scheduler_index: usize, mut chunk: Vec<Transaction>)
+                      -> (Vec<Transaction>, Vec<Transaction>) {
         let mut scheduled = Vec::with_capacity(chunk.len());
         let mut postponed = Vec::with_capacity(chunk.len());
 
         let a = Instant::now();
-        let mut working_set = ThinSetWrapper::with_capacity_and_max(
+        let mut working_set = AddressSet::with_capacity_and_max(
             self.get_working_set_capacity(chunk.len()),
             self.storage.len() as StaticAddress
         );
@@ -286,8 +113,8 @@ impl ConcurrentVM {
         (scheduled, postponed)
     }
 
-    fn schedule_backlog_single_pass(&self, backlog: &mut Vec<ContractTransaction>)
-                                    -> Vec<(usize, (Round, Vec<ContractTransaction>))> {
+    fn schedule_backlog_single_pass(&self, backlog: &mut Vec<Transaction>)
+                                    -> Vec<(usize, (Round, Vec<Transaction>))> {
         // TODO Only return scheduled and postponed
         let chunk_size = self.get_scheduler_chunk_size(backlog.len());
         let a = Instant::now();
@@ -304,34 +131,10 @@ impl ConcurrentVM {
 
 
     // Send rounds one by one
-    fn schedule_backlog_variant_1(&self, mut backlog: &mut Vec<ContractTransaction>, worker_pool: &CrossbeamSender<Round>) -> anyhow::Result<()> {
+    fn schedule_backlog_variant_1(&self, mut backlog: &mut Vec<Transaction>, worker_pool: &CrossbeamSender<Round>) -> anyhow::Result<()> {
         while !backlog.is_empty() {
 
             let rounds = self.schedule_backlog_single_pass(&mut backlog);
-
-            for (scheduler_index, (round, mut postponed)) in rounds {
-                // debug!("Scheduler {}: scheduled {}, postponed {}", scheduler_index, round.len(), postponed.len());
-                worker_pool.send(round)?;
-                backlog.append(&mut postponed);
-            }
-        }
-
-        Ok(())
-    }
-
-    // Send rounds one by one
-    fn schedule_backlog_variant_1_bis(&self, mut backlog: &mut Vec<ContractTransaction>, worker_pool: &CrossbeamSender<Round>) -> anyhow::Result<()> {
-        while !backlog.is_empty() {
-            let mut backlog_tail = backlog.split_off(backlog.len()/2);
-            let rounds = self.schedule_backlog_single_pass(&mut backlog);
-
-            for (scheduler_index, (round, mut postponed)) in rounds {
-                // debug!("Scheduler {}: scheduled {}, postponed {}", scheduler_index, round.len(), postponed.len());
-                worker_pool.send(round)?;
-                backlog.append(&mut postponed);
-            }
-
-            let rounds = self.schedule_backlog_single_pass(&mut backlog_tail);
 
             for (scheduler_index, (round, mut postponed)) in rounds {
                 // debug!("Scheduler {}: scheduled {}, postponed {}", scheduler_index, round.len(), postponed.len());
@@ -344,43 +147,10 @@ impl ConcurrentVM {
     }
 
     // Group rounds and send them after each iteration
-    fn schedule_backlog_variant_2(&self, mut backlog: &mut Vec<ContractTransaction>, worker_pool: &CrossbeamSender<Schedule>) -> anyhow::Result<()> {
+    fn schedule_backlog_variant_2(&self, mut backlog: &mut Vec<Transaction>, worker_pool: &CrossbeamSender<Schedule>) -> anyhow::Result<()> {
         while !backlog.is_empty() {
 
             let rounds = self.schedule_backlog_single_pass(&mut backlog);
-
-            let mut schedule: Schedule = Vec::with_capacity(rounds.len());
-
-            for (scheduler_index, (round, mut postponed)) in rounds {
-                // debug!("Scheduler {}: scheduled {}, postponed {}", scheduler_index, round.len(), postponed.len());
-                schedule.push(round);
-                backlog.append(&mut postponed);
-            }
-
-            worker_pool.send(schedule)?;
-        }
-
-        Ok(())
-    }
-
-    // Group rounds and send them after each iteration
-    fn schedule_backlog_variant_2_bis(&self, mut backlog: &mut Vec<ContractTransaction>, worker_pool: &CrossbeamSender<Schedule>) -> anyhow::Result<()> {
-        while !backlog.is_empty() {
-
-            let mut tail = backlog.split_off(backlog.len()/2);
-            let rounds = self.schedule_backlog_single_pass(&mut backlog);
-
-            let mut schedule: Schedule = Vec::with_capacity(rounds.len());
-
-            for (scheduler_index, (round, mut postponed)) in rounds {
-                // debug!("Scheduler {}: scheduled {}, postponed {}", scheduler_index, round.len(), postponed.len());
-                schedule.push(round);
-                backlog.append(&mut postponed);
-            }
-
-            worker_pool.send(schedule)?;
-
-            let rounds = self.schedule_backlog_single_pass(&mut tail);
 
             let mut schedule: Schedule = Vec::with_capacity(rounds.len());
 
@@ -397,7 +167,7 @@ impl ConcurrentVM {
     }
 
     // Group rounds and send them once the backlog is empty
-    fn schedule_backlog_variant_3(&self, mut backlog: &mut Vec<ContractTransaction>, worker_pool: &CrossbeamSender<Schedule>) -> anyhow::Result<()> {
+    fn schedule_backlog_variant_3(&self, mut backlog: &mut Vec<Transaction>, worker_pool: &CrossbeamSender<Schedule>) -> anyhow::Result<()> {
         if backlog.is_empty() {
             return Ok(());
         }
@@ -420,7 +190,7 @@ impl ConcurrentVM {
         Ok(())
     }
 
-    fn execute_tx(&self, tx: &ContractTransaction) -> Option<ContractTransaction> {
+    fn execute_tx(&self, tx: &Transaction) -> Option<Transaction> {
         // execute the transaction and optionally generate a new tx
         let function = self.functions.get(tx.function as usize).unwrap();
         match unsafe { function.execute(tx.clone(), self.storage.get_shared()) } {
@@ -429,7 +199,7 @@ impl ConcurrentVM {
         }
     }
 
-    fn execute_chunk(&self, worker_index:usize, mut worker_backlog: &[ContractTransaction]) -> Vec<ContractTransaction> {
+    fn execute_chunk(&self, worker_index:usize, mut worker_backlog: &[Transaction]) -> Vec<Transaction> {
 
         // print!("{}", worker_backlog.len());
         let w = Instant::now();
@@ -443,7 +213,7 @@ impl ConcurrentVM {
     }
 
     // TODO replace flatmap with map + for loop?
-    pub fn execute_round(&self, round_index: usize, mut round: Round) -> Vec<ContractTransaction> {
+    pub fn execute_round(&self, round_index: usize, mut round: Round) -> Vec<Transaction> {
         let chunk_size = self.get_chunk_size(round.len());
         round
             // .into_par_iter()
@@ -457,7 +227,7 @@ impl ConcurrentVM {
             ).collect()
     }
 
-    fn execute_schedule_variant_1(&self, mut schedule: Schedule, scheduling_pool: &CrossbeamSender<Vec<ContractTransaction>>) -> anyhow::Result<usize> {
+    fn execute_schedule_variant_1(&self, mut schedule: Schedule, scheduling_pool: &CrossbeamSender<Vec<Transaction>>) -> anyhow::Result<usize> {
         let mut completed = 0;
         for (round_index, round) in schedule.into_iter().enumerate() {
             completed += round.len();
@@ -470,7 +240,7 @@ impl ConcurrentVM {
 
     // TODO Variant that actually send tx to execute as fast as possible
     // Send rounds one by one
-    async fn schedule_backlog_variant_1_async(mut backlog: &mut Vec<ContractTransaction>, worker_pool: &TokioSender<Round>) -> anyhow::Result<()> {
+    async fn schedule_backlog_variant_1_async(mut backlog: &mut Vec<Transaction>, worker_pool: &TokioSender<Round>) -> anyhow::Result<()> {
         while !backlog.is_empty() {
 
             let chunk_size = backlog.len()/8 + 1; //self.get_scheduler_chunk_size(backlog.len());
@@ -485,7 +255,7 @@ impl ConcurrentVM {
                     let mut postponed = Vec::with_capacity(chunk.len());
 
                     let a = Instant::now();
-                    let mut working_set = ThinSetWrapper::with_capacity_and_max(
+                    let mut working_set = AddressSet::with_capacity_and_max(
                         // self.get_working_set_capacity(chunk.len()),
                         2 * 65536,
                         storage_size as StaticAddress
@@ -550,7 +320,7 @@ impl ConcurrentVM {
         Ok(())
     }
 
-    async fn execute_schedule_variant_1_async(&self, mut schedule: Schedule, scheduling_pool: &TokioSender<Vec<ContractTransaction>>) -> anyhow::Result<usize> {
+    async fn execute_schedule_variant_1_async(&self, mut schedule: Schedule, scheduling_pool: &TokioSender<Vec<Transaction>>) -> anyhow::Result<usize> {
         let mut completed = 0;
         for (round_index, round) in schedule.into_iter().enumerate() {
             completed += round.len();
@@ -564,7 +334,7 @@ impl ConcurrentVM {
         Ok(completed)
     }
 
-    fn execute_schedule_variant_2(&self, mut schedule: Schedule, scheduling_pool: &CrossbeamSender<Vec<ContractTransaction>>) -> anyhow::Result<usize> {
+    fn execute_schedule_variant_2(&self, mut schedule: Schedule, scheduling_pool: &CrossbeamSender<Vec<Transaction>>) -> anyhow::Result<usize> {
         let mut completed = 0;
         let mut generated_tx = vec!();
 
@@ -579,7 +349,7 @@ impl ConcurrentVM {
         Ok(completed)
     }
 
-    pub async fn execute_variant_1_async(&mut self, mut batch: Vec<ContractTransaction>) -> anyhow::Result<()> {
+    pub async fn execute_variant_1_async(&mut self, mut batch: Vec<Transaction>) -> anyhow::Result<()> {
         let batch_size = batch.len();
 
         let (send_generated_tx, receive_generated_tx) = tokio_channel(10);
@@ -629,7 +399,7 @@ impl ConcurrentVM {
         Ok(())
     }
 
-    pub fn execute_variant_1(&mut self, mut batch: Vec<ContractTransaction>) -> anyhow::Result<()> {
+    pub fn execute_variant_1(&mut self, mut batch: Vec<Transaction>) -> anyhow::Result<()> {
         let batch_size = batch.len();
 
         let (send_generated_tx, receive_generated_tx) = unbounded();
@@ -637,7 +407,7 @@ impl ConcurrentVM {
 
         send_generated_tx.send(batch)?;
 
-        let scheduling = |new_backlog: CrossbeamReceiver<Vec<ContractTransaction>>, mut worker_pool: CrossbeamSender<Round>| {
+        let scheduling = |new_backlog: CrossbeamReceiver<Vec<Transaction>>, mut worker_pool: CrossbeamSender<Round>| {
             let mut duration = Duration::from_secs(0);
             while let Ok(mut backlog) = new_backlog.recv() {
                 let scheduling_start = Instant::now();
@@ -648,7 +418,7 @@ impl ConcurrentVM {
         };
 
         let execution =
-            |next_round: CrossbeamReceiver<Round>, mut scheduling_pool: CrossbeamSender<Vec<ContractTransaction>>| {
+            |next_round: CrossbeamReceiver<Round>, mut scheduling_pool: CrossbeamSender<Vec<Transaction>>| {
                 let mut duration = Duration::from_secs(0);
                 let mut executed = 0;
                 while let Ok(round) = next_round.recv() {
@@ -679,7 +449,7 @@ impl ConcurrentVM {
         Ok(())
     }
 
-    pub fn execute_variant_2(&mut self, mut batch: Vec<ContractTransaction>) -> anyhow::Result<()> {
+    pub fn execute_variant_2(&mut self, mut batch: Vec<Transaction>) -> anyhow::Result<()> {
         let batch_size = batch.len();
 
         let (send_generated_tx, receive_generated_tx) = unbounded();
@@ -687,7 +457,7 @@ impl ConcurrentVM {
 
         send_generated_tx.send(batch)?;
 
-        let scheduling = |new_backlog: CrossbeamReceiver<Vec<ContractTransaction>>, mut worker_pool: CrossbeamSender<Schedule>| {
+        let scheduling = |new_backlog: CrossbeamReceiver<Vec<Transaction>>, mut worker_pool: CrossbeamSender<Schedule>| {
             let mut duration = Duration::from_secs(0);
             while let Ok(mut backlog) = new_backlog.recv() {
                 let scheduling_start = Instant::now();
@@ -698,7 +468,7 @@ impl ConcurrentVM {
         };
 
         let execution =
-            |next_round: CrossbeamReceiver<Schedule>, mut scheduling_pool: CrossbeamSender<Vec<ContractTransaction>>| {
+            |next_round: CrossbeamReceiver<Schedule>, mut scheduling_pool: CrossbeamSender<Vec<Transaction>>| {
                 let mut duration = Duration::from_secs(0);
                 let mut executed = 0;
                 while let Ok(schedule) = next_round.recv() {
@@ -729,7 +499,7 @@ impl ConcurrentVM {
         Ok(())
     }
 
-    pub fn execute_variant_3(&mut self, mut batch: Vec<ContractTransaction>) -> anyhow::Result<()> {
+    pub fn execute_variant_3(&mut self, mut batch: Vec<Transaction>) -> anyhow::Result<()> {
         let batch_size = batch.len();
 
         let (send_generated_tx, receive_generated_tx) = unbounded();
@@ -737,7 +507,7 @@ impl ConcurrentVM {
 
         send_generated_tx.send(batch)?;
 
-        let scheduling = |new_backlog: CrossbeamReceiver<Vec<ContractTransaction>>, mut worker_pool: CrossbeamSender<Schedule>| {
+        let scheduling = |new_backlog: CrossbeamReceiver<Vec<Transaction>>, mut worker_pool: CrossbeamSender<Schedule>| {
             let mut duration = Duration::from_secs(0);
             while let Ok(mut backlog) = new_backlog.recv() {
                 let scheduling_start = Instant::now();
@@ -748,7 +518,7 @@ impl ConcurrentVM {
         };
 
         let execution =
-            |next_round: CrossbeamReceiver<Schedule>, mut scheduling_pool: CrossbeamSender<Vec<ContractTransaction>>| {
+            |next_round: CrossbeamReceiver<Schedule>, mut scheduling_pool: CrossbeamSender<Vec<Transaction>>| {
                 let mut duration = Duration::from_secs(0);
                 let mut executed = 0;
                 while let Ok(schedule) = next_round.recv() {
@@ -772,14 +542,14 @@ impl ConcurrentVM {
         let execution_duration = execution_res.unwrap();
 
         // println!("Variant 3:");
-        println!("\tScheduling (v2): {:?}", scheduling_duration);
-        println!("\tExecution (v2):  {:?}", execution_duration);
-        println!("\tSum: {:?}", scheduling_duration + execution_duration);
+        // println!("\tScheduling (v2): {:?}", scheduling_duration);
+        // println!("\tExecution (v2):  {:?}", execution_duration);
+        // println!("\tSum: {:?}", scheduling_duration + execution_duration);
 
         Ok(())
     }
 
-    pub fn execute_variant_4(&mut self, mut batch: Vec<ContractTransaction>) -> anyhow::Result<()> {
+    pub fn execute_variant_4(&mut self, mut batch: Vec<Transaction>) -> anyhow::Result<()> {
         let batch_size = batch.len();
 
         let (send_generated_tx, receive_generated_tx) = unbounded();
@@ -787,7 +557,7 @@ impl ConcurrentVM {
 
         send_generated_tx.send(batch)?;
 
-        let scheduling = |new_backlog: CrossbeamReceiver<Vec<ContractTransaction>>, mut worker_pool: CrossbeamSender<Schedule>| {
+        let scheduling = |new_backlog: CrossbeamReceiver<Vec<Transaction>>, mut worker_pool: CrossbeamSender<Schedule>| {
             let mut duration = Duration::from_secs(0);
             while let Ok(mut backlog) = new_backlog.recv() {
                 let scheduling_start = Instant::now();
@@ -798,7 +568,7 @@ impl ConcurrentVM {
         };
 
         let execution =
-            |next_round: CrossbeamReceiver<Schedule>, mut scheduling_pool: CrossbeamSender<Vec<ContractTransaction>>| {
+            |next_round: CrossbeamReceiver<Schedule>, mut scheduling_pool: CrossbeamSender<Vec<Transaction>>| {
                 let mut duration = Duration::from_secs(0);
                 let mut executed = 0;
                 while let Ok(schedule) = next_round.recv() {
@@ -822,14 +592,14 @@ impl ConcurrentVM {
         let execution_duration = execution_res.unwrap();
 
         // println!("Variant 4:");
-        println!("\tScheduling (v3): {:?}", scheduling_duration);
-        println!("\tExecution (v1):  {:?}", execution_duration);
-        println!("\tSum: {:?}", scheduling_duration + execution_duration);
+        // println!("\tScheduling (v3): {:?}", scheduling_duration);
+        // println!("\tExecution (v1):  {:?}", execution_duration);
+        // println!("\tSum: {:?}", scheduling_duration + execution_duration);
 
         Ok(())
     }
 
-    pub fn execute_variant_5(&mut self, mut batch: Vec<ContractTransaction>) -> anyhow::Result<()> {
+    pub fn execute_variant_5(&mut self, mut batch: Vec<Transaction>) -> anyhow::Result<()> {
         let batch_size = batch.len();
 
         let (send_generated_tx, receive_generated_tx) = unbounded();
@@ -837,7 +607,7 @@ impl ConcurrentVM {
 
         send_generated_tx.send(batch)?;
 
-        let scheduling = |new_backlog: CrossbeamReceiver<Vec<ContractTransaction>>, mut worker_pool: CrossbeamSender<Schedule>| {
+        let scheduling = |new_backlog: CrossbeamReceiver<Vec<Transaction>>, mut worker_pool: CrossbeamSender<Schedule>| {
             let mut duration = Duration::from_secs(0);
             while let Ok(mut backlog) = new_backlog.recv() {
                 let scheduling_start = Instant::now();
@@ -848,7 +618,7 @@ impl ConcurrentVM {
         };
 
         let execution =
-            |next_round: CrossbeamReceiver<Schedule>, mut scheduling_pool: CrossbeamSender<Vec<ContractTransaction>>| {
+            |next_round: CrossbeamReceiver<Schedule>, mut scheduling_pool: CrossbeamSender<Vec<Transaction>>| {
                 let mut duration = Duration::from_secs(0);
                 let mut executed = 0;
                 while let Ok(schedule) = next_round.recv() {
@@ -879,7 +649,7 @@ impl ConcurrentVM {
         Ok(())
     }
 
-    pub fn execute_variant_6(&mut self, mut batch: Vec<ContractTransaction>) -> anyhow::Result<()> {
+    pub fn execute_variant_6(&mut self, mut batch: Vec<Transaction>) -> anyhow::Result<()> {
 
         let batch_size = batch.len();
 
@@ -892,16 +662,19 @@ impl ConcurrentVM {
         }
         let (send_generated_tx, receive_generated_tx) = unbounded();
 
+
         send_generated_tx.send(batch)?;
 
-        let scheduling = |new_backlog: crossbeam::channel::Receiver<Vec<ContractTransaction>>, mut outputs: Vec<crossbeam::channel::Sender<Round>>| {
+        let scheduling = |new_backlog: crossbeam::channel::Receiver<Vec<Transaction>>, mut outputs: Vec<crossbeam::channel::Sender<Round>>| {
             let mut duration = Duration::from_secs(0);
             while let Ok(mut backlog) = new_backlog.recv() {
                 let scheduling_start = Instant::now();
 
                 while !backlog.is_empty() {
                     let chunk_size = self.get_scheduler_chunk_size(backlog.len());
-                    let res: Vec<_> = backlog.par_drain(..backlog.len()).chunks(chunk_size)
+                    let mut chunks = backlog.par_drain(..backlog.len()).chunks(chunk_size);
+
+                    let res: Vec<_> = chunks
                         .zip(outputs.par_iter_mut()).enumerate()
                         .map(|(scheduler_index, (chunk, output))| {
                         let (scheduled, postponed) = self.schedule_chunk(scheduler_index, chunk);
@@ -910,13 +683,13 @@ impl ConcurrentVM {
                             }
                             postponed
                     }).collect();
-// There is a bug here
+
                     /* TODO move the job of splitting a batch into chunks to the executor pool
                         Otherwise if there are less tx than there are schedulers, the executor pool
                         will end up waiting on a channel that will never receive a msg.
                         This is workaround to ensure the executor pool is never stuck
                         */
-                    for i in new_backlog.len()..self.nb_schedulers {
+                    for i in res.len()..self.nb_schedulers {
                         if let Err(e) = outputs[i].send(vec!()) {
                             panic!("Failed to send empty schedule");
                         }
@@ -933,7 +706,7 @@ impl ConcurrentVM {
         };
 
         let execution =
-            |inputs: Vec<crossbeam::channel::Receiver<Round>>, mut scheduling_pool: crossbeam::channel::Sender<Vec<ContractTransaction>>| {
+            |inputs: Vec<crossbeam::channel::Receiver<Round>>, mut scheduling_pool: crossbeam::channel::Sender<Vec<Transaction>>| {
                 let mut duration = Duration::from_secs(0);
                 let mut completed = 0;
                 loop {
@@ -950,6 +723,7 @@ impl ConcurrentVM {
                         }
                     }
 
+                    // TODO this is wrong
                     if generated_tx.is_empty() {
                         break;
                     } else {
@@ -968,14 +742,14 @@ impl ConcurrentVM {
         let execution_duration = execution_res.unwrap();
 
         // println!("Variant 6:");
-        println!("\tScheduling (v0): {:?}", scheduling_duration);
-        println!("\tExecution (v2):  {:?}", execution_duration);
-        println!("\tSum: {:?}", scheduling_duration + execution_duration);
+        // println!("\tScheduling (v0): {:?}", scheduling_duration);
+        // println!("\tExecution (v2):  {:?}", execution_duration);
+        // println!("\tSum: {:?}", scheduling_duration + execution_duration);
 
         Ok(())
     }
 
-    pub fn execute_variant_7(&mut self, mut batch: Vec<ContractTransaction>) -> anyhow::Result<()> {
+    pub fn execute_variant_7(&mut self, mut batch: Vec<Transaction>) -> anyhow::Result<()> {
 
         let batch_size = batch.len();
 
@@ -990,7 +764,7 @@ impl ConcurrentVM {
 
         send_generated_tx.send(batch)?;
 
-        let scheduling = |new_backlog: crossbeam::channel::Receiver<Vec<ContractTransaction>>, mut outputs: Vec<crossbeam::channel::Sender<Round>>| {
+        let scheduling = |new_backlog: crossbeam::channel::Receiver<Vec<Transaction>>, mut outputs: Vec<crossbeam::channel::Sender<Round>>| {
             let mut duration = Duration::from_secs(0);
             while let Ok(mut backlog) = new_backlog.recv() {
                 let scheduling_start = Instant::now();
@@ -998,7 +772,7 @@ impl ConcurrentVM {
                 while !backlog.is_empty() {
                     let chunk_size = self.get_scheduler_chunk_size(backlog.len());
 
-                    let new_backlog: Vec<_> = backlog.par_drain(..backlog.len()).chunks(chunk_size)
+                    let res: Vec<_> = backlog.par_drain(..backlog.len()).chunks(chunk_size)
                         .zip(outputs.par_iter_mut()).enumerate()
                         .map(|(scheduler_index, (chunk, output))| {
                             let (scheduled, postponed) = self.schedule_chunk(scheduler_index, chunk);
@@ -1013,13 +787,13 @@ impl ConcurrentVM {
                         will end up waiting on a channel that will never receive a msg.
                         This is workaround to ensure the executor pool is never stuck
                         */
-                    for i in new_backlog.len()..self.nb_schedulers {
+                    for i in res.len()..self.nb_schedulers {
                         if let Err(e) = outputs[i].send(vec!()) {
                             panic!("Failed to send schedule");
                         }
                     }
 
-                    for mut postponed in new_backlog {
+                    for mut postponed in res {
                         backlog.append(&mut postponed);
                     }
                 }
@@ -1030,7 +804,7 @@ impl ConcurrentVM {
         };
 
         let execution =
-            |inputs: Vec<crossbeam::channel::Receiver<Round>>, mut scheduling_pool: crossbeam::channel::Sender<Vec<ContractTransaction>>| {
+            |inputs: Vec<crossbeam::channel::Receiver<Round>>, mut scheduling_pool: crossbeam::channel::Sender<Vec<Transaction>>| {
                 let mut duration = Duration::from_secs(0);
                 let mut completed = 0;
                 loop {
@@ -1050,7 +824,7 @@ impl ConcurrentVM {
                             duration = duration.add(execution_start.elapsed());
                         }
                     }
-
+                    // TODO this is wrong
                     if generated == 0{
                         break;
                     }
@@ -1067,9 +841,9 @@ impl ConcurrentVM {
         let execution_duration = execution_res.unwrap();
 
         // println!("Variant 7:");
-        println!("\tScheduling (v0): {:?}", scheduling_duration);
-        println!("\tExecution (v1):  {:?}", execution_duration);
-        println!("\tSum: {:?}", scheduling_duration + execution_duration);
+        // println!("\tScheduling (v0): {:?}", scheduling_duration);
+        // println!("\tExecution (v1):  {:?}", execution_duration);
+        // println!("\tSum: {:?}", scheduling_duration + execution_duration);
 
         Ok(())
     }
@@ -1083,7 +857,7 @@ pub struct BackgroundVMDeque {
     // functions: Arc<std::sync::RwLock<Vec<AtomicFunction>>>,
     functions: Arc<Vec<AtomicFunction>>,
 
-    send_batch: TokioSender<Vec<ContractTransaction>>,
+    send_batch: TokioSender<Vec<Transaction>>,
     receive_result: TokioReceiver<()>,
 
     nb_workers: usize,
@@ -1103,8 +877,8 @@ impl BackgroundVMDeque {
         let chunk_size = 65536/nb_schedulers + 1;
         let max_addr_per_tx = 2;
 
-        let mut scheduler_inputs: Vec<TokioReceiver<VecDeque<ContractTransaction>>> = Vec::with_capacity(nb_schedulers);
-        let mut scheduler_outputs: Vec<TokioSender<VecDeque<ContractTransaction>>> = Vec::with_capacity(nb_schedulers);
+        let mut scheduler_inputs: Vec<TokioReceiver<VecDeque<Transaction>>> = Vec::with_capacity(nb_schedulers);
+        let mut scheduler_outputs: Vec<TokioSender<VecDeque<Transaction>>> = Vec::with_capacity(nb_schedulers);
 
         let mut worker_pool_inputs = Vec::with_capacity(nb_schedulers);
         let mut worker_pool_outputs = Vec::with_capacity(nb_schedulers);
@@ -1126,7 +900,7 @@ impl BackgroundVMDeque {
             // worker_outputs.push(worker_out);
         }
 
-        let (send_batch, mut receive_batch): (TokioSender<Vec<ContractTransaction>>, TokioReceiver<Vec<ContractTransaction>>) = tokio_channel(1);
+        let (send_batch, mut receive_batch): (TokioSender<Vec<Transaction>>, TokioReceiver<Vec<Transaction>>) = tokio_channel(1);
         let (send_result, mut receive_result): (TokioSender<()>, TokioReceiver<()>) = tokio_channel(1);
 
         // TODO Graceful shutdown
@@ -1136,8 +910,8 @@ impl BackgroundVMDeque {
 
         let coordinator = tokio::spawn(async move {
             let mut nb_remaining_tx = vec![0; nb_schedulers];
-            let mut backlog: VecDeque<ContractTransaction> = VecDeque::with_capacity(2 * chunk_size);
-            let mut vec_pool: Vec<VecDeque<ContractTransaction>> = Vec::with_capacity(1);
+            let mut backlog: VecDeque<Transaction> = VecDeque::with_capacity(2 * chunk_size);
+            let mut vec_pool: Vec<VecDeque<Transaction>> = Vec::with_capacity(1);
 let mut duration = Duration::from_secs(0);
             while let Some(mut batch) = receive_batch.recv().await {
                 if batch.is_empty() {
@@ -1161,7 +935,7 @@ let mut duration = Duration::from_secs(0);
                         tmp
                         // VecDeque::from(Vec::from(chunk))
                     } else {
-                        let mut tmp: VecDeque<ContractTransaction> = vec_pool.pop().unwrap();
+                        let mut tmp: VecDeque<Transaction> = vec_pool.pop().unwrap();
                         tmp.extend(chunk.iter());
                         tmp
                     };
@@ -1226,7 +1000,7 @@ let mut duration = Duration::from_secs(0);
                                             // }
                                             // let res = worker_backlog;
 
-                                            let res: Vec<ContractTransaction> = worker_backlog
+                                            let res: Vec<Transaction> = worker_backlog
                                                 // .drain(..worker_backlog.len())
                                                 .into_iter()
                                                 .flat_map(|tx| {
@@ -1315,9 +1089,9 @@ let mut duration = Duration::from_secs(0);
             .map(|(scheduler_index, (mut input, output))| {
             tokio::spawn(async move {
 
-                let mut set_owned = ThinSetWrapper::with_capacity_and_max(chunk_size * max_addr_per_tx, storage_size as StaticAddress);
-                let mut backlog_owned: VecDeque<ContractTransaction> = VecDeque::with_capacity(2 * chunk_size);
-                let mut scheduled: VecDeque<ContractTransaction> = VecDeque::with_capacity(2 * chunk_size);
+                let mut set_owned = AddressSet::with_capacity_and_max(chunk_size * max_addr_per_tx, storage_size as StaticAddress);
+                let mut backlog_owned: VecDeque<Transaction> = VecDeque::with_capacity(2 * chunk_size);
+                let mut scheduled: VecDeque<Transaction> = VecDeque::with_capacity(2 * chunk_size);
 
                 // TODO Scheduler is waiting for a new input to merge with its current backlog but the coordinator is waiting on this scheduler to get sth to execute
                 // => need to send them empty backlogs...
@@ -1390,7 +1164,7 @@ let mut duration = Duration::from_secs(0);
         return Ok(vm);
     }
 
-    pub async fn execute(&mut self, mut batch: Vec<ContractTransaction>) -> anyhow::Result<()> {
+    pub async fn execute(&mut self, mut batch: Vec<Transaction>) -> anyhow::Result<()> {
 
         if let Err(e) = self.send_batch.send(batch).await {
             panic!("Failed to send batch to be executed");
@@ -1433,7 +1207,7 @@ pub struct BackgroundVM {
     // functions: Arc<std::sync::RwLock<Vec<AtomicFunction>>>,
     functions: Arc<Vec<AtomicFunction>>,
 
-    send_batch: TokioSender<Vec<ContractTransaction>>,
+    send_batch: TokioSender<Vec<Transaction>>,
     receive_result: TokioReceiver<()>,
 
     nb_workers: usize,
@@ -1453,8 +1227,8 @@ impl BackgroundVM {
         let chunk_size = 65536/nb_schedulers + 1;
         let max_addr_per_tx = 2;
 
-        let mut scheduler_inputs: Vec<TokioReceiver<Vec<ContractTransaction>>> = Vec::with_capacity(nb_schedulers);
-        let mut scheduler_outputs: Vec<TokioSender<Vec<ContractTransaction>>> = Vec::with_capacity(nb_schedulers);
+        let mut scheduler_inputs: Vec<TokioReceiver<Vec<Transaction>>> = Vec::with_capacity(nb_schedulers);
+        let mut scheduler_outputs: Vec<TokioSender<Vec<Transaction>>> = Vec::with_capacity(nb_schedulers);
 
         let mut worker_pool_inputs = Vec::with_capacity(nb_schedulers);
         let mut worker_pool_outputs = Vec::with_capacity(nb_schedulers);
@@ -1469,7 +1243,7 @@ impl BackgroundVM {
             worker_pool_inputs.push(pool_in);
         }
 
-        let (send_batch, mut receive_batch): (TokioSender<Vec<ContractTransaction>>, TokioReceiver<Vec<ContractTransaction>>) = tokio_channel(1);
+        let (send_batch, mut receive_batch): (TokioSender<Vec<Transaction>>, TokioReceiver<Vec<Transaction>>) = tokio_channel(1);
         let (send_result, mut receive_result): (TokioSender<()>, TokioReceiver<()>) = tokio_channel(1);
 
         // TODO Graceful shutdown
@@ -1479,8 +1253,8 @@ impl BackgroundVM {
 
         let coordinator = tokio::spawn(async move {
             let mut nb_remaining_tx = vec![0; nb_schedulers];
-            let mut backlog: Vec<ContractTransaction> = Vec::with_capacity(2 * chunk_size);
-            let mut vec_pool: Vec<Vec<ContractTransaction>> = Vec::with_capacity(1);
+            let mut backlog: Vec<Transaction> = Vec::with_capacity(2 * chunk_size);
+            let mut vec_pool: Vec<Vec<Transaction>> = Vec::with_capacity(1);
             let mut duration = Duration::from_secs(0);
             while let Some(mut batch) = receive_batch.recv().await {
                 if batch.is_empty() {
@@ -1593,9 +1367,9 @@ impl BackgroundVM {
             .map(|(scheduler_index, (mut input, output))| {
                 tokio::spawn(async move {
 
-                    let mut set_owned = ThinSetWrapper::with_capacity_and_max(chunk_size * max_addr_per_tx, storage_size as StaticAddress);
-                    let mut backlog_owned: VecDeque<ContractTransaction> = VecDeque::with_capacity(2 * chunk_size);
-                    let mut scheduled: Vec<ContractTransaction> = Vec::with_capacity(2 * chunk_size);
+                    let mut set_owned = AddressSet::with_capacity_and_max(chunk_size * max_addr_per_tx, storage_size as StaticAddress);
+                    let mut backlog_owned: VecDeque<Transaction> = VecDeque::with_capacity(2 * chunk_size);
+                    let mut scheduled: Vec<Transaction> = Vec::with_capacity(2 * chunk_size);
 
                     // TODO Scheduler is waiting for a new input to merge with its current backlog but the coordinator is waiting on this scheduler to get sth to execute
                     // => need to send them empty backlogs...
@@ -1668,7 +1442,7 @@ impl BackgroundVM {
         return Ok(vm);
     }
 
-    pub async fn execute(&mut self, mut batch: Vec<ContractTransaction>) -> anyhow::Result<()> {
+    pub async fn execute(&mut self, mut batch: Vec<Transaction>) -> anyhow::Result<()> {
 
         if let Err(e) = self.send_batch.send(batch).await {
             panic!("Failed to send batch to be executed");

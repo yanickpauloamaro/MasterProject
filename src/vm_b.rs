@@ -45,22 +45,19 @@ impl<W: WorkerB + Send + Sized> VMb<W> {
 
 impl<W: WorkerB + Send + Sized> Executor for VMb<W> {
     fn execute(&mut self, mut batch: Jobs) -> anyhow::Result<Vec<ExecutionResult>> {
-let total = Instant::now();
+        let total = Instant::now();
         let mut results = Vec::with_capacity(batch.len());
         let mut backlog = Vec::with_capacity(batch.len());
         let mut address_to_worker = vec![UNASSIGNED; self.storage.len()];
-// debug!("*** Allocating arrays in {:?}", total.elapsed());
 
-// let mut junk: Vec<Jobs> = vec!();
         loop {
             if batch.is_empty() {
-debug!("*** Total took {:?}\n", total.elapsed());
-// println!("{:?}", junk[0].len());
+                debug!("*** Total took {:?}\n", total.elapsed());
                 return Ok(results);
             }
 
             // Assign jobs to workers ------------------------------------------------------------------
-let a = Instant::now();
+            let a = Instant::now();
             address_to_worker.fill(UNASSIGNED);
             let tx_to_worker = assign_workers(
                 self.nb_workers,
@@ -68,9 +65,10 @@ let a = Instant::now();
                 &mut address_to_worker,
                 &mut backlog
             );
-debug!("*** Work assignment took {:?}", a.elapsed());
-let start = Instant::now();
+            debug!("*** Work assignment took {:?}", a.elapsed());
+
             // Start parallel execution ----------------------------------------------------------------
+            let start = Instant::now();
             let batch_arc = Arc::new(batch);
             let tx_to_worker_arc = Arc::new(tx_to_worker);
 
@@ -93,9 +91,10 @@ let start = Instant::now();
                 results.append(&mut worker_output);
                 backlog.append(&mut worker_backlog);
             }
-debug!("*** Parallel execution in {:?}", start.elapsed());
-let end = Instant::now();
+            debug!("*** Parallel execution in {:?}", start.elapsed());
+
             // Prepare next iteration --------------------------------------------------------------
+            let end = Instant::now();
             batch = Arc::try_unwrap(batch_arc).unwrap_or(vec!());
             batch.drain(0..).for_each(std::mem::drop);
             mem::swap(&mut batch, &mut backlog);
@@ -105,7 +104,7 @@ let end = Instant::now();
             // junk.push(previous_backlog);
 
             // backlog = vec!();   // !!!
-debug!("*** End of loop took {:?}", end.elapsed());
+            debug!("*** End of loop took {:?}", end.elapsed());
         }
     }
 
