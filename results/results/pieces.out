@@ -1,0 +1,60 @@
+Sequential {
+    8 schedulers, 24 executors {
+        Transfer(0.0%) {
+            57.54 ± 0.72 tx/µs
+            1.139ms ± 14µs
+        }
+        TransferPiece(0.0%) {
+            17.98 ± 0.17 tx/µs
+            3.644ms ± 35µs
+        }
+        TransferPiece(0.1%) {
+            18.07 ± 0.09 tx/µs
+            3.626ms ± 18µs
+        }
+        TransferPiece(0.5%) {
+            18.66 ± 0.10 tx/µs
+            3.513ms ± 18µs
+        }
+    }
+}
+ParallelCollect {
+    8 schedulers, 24 executors {
+        Transfer(0.0%) {
+            55.82 ± 2.12 tx/µs
+            1.174ms ± 43µs  (scheduling: 498µs ± 15µs, execution: 840µs ± 41µs)
+        }
+        TransferPiece(0.0%) {
+            8.89 ± 0.07 tx/µs
+            7.376ms ± 59µs  (scheduling: 859µs ± 21µs, execution: 6.833ms ± 54µs)
+        }
+        TransferPiece(0.1%) {
+            8.67 ± 0.09 tx/µs
+            7.56ms ± 77µs   (scheduling: 875µs ± 19µs, execution: 7.115ms ± 77µs)
+        }
+        TransferPiece(0.5%) {
+            8.63 ± 0.10 tx/µs
+            7.59ms ± 83µs   (scheduling: 946µs ± 18µs, execution: 7.097ms ± 82µs)
+        }
+    }
+}
+ParallelImmediate {
+    8 schedulers, 24 executors {
+        Transfer(0.0%) {
+            52.18 ± 2.21 tx/µs
+            1.256ms ± 51µs  (scheduling: 492µs ± 12µs, execution: 925µs ± 46µs)
+        }
+        TransferPiece(0.0%) {
+            9.07 ± 0.06 tx/µs
+            7.229ms ± 47µs  (scheduling: 2.312ms ± 18µs, execution: 6.923ms ± 45µs)
+        }
+        TransferPiece(0.1%) {
+            8.84 ± 0.08 tx/µs
+            7.412ms ± 66µs  (scheduling: 2.43ms ± 20µs, execution: 7.127ms ± 63µs)
+        }
+        TransferPiece(0.5%) {
+            7.05 ± 0.12 tx/µs
+            9.3ms ± 158µs   (scheduling: 2.455ms ± 18µs, execution: 8.97ms ± 157µs)
+        }
+    }
+}

@@ -1,5 +1,5 @@
 use std::collections::HashMap;
-use std::ops::{Add, Div, Index, IndexMut, Mul};
+use std::ops::{Add, Div, Index, IndexMut, Mul, Range};
 use std::time::Duration;
 
 // use hwloc::{ObjectType, Topology};
@@ -8,6 +8,7 @@ use rand::seq::{IteratorRandom, SliceRandom};
 use std::fmt::Debug;
 use std::iter::Take;
 use std::slice::Iter;
+use crate::contract::{FunctionParameter, StaticAddress};
 
 use crate::transaction::{Instruction, Transaction, TransactionAddress};
 use crate::vm::Jobs;
@@ -56,6 +57,39 @@ pub struct BoundedArray<T: Sized + Copy + Default + Debug, const COUNT: usize> {
     pub occupied: usize
 }
 
+impl<const COUNT: usize> BoundedArray<StaticAddress, COUNT> {
+    pub fn from_range(range: Range<StaticAddress>) -> Self {
+        let mut res = Self::new();
+        let range_len = (range.end - range.start) as usize;
+        if range_len > COUNT {
+            panic!("Size too big");
+        }
+        res.occupied = range_len;
+        let mut i = 0;
+        for el in range {
+            res.content[i] = el;
+            i += 1;
+        }
+        res
+    }
+
+    pub fn from_range_with(head: StaticAddress, range: Range<StaticAddress>) -> Self {
+        let mut res = Self::new();
+        let range_len = (range.end - range.start) as usize;
+        if range_len + 1 > COUNT {
+            panic!("Size too big");
+        }
+        res.occupied = range_len + 1;
+        res.content[0] = head;
+        let mut i = 1;
+        for el in range {
+            res.content[i] = el;
+            i += 1;
+        }
+        res
+    }
+}
+
 impl<T: Sized + Copy + Default + Debug, const COUNT: usize> BoundedArray<T, COUNT> {
     pub fn new() -> Self {
         BoundedArray{
@@ -86,6 +120,13 @@ impl<T: Sized + Copy + Default + Debug, const COUNT: usize> BoundedArray<T, COUN
             res.content[i] = *el;
         }
         res
+    }
+
+    pub fn get_last(&self) -> Option<&T> {
+        self.content.get(self.occupied - 1)
+    }
+    pub fn set_last(&mut self, value: T) {
+        self.content[self.occupied - 1] = value;
     }
 
     pub fn get(&self, i: usize) -> Option<&T> {

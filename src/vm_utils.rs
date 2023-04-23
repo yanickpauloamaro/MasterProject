@@ -74,7 +74,7 @@ impl VmStorage {
     pub fn new(size: usize) -> Self {
         let mut content = vec![0 as Word; size];
         let ptr = content.as_mut_ptr();
-        let shared = SharedStorage { ptr };
+        let shared = SharedStorage { ptr, size };
 
         return Self{ content, shared};
     }
@@ -106,7 +106,8 @@ impl VmStorage {
 
 #[derive(Copy, Clone, Debug)]
 pub struct SharedStorage {
-    pub ptr: *mut Word
+    pub ptr: *mut Word,
+    pub size: usize,
 }
 
 unsafe impl Send for SharedStorage {}
@@ -129,6 +130,10 @@ impl SharedStorage {
         unsafe {
             self.ptr.add(index)
         }
+    }
+
+    pub fn len(&self) -> usize {
+        self.size
     }
 }
 //endregion

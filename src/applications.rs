@@ -1,3 +1,4 @@
+use std::cmp::min;
 use std::fmt;
 use std::fmt::{Debug, Formatter};
 use std::str::FromStr;
@@ -11,7 +12,7 @@ use thincollections::thin_map::ThinMap;
 use crate::utils::BoundedArray;
 use crate::bounded_array;
 use crate::config::RunParameter;
-use crate::contract::{AtomicFunction, FunctionParameter, FunctionResult, SenderAddress, StaticAddress, Transaction};
+use crate::contract::{AtomicFunction, FunctionParameter, FunctionResult, MAX_NB_ADDRESSES, SenderAddress, StaticAddress, Transaction};
 use crate::vm_utils::SharedStorage;
 
 pub struct Currency {}
@@ -92,7 +93,8 @@ pub enum Workload {
     Fibonacci(u64),
     Transfer(f64),
     TransferPiece(f64),
-    Ballot(u64, f64)
+    Ballot(u64, f64),
+    BestFit
 }
 
 impl fmt::Display for Workload {
@@ -103,6 +105,7 @@ impl fmt::Display for Workload {
             Transfer(rate) => write!(f, "Transfer({:.1}%)", rate),
             TransferPiece(rate) => write!(f, "TransferPiece({:.1}%)", rate),
             Ballot(nb_voters, double_vote_rate) => write!(f, "Ballot({}, {:.1}%)", nb_voters, double_vote_rate),
+            BestFit => write!(f, "BestFit"),
             _ => todo!()
         }
     }
@@ -123,6 +126,7 @@ impl FromStr for Workload {
             "TransferPiece(0.0)" => Workload::TransferPiece(0.0),
             "TransferPiece(0.1)" => Workload::TransferPiece(0.1),
             "TransferPiece(0.5)" => Workload::TransferPiece(0.5),
+            "BestFit" => Workload::BestFit,
 
             // "Ballot(1024, 0.0)" => Workload::Ballot(1024, 0.0),
             // "Ballot(1024, 0.5)" => Workload::Ballot(1024, 0.5),
@@ -188,6 +192,25 @@ impl Workload {
                     }).collect()
             },
             Ballot(n, double_vote_rate) => todo!(),
+            BestFit => {
+                let addresses: Vec<_> = (0..run.storage_size).collect();
+                let mut batch = Vec::with_capacity(run.batch_size);
+                for sender in 0..run.batch_size {
+                    let addr = *addresses.choose(rng).unwrap_or(&0) as StaticAddress;
+                    let end_point = min(addr + MAX_NB_ADDRESSES as StaticAddress, run.storage_size as StaticAddress);
+
+                    let tx = Transaction{
+                        sender: sender as SenderAddress,
+                        function: AtomicFunction::BestFitStart,
+                        addresses: BoundedArray::from_range(addr..end_point),
+                        // nb_addresses: 1,
+                        // addresses: bounded_array![pair.0, pair.1],
+                        params: bounded_array!(0)
+                    };
+                    batch.push(tx)
+                }
+                batch
+            }
             _ => todo!()
         }
     }

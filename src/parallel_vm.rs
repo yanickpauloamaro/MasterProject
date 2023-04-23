@@ -5,6 +5,7 @@ use crossbeam::channel::{Receiver, Sender, unbounded};
 // use std::sync::mpsc::{Receiver, Sender, channel};
 use crossbeam::select;
 use futures::SinkExt;
+use itertools::Itertools;
 use rayon::prelude::*;
 use strum::IntoEnumIterator;
 use tokio::time::{Instant, Duration};
@@ -152,6 +153,7 @@ impl ParallelVM {
     }
 
     pub fn schedule_chunk(&self, mut chunk: Vec<Transaction>) -> (Vec<Transaction>, Vec<Transaction>) {
+        let a = Instant::now();
         let mut scheduled = Vec::with_capacity(chunk.len());
         let mut postponed = Vec::with_capacity(chunk.len());
 
@@ -169,7 +171,7 @@ impl ParallelVM {
             }
             scheduled.push(tx);
         }
-
+        // println!("\ttook {:?}", a.elapsed());
         (scheduled, postponed)
     }
 
@@ -197,15 +199,15 @@ impl ParallelVM {
     pub fn execute_round(&self, mut round: Vec<Transaction>) -> Vec<Transaction> {
         let chunk_size = self.get_executor_chunk_size(round.len());
         round
-            // .into_par_iter()
-            // .par_drain(..round.len())
-            // .chunks(chunk_size)
             .par_chunks(chunk_size)
             .enumerate()
             .flat_map(
                 |(worker_index, worker_backlog)|
                     self.execute_chunk(worker_backlog)
             ).collect()
+
+        // TODO Try to let rayon optimise execution
+        // round.par_iter().flat_map(|tx| self.execute_tx(tx)).collect()
     }
 
     pub fn execute_variant_6(&mut self, mut batch: Vec<Transaction>) -> anyhow::Result<(Duration, Duration)> {

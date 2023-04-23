@@ -14,8 +14,6 @@ use crate::vm::Executor;
 use crate::vm_utils::{VmFactory, VmType};
 use crate::wip::Word;
 
-const WARMUP: usize = 50;
-
 pub fn benchmarking(path: &str) -> Result<()> {
 
     let config = BenchmarkConfig::new(path)
@@ -102,7 +100,7 @@ fn bench_with_parameter(run: RunParameter) -> BenchmarkResult {
         &mut rng
     );
 
-    for _ in 0..WARMUP {
+    for _ in 0..run.warmup {
         let batch = batch.clone();
         vm.borrow_mut().set_storage(200);
         let _vm_output = vm.borrow_mut().execute(batch);
@@ -140,7 +138,7 @@ fn bench_with_parameter_new(run: RunParameter) -> BenchmarkResult {
     };
 
     let batch = run.workload.new_batch(&run, &mut rng);
-    for _ in 0..WARMUP {
+    for _ in 0..run.warmup {
         let batch = batch.clone();
         vm.set_storage(200);
         let _vm_output = vm.execute(batch);
@@ -175,7 +173,7 @@ fn bench_with_parameter_and_details(run: RunParameter) -> BenchmarkResult {
     };
 
     let batch = run.workload.new_batch(&run, &mut rng);
-    for _ in 0..WARMUP {
+    for _ in 0..run.warmup {
         let batch = batch.clone();
         vm.set_storage(200);
         let _vm_output = vm.execute(batch);
