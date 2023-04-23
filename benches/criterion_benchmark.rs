@@ -109,7 +109,7 @@ pub fn benchmark_from_config(c: &mut Criterion) -> Result<()> {
         for nb_core in config.nb_cores.iter() {
             for batch_size in config.batch_sizes.iter() {
                 let storage_size= 2 * batch_size;
-                for conflict_rate in config.conflict_rates.iter() {
+                for conflict_rate in config.workloads.iter() {
                     let param_str = format!("{}-{}-{}-{}", vm_type.name() ,nb_core, batch_size, conflict_rate);
                     bench_with_parameter(
                         &mut group,

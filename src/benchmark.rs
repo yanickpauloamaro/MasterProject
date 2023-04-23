@@ -1,11 +1,9 @@
 use std::cell::RefCell;
-use std::ops::{Add, Div};
 use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result};
 use rand::rngs::StdRng;
 use rand::SeedableRng;
-use crate::applications::Currency;
 
 use crate::config::{BenchmarkConfig, BenchmarkResult, ConfigFile, RunParameter};
 use crate::contract::Transaction;
@@ -25,24 +23,25 @@ pub fn benchmarking(path: &str) -> Result<()> {
 
     let mut results = vec!();
 
-    let repetitions = config.repetitions;
-
-    eprint!("Benchmarking... ");
+    eprintln!("Benchmarking... ");
     let benchmark_start = Instant::now();
     for vm_type in config.vm_types.iter() {
+        println!("{:?} {{", vm_type);
         for nb_schedulers in config.nb_schedulers.iter() {
             for nb_executors in config.nb_executors.iter() {
+                println!("\t{} schedulers, {} executors {{", nb_schedulers, nb_executors);
                 for batch_size in config.batch_sizes.iter() {
                     let storage_size = 100 * batch_size;    // TODO
-                    for conflict_rate in config.conflict_rates.iter() {
+                    for workload in config.workloads.iter() {
                         let parameter = RunParameter::new(
                             *vm_type,
                             *nb_schedulers,
                             *nb_executors,
                             *batch_size,
                             storage_size,
-                            *conflict_rate,
-                            repetitions,
+                            *workload,
+                            config.repetitions,
+                            config.warmup,
                             config.seed,
                         );
 
@@ -56,18 +55,31 @@ pub fn benchmarking(path: &str) -> Result<()> {
                             bench_with_parameter(parameter)
                         };
 
+                        println!("\t\t{} {{", workload);
+
+                        println!("\t\t\t{:.2} ± {:.2} tx/µs", result.throughput_micro, result.throughput_ci);
+                        print!("\t\t\t{:?} ± {:?}", result.latency, result.latency_ci);
+                        if let Some((scheduling, execution)) = &result.latency_breakdown {
+                            // print!("\t({}, {})", scheduling, execution);
+                            print!("\t(scheduling: {}, execution: {})", scheduling, execution);
+                        }
+                        println!();
+                        println!("\t\t}}");
+
                         results.push(result);
                     }
                 }
+                println!("\t}}");
             }
         }
+        println!("}}");
     }
 
-    println!("Done. Took {:.2?}):", benchmark_start.elapsed());
+    println!("Done. Took {:.2?}", benchmark_start.elapsed());
     println!();
-    for result in results {
-        println!("{}", result);
-    }
+    // for result in results {
+    //     println!("{}", result);
+    // }
 
     Ok(())
 }
@@ -86,7 +98,7 @@ fn bench_with_parameter(run: RunParameter) -> BenchmarkResult {
     let batch = batch_with_conflicts_new_impl(
         run.storage_size,
         run.batch_size,
-        run.conflict_rate,
+        0.0,//run.workload,// TODO adapt to new contracts
         &mut rng
     );
 
@@ -127,7 +139,7 @@ fn bench_with_parameter_new(run: RunParameter) -> BenchmarkResult {
         None => StdRng::seed_from_u64(rand::random())
     };
 
-    let batch = Bench::next_batch(&run, &mut rng);
+    let batch = run.workload.new_batch(&run, &mut rng);
     for _ in 0..WARMUP {
         let batch = batch.clone();
         vm.set_storage(200);
@@ -162,7 +174,7 @@ fn bench_with_parameter_and_details(run: RunParameter) -> BenchmarkResult {
         None => StdRng::seed_from_u64(rand::random())
     };
 
-    let batch = Bench::next_batch(&run, &mut rng);
+    let batch = run.workload.new_batch(&run, &mut rng);
     for _ in 0..WARMUP {
         let batch = batch.clone();
         vm.set_storage(200);
@@ -170,7 +182,7 @@ fn bench_with_parameter_and_details(run: RunParameter) -> BenchmarkResult {
     }
 
     for _ in 0..run.repetitions {
-        // let batch = Bench::next_batch(&run, &mut rng);
+        // let batch = run.workload.new_batch(&run, &mut rng);
         let batch = batch.clone();
 
         vm.set_storage(200);
@@ -200,10 +212,6 @@ impl Bench {
             VmType::ParallelImmediate => Bench::ParallelImmediate(ParallelVmImmediate::new(p.storage_size, p.nb_schedulers, p.nb_executors).unwrap()),
             _ => todo!()
         }
-    }
-
-    pub fn next_batch(run: &RunParameter, rng: &mut StdRng) -> Vec<Transaction> {
-        Currency::transfers_workload(run.storage_size, run.batch_size, run.conflict_rate, rng)
     }
 
     pub fn set_storage(&mut self, value: Word) {

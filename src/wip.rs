@@ -192,7 +192,8 @@ impl ConcurrentVM {
 
     fn execute_tx(&self, tx: &Transaction) -> Option<Transaction> {
         // execute the transaction and optionally generate a new tx
-        let function = self.functions.get(tx.function as usize).unwrap();
+        // let function = self.functions.get(tx.function as usize).unwrap();
+        let function = tx.function;
         match unsafe { function.execute(tx.clone(), self.storage.get_shared()) } {
             Another(generated_tx) => Some(generated_tx),
             _ => None,
@@ -1004,7 +1005,8 @@ let mut duration = Duration::from_secs(0);
                                                 // .drain(..worker_backlog.len())
                                                 .into_iter()
                                                 .flat_map(|tx| {
-                                                    let function = shared_functions.get(tx.function as usize).unwrap();
+                                                    // let function = shared_functions.get(tx.function as usize).unwrap();
+                                                    let function = tx.function;
                                                     match unsafe { function.execute(tx.clone(), shared_storage) } {
                                                         Another(generated_tx) => Some(generated_tx),
                                                         _ => None,

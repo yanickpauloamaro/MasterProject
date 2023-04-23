@@ -2,6 +2,7 @@ use strum::EnumIter;
 use std::mem;
 use rand::seq::SliceRandom;
 use std::fmt::Debug;
+use crate::applications::{Ballot, BallotPieces};
 use crate::utils::BoundedArray;
 use crate::vm_utils::SharedStorage;
 use crate::wip::Word;
@@ -22,7 +23,7 @@ pub const MAX_TX_SIZE: usize = mem::size_of::<Transaction>();
 #[derive(Clone, Debug, Copy)]
 pub struct Transaction {
     pub sender: SenderAddress,
-    pub function: FunctionAddress,
+    pub function: AtomicFunction,
     // pub addresses: BoundedArray<StaticAddress, MAX_NB_ADDRESSES>,
     // pub params: BoundedArray<FunctionParameter, MAX_NB_PARAMETERS>,
     pub addresses: [StaticAddress; MAX_NB_ADDRESSES],
@@ -30,14 +31,23 @@ pub struct Transaction {
     // pub nb_addresses: usize,
 }
 
-#[derive(Clone, Debug, EnumIter)]
+#[repr(u8)]
+#[derive(Clone, Copy, Debug, EnumIter)]
 pub enum AtomicFunction {
     Transfer = 0,
-    TransferDecrement = 1,
-    TransferIncrement = 2,
+    // Transfer application split into pieces
+    TransferDecrement,
+    TransferIncrement,
+    Fibonacci,
+
+    Ballot(Ballot),
+    // BallotPiece(BallotPieces)
 }
 
 impl AtomicFunction {
+    // pub fn index(&self) -> usize {
+    //     mem::discriminant(self)
+    // }
     pub unsafe fn execute(
         &self,
         mut tx: Transaction,
@@ -71,7 +81,7 @@ impl AtomicFunction {
                 if storage.get(from) >= amount {
                     *storage.get_mut(from) -= amount;
 
-                    tx.function = TransferIncrement as FunctionAddress;
+                    tx.function = TransferIncrement;
                     tx.addresses[0] = params[1] as StaticAddress;
 
                     FunctionResult::Another(tx)
@@ -85,7 +95,20 @@ impl AtomicFunction {
                 let amount = params[0] as Word;
                 *storage.get_mut(to) += amount;
                 FunctionResult::Success
-            }
+            },
+            Fibonacci => {
+                AtomicFunction::fib(params[0]);
+                FunctionResult::Success
+            },
+            Ballot(piece) => piece.execute(tx, storage)
+        }
+    }
+
+    fn fib(n: FunctionParameter) -> FunctionParameter {
+        if n <= 1 {
+            1
+        } else {
+            AtomicFunction::fib(n-1) + AtomicFunction::fib(n-2)
         }
     }
 }

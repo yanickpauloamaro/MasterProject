@@ -1,13 +1,196 @@
-use std::fmt::Debug;
-use rand::prelude::{IteratorRandom, SliceRandom, StdRng};
+use std::fmt;
+use std::fmt::{Debug, Formatter};
+use std::str::FromStr;
+
+use rand::prelude::{SliceRandom, StdRng};
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
+use serde::de::{Error, Visitor};
+use serde::ser::{SerializeSeq, SerializeTupleStruct};
 use thincollections::thin_map::ThinMap;
+
 use crate::bounded_array;
-use crate::contract::{FunctionParameter, SenderAddress, StaticAddress, Transaction};
-use crate::utils::BoundedArray;
+use crate::config::RunParameter;
+use crate::contract::{AtomicFunction, FunctionParameter, FunctionResult, SenderAddress, StaticAddress, Transaction};
+use crate::vm_utils::SharedStorage;
 
 pub struct Currency {}
 
 impl Currency {
+
+    pub fn transfers_workload(storage_size: usize, batch_size: usize, conflict_rate: f64, mut rng: &mut StdRng) -> Vec<Transaction> {
+
+        let batch: Vec<_> = Workload::transfer_pairs(storage_size, batch_size, conflict_rate, rng)
+            .iter()
+            .enumerate()
+            .map(|(tx_index, pair)| {
+                Transaction {
+                    sender: pair.0 as SenderAddress,
+                    function: AtomicFunction::Transfer,
+                    // nb_addresses: 2,
+                    addresses: bounded_array![pair.0, pair.1],
+                    params: bounded_array!(2, tx_index as FunctionParameter),// [2, tx_index as FunctionParameter]
+                }
+        }).collect();
+
+        batch
+    }
+
+    pub fn split_transfers_workload(storage_size: usize, batch_size: usize, conflict_rate: f64, mut rng: &mut StdRng) -> Vec<Transaction> {
+
+        let batch: Vec<_> = Workload::transfer_pairs(storage_size, batch_size, conflict_rate, rng)
+            .iter()
+            .enumerate()
+            .map(|(tx_index, pair)| {
+                Transaction {
+                    sender: pair.0 as SenderAddress,
+                    function: AtomicFunction::TransferDecrement,
+                    // addresses: bounded_array![pair.0],
+                    // nb_addresses: 1,
+                    addresses: bounded_array![pair.0, pair.1],
+                    params: bounded_array!(2, tx_index as FunctionParameter)
+                }
+            }).collect();
+
+        batch
+    }
+}
+// #[repr(u8)]
+#[derive(Debug, Copy, Clone, Default)]
+pub enum Ballot {
+    // Voting application
+    #[default]
+    InitBallot = 0,
+    GiveRightToVote,
+    Delegate,
+    Vote,
+    WinningProposal,
+    WinnerName,
+}
+
+impl Ballot {
+    pub fn execute(&self, mut tx: Transaction, mut storage: SharedStorage) -> FunctionResult {
+        use Ballot::*;
+        match self {
+            InitBallot => FunctionResult::Success,
+            GiveRightToVote => FunctionResult::Success,
+            Delegate => FunctionResult::Success,
+            Vote => FunctionResult::Success,
+            WinningProposal => FunctionResult::Success,
+            WinnerName => FunctionResult::Success,
+        }
+    }
+}
+
+#[derive(Debug, Copy, Clone)]
+pub enum BallotPieces {
+    // TODO
+}
+
+#[derive(Debug, Copy, Clone)]
+pub enum Workload {
+    Fibonacci(u64),
+    Transfer(f64),
+    TransferPiece(f64),
+    Ballot(u64, f64)
+}
+
+impl fmt::Display for Workload {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        use Workload::*;
+        match self {
+            Fibonacci(n) => write!(f, "Fibonacci({})", n),
+            Transfer(rate) => write!(f, "Transfer({:.1}%)", rate),
+            TransferPiece(rate) => write!(f, "TransferPiece({:.1}%)", rate),
+            Ballot(nb_voters, double_vote_rate) => write!(f, "Ballot({}, {:.1}%)", nb_voters, double_vote_rate),
+            _ => todo!()
+        }
+    }
+}
+
+impl FromStr for Workload {
+    type Err = ();
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        // TODO Implement proper parsing
+        let res = match s {
+            "Fibonacci(5)" => Workload::Fibonacci(5),
+            "Fibonacci(10)" => Workload::Fibonacci(10),
+            "Fibonacci(20)" => Workload::Fibonacci(20),
+            "Transfer(0.0)" => Workload::Transfer(0.0),
+            "Transfer(0.1)" => Workload::Transfer(0.1),
+            "Transfer(0.5)" => Workload::Transfer(0.5),
+            // "TransferPiece(0.0)" => Workload::TransferPiece(0.0),
+            // "TransferPiece(0.1)" => Workload::TransferPiece(0.1),
+            // "TransferPiece(0.5)" => Workload::TransferPiece(0.5),
+
+            // "Ballot(1024, 0.0)" => Workload::Ballot(1024, 0.0),
+            // "Ballot(1024, 0.5)" => Workload::Ballot(1024, 0.5),
+            // "Ballot(1024, 1.0)" => Workload::Ballot(1024, 1.0),
+            //
+            // "Ballot(8192, 0.0)" => Workload::Ballot(8192, 0.0),
+            // "Ballot(8192, 0.5)" => Workload::Ballot(8192, 0.5),
+            // "Ballot(8192, 1.0)" => Workload::Ballot(8192, 1.0),
+            //
+            // "Ballot(65536, 0.0)" => Workload::Ballot(65536, 0.0),
+            // "Ballot(65536, 0.5)" => Workload::Ballot(65536, 0.5),
+            // "Ballot(65536, 1.0)" => Workload::Ballot(65536, 1.0),
+            _ => todo!()
+        };
+
+        Ok(res)
+    }
+}
+
+impl Workload {
+
+    pub fn new_batch(&self, run: &RunParameter, rng: &mut StdRng) -> Vec<Transaction> {
+        use Workload::*;
+        match self {
+            Fibonacci(n) => {
+                (0..run.batch_size).enumerate().map(|(tx_index, el)| {
+                    Transaction {
+                        sender: el as SenderAddress,
+                        function: AtomicFunction::Fibonacci,
+                        // nb_addresses: 2,
+                        addresses: bounded_array![el as StaticAddress, (run.batch_size + el) as StaticAddress],
+                        params: bounded_array!(*n as FunctionParameter, tx_index as FunctionParameter),
+                    }
+                }).collect()
+            },
+            Transfer(conflict_rate) => {
+                Workload::transfer_pairs(run.storage_size, run.batch_size, *conflict_rate, rng)
+                    .iter()
+                    .enumerate()
+                    .map(|(tx_index, pair)| {
+                        Transaction {
+                            sender: pair.0 as SenderAddress,
+                            function: AtomicFunction::Transfer,
+                            // nb_addresses: 2,
+                            addresses: bounded_array![pair.0, pair.1],
+                            params: bounded_array!(2, tx_index as FunctionParameter),// [2, tx_index as FunctionParameter]
+                        }
+                    }).collect()
+            },
+            TransferPiece(_conflict_rate) => {
+                // Workload::transfer_pairs(run.storage_size, run.batch_size, *conflict_rate, rng)
+                //     .iter()
+                //     .enumerate()
+                //     .map(|(tx_index, pair)| {
+                //         Transaction {
+                //             sender: pair.0 as SenderAddress,
+                //             function: AtomicFunction::TransferDecrement,
+                //             // addresses: bounded_array![pair.0],
+                //             // nb_addresses: 1,
+                //             addresses: bounded_array![pair.0, pair.1],
+                //             params: bounded_array!(2, tx_index as FunctionParameter)
+                //         }
+                //     }).collect()
+                todo!()
+            },
+            Ballot(n, double_vote_rate) => todo!(),
+            _ => todo!()
+        }
+    }
 
     fn transfer_pairs(memory_size: usize, batch_size: usize, conflict_rate: f64, mut rng: &mut StdRng) -> Vec<(StaticAddress, StaticAddress)> {
         let nb_conflict = (conflict_rate * batch_size as f64).ceil() as usize;
@@ -62,44 +245,7 @@ impl Currency {
             }
         }
 
-        // Currency::print_conflict_rate(&batch);
-
-        batch
-    }
-
-    pub fn transfers_workload(memory_size: usize, batch_size: usize, conflict_rate: f64, mut rng: &mut StdRng) -> Vec<Transaction> {
-
-        let batch: Vec<_> = Currency::transfer_pairs(memory_size, batch_size, conflict_rate, rng)
-            .iter()
-            .enumerate()
-            .map(|(tx_index, pair)| {
-                Transaction {
-                    sender: pair.0 as SenderAddress,
-                    function: 0,
-                    // nb_addresses: 2,
-                    addresses: bounded_array![pair.0, pair.1],
-                    params: bounded_array!(2, tx_index as FunctionParameter),// [2, tx_index as FunctionParameter]
-                }
-        }).collect();
-
-        batch
-    }
-
-    pub fn split_transfers_workload(memory_size: usize, batch_size: usize, conflict_rate: f64, mut rng: &mut StdRng) -> Vec<Transaction> {
-
-        let batch: Vec<_> = Currency::transfer_pairs(memory_size, batch_size, conflict_rate, rng)
-            .iter()
-            .enumerate()
-            .map(|(tx_index, pair)| {
-                Transaction {
-                    sender: pair.0 as SenderAddress,
-                    function: 1,
-                    // addresses: bounded_array![pair.0],
-                    // nb_addresses: 1,
-                    addresses: bounded_array![pair.0, pair.0],
-                    params: bounded_array!(2, tx_index as FunctionParameter)
-                }
-            }).collect();
+        // Workload::print_conflict_rate(&batch);
 
         batch
     }
@@ -167,5 +313,37 @@ impl Currency {
         println!("Nb conflicting addresses: {}/{}", nb_conflicting_addr, nb_addresses);
         println!("Ratio of conflicting addresses: {:.2}%",  100.0 * conflict_addr_rate);
         println!();
+    }
+}
+
+impl Serialize for Workload {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error> where S: Serializer, {
+        serializer.serialize_str(format!("{:?}", self).as_str())
+    }
+}
+
+struct WorkloadVisitor;
+
+impl<'de> Visitor<'de> for WorkloadVisitor {
+    type Value = Workload;
+
+    fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+        formatter.write_str("A workload used to benchmark a smart contract VM")
+    }
+
+    fn visit_str<E>(self, v: &str) -> Result<Self::Value, E> where E: Error {
+        let res = Workload::from_str(v).unwrap();
+        Ok(res)
+    }
+
+    fn visit_string<E>(self, v: String) -> Result<Self::Value, E> where E: Error {
+        let res = Workload::from_str(v.as_str()).unwrap();
+        Ok(res)
+    }
+}
+
+impl<'de> Deserialize<'de> for Workload {
+    fn deserialize<D>(deserializer: D) -> Result<Workload, D::Error> where D: Deserializer<'de>, {
+        deserializer.deserialize_string(WorkloadVisitor)
     }
 }

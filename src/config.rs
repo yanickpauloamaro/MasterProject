@@ -6,6 +6,7 @@ use std::time::Duration;
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use serde::de::DeserializeOwned;
+use crate::applications::Workload;
 use crate::utils::{mean_ci, mean_ci_str};
 
 use crate::vm_utils::VmType;
@@ -41,8 +42,9 @@ pub struct BenchmarkConfig {
     pub nb_executors: Vec<usize>,
     pub batch_sizes: Vec<usize>,
     // pub storage_size: u64, // TODO Add storage size as a config parameter, 2 * batch_size for now
-    pub conflict_rates: Vec<f64>,
+    pub workloads: Vec<Workload>,
     pub repetitions: u64,   // For 95% confidence interval
+    pub warmup: u64,
     pub seed: Option<u64>,
 }
 
@@ -59,8 +61,9 @@ impl Default for BenchmarkConfig {
             nb_schedulers: vec![0],
             nb_executors: vec![1],
             batch_sizes: vec![128],
-            conflict_rates: vec![0.0],
+            workloads: vec![Workload::Transfer(0.0)],
             repetitions: 1,
+            warmup: 1,
             seed: Some(42),
         }
     }
@@ -73,8 +76,9 @@ pub struct RunParameter {
     pub nb_executors: usize,
     pub batch_size: usize,
     pub storage_size: usize,
-    pub conflict_rate: f64,
+    pub workload: Workload,
     pub repetitions: u64,   // For 95% confidence interval
+    pub warmup: u64,
     pub seed: Option<u64>,
 }
 
@@ -85,11 +89,12 @@ impl RunParameter {
         nb_executors: usize,
         batch_size: usize,
         storage_size: usize,
-        conflict_rate: f64,
+        workload: Workload,
         repetitions: u64,
+        warmup: u64,
         seed: Option<u64>
     ) -> Self {
-        return Self{ vm_type, nb_schedulers, nb_executors, batch_size, storage_size, conflict_rate, repetitions, seed }
+        return Self{ vm_type, nb_schedulers, nb_executors, batch_size, storage_size, workload, repetitions, warmup, seed }
     }
 }
 
@@ -169,7 +174,7 @@ impl ConfigFile for BenchmarkResult {
 impl fmt::Display for BenchmarkResult {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         let _ = write!(f, "vm_type: {} {{\n", self.parameters.vm_type.name());
-        let _ = write!(f, "\tconflict rate: {:.2}%\n", self.parameters.conflict_rate);
+        let _ = write!(f, "\tworkload: {}\n", self.parameters.workload);
         let _ = write!(f, "\tnb_schedulers: {}\n", self.parameters.nb_schedulers);
         let _ = write!(f, "\tnb_executors: {}\n", self.parameters.nb_executors);
         let _ = write!(f, "\n",);

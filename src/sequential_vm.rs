@@ -34,7 +34,8 @@ impl SequentialVM {
 
         while !batch.is_empty() {
             let tx = batch.pop().unwrap();
-            let function = self.functions.get(tx.function as usize).unwrap();
+            // let function = self.functions.get(tx.function as usize).unwrap();
+            let function = tx.function;
             match unsafe { function.execute(tx, storage) } {
                 Another(generated_tx) => {
                     batch.push(generated_tx);
@@ -56,7 +57,8 @@ impl SequentialVM {
 
         while !batch.is_empty() {
             let tx = batch.pop().unwrap();
-            let function = self.functions.get(tx.function as usize).unwrap();
+            // let function = self.functions.get(tx.function as usize).unwrap();
+            let function = tx.function;
             match unsafe { function.execute(tx, storage) } {
                 Another(generated_tx) => {
                     batch.push(generated_tx);

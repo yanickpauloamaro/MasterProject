@@ -12,7 +12,7 @@ use futures::future::BoxFuture;
 use itertools::Itertools;
 use voracious_radix_sort::RadixSort;
 use std::collections::{BTreeMap, BTreeSet, HashSet};
-use std::mem;
+use std::{fs, mem};
 use std::ops::{Add, Div, Mul, Sub};
 use std::sync::mpsc::{channel, Receiver};
 use std::sync::{Arc, Mutex};
@@ -29,27 +29,28 @@ use futures::SinkExt;
 use futures::task::SpawnExt;
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
+use serde::Serialize;
 use strum::IntoEnumIterator;
 use tinyset::SetU64;
 use tokio::task::JoinHandle;
 
 use testbench::benchmark::benchmarking;
-use testbench::config::{BenchmarkConfig, ConfigFile};
+use testbench::config::{BenchmarkConfig, ConfigFile, RunParameter};
 use testbench::{bounded_array, contract, debug, debugging, utils};
-use testbench::applications::Currency;
+use testbench::applications::{Currency, Workload};
 use testbench::contract::{AtomicFunction, FunctionParameter, SenderAddress, StaticAddress, Transaction};
 use testbench::transaction::{Transaction as BasicTransaction, TransactionAddress};
 use testbench::utils::{batch_with_conflicts, batch_with_conflicts_new_impl, BoundedArray};
 use testbench::vm::{ExecutionResult, Executor};
 use testbench::vm_a::VMa;
 use testbench::vm_c::VMc;
-use testbench::vm_utils::{assign_workers, UNASSIGNED, VmStorage};
+use testbench::vm_utils::{assign_workers, UNASSIGNED, VmStorage, VmType};
 use testbench::wip::{assign_workers_new_impl, assign_workers_new_impl_2, BackgroundVM, BackgroundVMDeque, ConcurrentVM, Param, Word};
 use testbench::contract::FunctionResult::Another;
 use testbench::parallel_vm::{ParallelVM, ParallelVmCollect, ParallelVmImmediate, WipOptimizedParallelVM};
 use testbench::sequential_vm::SequentialVM;
 use testbench::worker_implementation::WorkerC;
-
+use std::str::FromStr;
 
 type A = u64;
 type Set = IntSet<u64>;
@@ -67,6 +68,37 @@ async fn main() -> Result<()> {
         benchmarking("benchmark_config.json")
     }).await.expect("Task panicked")?;
 
+    // let param = BenchmarkConfig{
+    //     vm_types: vec![VmType::A],
+    //     nb_schedulers: vec![0],
+    //     nb_executors: vec![0],
+    //     batch_sizes: vec![0],
+    //     workloads: vec![Workload::TransferPiece(0.0), Workload::Transfer(0.0)],
+    //     repetitions: 1,
+    //     warmup: 1,
+    //     seed: Some(1),
+    // };
+    //
+    // param.save("config_test.json")?;
+
+    // let workload = Workload::from_str("Transfer(0.0)").unwrap();
+    // let workload = Workload::from_str("Transfer").unwrap();
+    // println!("{:?}", workload);
+    // println!("{:?}, {:?}", Workload::Transfer(0.0), Workload::TransferPiece(0.0));
+
+    // let param = BenchmarkConfig::new("config_test.json")?;
+    // println!("{:?}", param);
+
+    // #[derive(Serialize)]
+    // struct TupleStruct(i32, i32);
+    // let param = TupleStruct(0, 1);
+    //
+    // let str = serde_json::to_string_pretty(&param)
+    //     .context(format!("Unable to create json of {}", "config_test.json"))?;
+    //
+    // fs::write("benchmark_config.json", str)
+    //     .context(format!("Unable to write {} to file", "config_test.json"))?;
+
     // manual_test()?;
 
     // profiling("benchmark_config.json")?; // ???
@@ -76,7 +108,7 @@ async fn main() -> Result<()> {
     // println!();
     // profile_schedule_chunk(batch.clone(), 100, 8, 8);  // ???
 
-    println!("main took {:?}", total.elapsed());
+    // println!("main took {:?}", total.elapsed());
 
     Ok(())
 }
@@ -318,7 +350,7 @@ async fn wip_main() -> Result<()>{
         .enumerate()
         .map(|(tx_index, tx)| Transaction {
             sender: tx.from as SenderAddress,
-            function: 0,
+            function: AtomicFunction::Transfer,
             // nb_addresses: 2,
             addresses: bounded_array![tx.from as StaticAddress, tx.to as StaticAddress],
             params: bounded_array![2, tx_index as FunctionParameter]
@@ -1995,7 +2027,8 @@ async fn try_other_method(mut batch: Vec<Transaction>, iter: usize, nb_scheduler
                                 // .drain(..worker_backlog.len())
                                 .into_iter()
                                 .flat_map(|tx| {
-                                    let function = functions.get(tx.function as usize).unwrap();
+                                    // let function = functions.get(tx.function as usize).unwrap();
+                                    let function = tx.function;
                                     match unsafe { function.execute(tx.clone(), shared_storage) } {
                                         Another(generated_tx) => Some(generated_tx),
                                         _ => None,
@@ -3030,7 +3063,7 @@ fn profile_old_tx(path: &str) -> Result<()> {
     let batch_size = config.batch_sizes[0];
     let storage_size = batch_size * 100;
     // let nb_cores = config.nb_cores[0];
-    let conflict_rate = config.conflict_rates[0];
+    let conflict_rate = config.workloads[0];
 
     let mut rng = match config.seed {
         Some(seed) => {
@@ -3048,7 +3081,7 @@ fn profile_old_tx(path: &str) -> Result<()> {
         let mut batch = batch_with_conflicts_new_impl(
             storage_size,
             batch_size,
-            conflict_rate,
+            0.0,    // TODO???
             &mut rng
         );
         serial_vm.set_storage(200);
@@ -3163,7 +3196,7 @@ fn profiling(path: &str) -> Result<()> {
     let batch_size = config.batch_sizes[0];
     let storage_size = batch_size * 100;
     let nb_cores = config.nb_executors[0];
-    let conflict_rate = config.conflict_rates[0];
+    let conflict_rate = config.workloads[0];
 
     let mut rng = match config.seed {
         Some(seed) => {
@@ -3175,7 +3208,7 @@ fn profiling(path: &str) -> Result<()> {
     let mut _initial_batch: Vec<BasicTransaction> = batch_with_conflicts_new_impl(
         storage_size,
         batch_size,
-        conflict_rate,
+        0.0, // TODO???
         &mut rng
     );
     // let mut initial_batch: Vec<Transaction> = batch_with_conflicts(
