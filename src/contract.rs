@@ -24,10 +24,10 @@ pub const MAX_TX_SIZE: usize = mem::size_of::<Transaction>();
 pub struct Transaction {
     pub sender: SenderAddress,
     pub function: AtomicFunction,
-    // pub addresses: BoundedArray<StaticAddress, MAX_NB_ADDRESSES>,
-    // pub params: BoundedArray<FunctionParameter, MAX_NB_PARAMETERS>,
-    pub addresses: [StaticAddress; MAX_NB_ADDRESSES],
-    pub params: [FunctionParameter; MAX_NB_PARAMETERS],
+    pub addresses: BoundedArray<StaticAddress, MAX_NB_ADDRESSES>,
+    pub params: BoundedArray<FunctionParameter, MAX_NB_PARAMETERS>,
+    // pub addresses: [StaticAddress; MAX_NB_ADDRESSES],
+    // pub params: [FunctionParameter; MAX_NB_PARAMETERS],
     // pub nb_addresses: usize,
 }
 

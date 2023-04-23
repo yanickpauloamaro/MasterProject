@@ -405,13 +405,13 @@ async fn wip_main() -> Result<()>{
         // // println!("Err? {:?}", err);
         // println!();
         //
-        println!("Variant 6 WTF ---------------------------------");
-        let b = new_batch.clone();
-        let start = Instant::now();
-        let err = wtf.execute(b);
-        println!("Overall: {:?}", start.elapsed());
-        println!("Err? {:?}", err.unwrap().0);
-        println!();
+        // println!("Variant 6 WTF ---------------------------------");
+        // let b = new_batch.clone();
+        // let start = Instant::now();
+        // let err = wtf.execute(b);
+        // println!("Overall: {:?}", start.elapsed());
+        // println!("Err? {:?}", err.unwrap().0);
+        // println!();
 
         println!("background ---------------------------------");
         let b = new_batch.clone();
@@ -421,45 +421,45 @@ async fn wip_main() -> Result<()>{
         println!("Background took {:?}", start.elapsed());
         println!();
         //
-        // println!("Variant 1 async ---------------------------------");
-        // let b = new_batch.clone();
-        // let start = Instant::now();
-        // let err = concurrent.execute_variant_1_async(b).await;
-        // println!("Overall: {:?}", start.elapsed());
-        // // println!("Err? {:?}", err);
-        // println!();
+        println!("Variant 1 async ---------------------------------");
+        let b = new_batch.clone();
+        let start = Instant::now();
+        let err = concurrent.execute_variant_1_async(b).await;
+        println!("Overall: {:?}", start.elapsed());
+        // println!("Err? {:?}", err);
+        println!();
         //
-        // println!("Variant 1 ---------------------------------");
-        // let b = new_batch.clone();
-        // let start = Instant::now();
-        // let err = concurrent.execute_variant_1(b);
-        // println!("Overall: {:?}", start.elapsed());
-        // // println!("Err? {:?}", err);
-        // println!();
-        //
-        // println!("Variant 2 ---------------------------------");
-        // let b = new_batch.clone();
-        // let start = Instant::now();
-        // let err = concurrent.execute_variant_2(b);
-        // println!("Overall: {:?}", start.elapsed());
-        // // println!("Err? {:?}", err);
-        // println!();
-        //
-        // println!("Variant 3 ---------------------------------");
-        // let b = new_batch.clone();
-        // let start = Instant::now();
-        // let err = concurrent.execute_variant_3(b);
-        // println!("Overall: {:?}", start.elapsed());
-        // // println!("Err? {:?}", err);
-        // println!();
-        //
-        // println!("Variant 4 ---------------------------------");
-        // let b = new_batch.clone();
-        // let start = Instant::now();
-        // let err = concurrent.execute_variant_4(b);
-        // println!("Overall: {:?}", start.elapsed());
-        // // println!("Err? {:?}", err);
-        // println!();
+        println!("Variant 1 ---------------------------------");
+        let b = new_batch.clone();
+        let start = Instant::now();
+        let err = concurrent.execute_variant_1(b);
+        println!("Overall: {:?}", start.elapsed());
+        // println!("Err? {:?}", err);
+        println!();
+
+        println!("Variant 2 ---------------------------------");
+        let b = new_batch.clone();
+        let start = Instant::now();
+        let err = concurrent.execute_variant_2(b);
+        println!("Overall: {:?}", start.elapsed());
+        // println!("Err? {:?}", err);
+        println!();
+
+        println!("Variant 3 ---------------------------------");
+        let b = new_batch.clone();
+        let start = Instant::now();
+        let err = concurrent.execute_variant_3(b);
+        println!("Overall: {:?}", start.elapsed());
+        // println!("Err? {:?}", err);
+        println!();
+
+        println!("Variant 4 ---------------------------------");
+        let b = new_batch.clone();
+        let start = Instant::now();
+        let err = concurrent.execute_variant_4(b);
+        println!("Overall: {:?}", start.elapsed());
+        // println!("Err? {:?}", err);
+        println!();
 
         println!("Variant 5 ---------------------------------");
         let b = new_batch.clone();
@@ -477,12 +477,12 @@ async fn wip_main() -> Result<()>{
         // println!("Err? {:?}", err);
         println!();
         //
-        // println!("Variant 7 ---------------------------------");
-        // let b = new_batch.clone();
-        // let start = Instant::now();
-        // let _ = concurrent.execute_variant_7(b);
-        // println!("Overall: {:?}", start.elapsed());
-        // println!();
+        println!("Variant 7 ---------------------------------");
+        let b = new_batch.clone();
+        let start = Instant::now();
+        let _ = concurrent.execute_variant_7(b);
+        println!("Overall: {:?}", start.elapsed());
+        println!();
 
         // println!();
     }

@@ -445,7 +445,7 @@ impl ConcurrentVM {
         // println!("Variant 1:");
         println!("\tScheduling (v1): {:?}", scheduling_duration);
         println!("\tExecution (v1):  {:?}", execution_duration);
-        println!("\tSum: {:?}", scheduling_duration + execution_duration);
+        // println!("\tSum: {:?}", scheduling_duration + execution_duration);
 
         Ok(())
     }
@@ -495,7 +495,7 @@ impl ConcurrentVM {
         // println!("Variant 2:");
         println!("\tScheduling (v2): {:?}", scheduling_duration);
         println!("\tExecution (v1):  {:?}", execution_duration);
-        println!("\tSum: {:?}", scheduling_duration + execution_duration);
+        // println!("\tSum: {:?}", scheduling_duration + execution_duration);
 
         Ok(())
     }
@@ -543,8 +543,8 @@ impl ConcurrentVM {
         let execution_duration = execution_res.unwrap();
 
         // println!("Variant 3:");
-        // println!("\tScheduling (v2): {:?}", scheduling_duration);
-        // println!("\tExecution (v2):  {:?}", execution_duration);
+        println!("\tScheduling (v2): {:?}", scheduling_duration);
+        println!("\tExecution (v2):  {:?}", execution_duration);
         // println!("\tSum: {:?}", scheduling_duration + execution_duration);
 
         Ok(())
@@ -593,8 +593,8 @@ impl ConcurrentVM {
         let execution_duration = execution_res.unwrap();
 
         // println!("Variant 4:");
-        // println!("\tScheduling (v3): {:?}", scheduling_duration);
-        // println!("\tExecution (v1):  {:?}", execution_duration);
+        println!("\tScheduling (v3): {:?}", scheduling_duration);
+        println!("\tExecution (v1):  {:?}", execution_duration);
         // println!("\tSum: {:?}", scheduling_duration + execution_duration);
 
         Ok(())
@@ -645,7 +645,7 @@ impl ConcurrentVM {
         // println!("Variant 5:");
         println!("\tScheduling (v3): {:?}", scheduling_duration);
         println!("\tExecution (v2):  {:?}", execution_duration);
-        println!("\tSum: {:?}", scheduling_duration + execution_duration);
+        // println!("\tSum: {:?}", scheduling_duration + execution_duration);
 
         Ok(())
     }
@@ -743,8 +743,8 @@ impl ConcurrentVM {
         let execution_duration = execution_res.unwrap();
 
         // println!("Variant 6:");
-        // println!("\tScheduling (v0): {:?}", scheduling_duration);
-        // println!("\tExecution (v2):  {:?}", execution_duration);
+        println!("\tScheduling (v0): {:?}", scheduling_duration);
+        println!("\tExecution (v2):  {:?}", execution_duration);
         // println!("\tSum: {:?}", scheduling_duration + execution_duration);
 
         Ok(())
@@ -842,8 +842,8 @@ impl ConcurrentVM {
         let execution_duration = execution_res.unwrap();
 
         // println!("Variant 7:");
-        // println!("\tScheduling (v0): {:?}", scheduling_duration);
-        // println!("\tExecution (v1):  {:?}", execution_duration);
+        println!("\tScheduling (v0): {:?}", scheduling_duration);
+        println!("\tExecution (v1):  {:?}", execution_duration);
         // println!("\tSum: {:?}", scheduling_duration + execution_duration);
 
         Ok(())

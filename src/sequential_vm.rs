@@ -46,6 +46,13 @@ impl SequentialVM {
             }
         }
 
+        // 'outer: while let Some(mut next_tx) = batch.pop() {
+        //     let mut tx = next_tx;
+        //     while let Another(generated_tx) = unsafe { tx.function.execute(tx, storage) } {
+        //         tx = generated_tx;
+        //     }
+        // }
+
         return Ok((Duration::from_micros(0), execution_start.elapsed()));
     }
 

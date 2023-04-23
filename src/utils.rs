@@ -41,12 +41,12 @@ macro_rules! bounded_array {
         $BoundedArray::new()
     );
     ($elem:expr; $n:expr) => (
-        // BoundedArray::from_elem($elem, $n)
-        [$elem;$n]
+        BoundedArray::from_elem($elem, $n)
+        // [$elem;$n]
     );
     ($($x:expr),+ $(,)?) => (
-        // BoundedArray::from_slice([$($x),+].as_slice())
-        [$($x),+]
+        BoundedArray::from_slice([$($x),+].as_slice())
+        // [$($x),+]
     );
 }
 

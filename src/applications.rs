@@ -8,6 +8,7 @@ use serde::de::{Error, Visitor};
 use serde::ser::{SerializeSeq, SerializeTupleStruct};
 use thincollections::thin_map::ThinMap;
 
+use crate::utils::BoundedArray;
 use crate::bounded_array;
 use crate::config::RunParameter;
 use crate::contract::{AtomicFunction, FunctionParameter, FunctionResult, SenderAddress, StaticAddress, Transaction};
@@ -44,10 +45,10 @@ impl Currency {
                 Transaction {
                     sender: pair.0 as SenderAddress,
                     function: AtomicFunction::TransferDecrement,
-                    // addresses: bounded_array![pair.0],
+                    addresses: bounded_array![pair.0],
                     // nb_addresses: 1,
-                    addresses: bounded_array![pair.0, pair.1],
-                    params: bounded_array!(2, tx_index as FunctionParameter)
+                    // addresses: bounded_array![pair.0, pair.1],
+                    params: bounded_array!(2, pair.1 as FunctionParameter)
                 }
             }).collect();
 
@@ -119,9 +120,9 @@ impl FromStr for Workload {
             "Transfer(0.0)" => Workload::Transfer(0.0),
             "Transfer(0.1)" => Workload::Transfer(0.1),
             "Transfer(0.5)" => Workload::Transfer(0.5),
-            // "TransferPiece(0.0)" => Workload::TransferPiece(0.0),
-            // "TransferPiece(0.1)" => Workload::TransferPiece(0.1),
-            // "TransferPiece(0.5)" => Workload::TransferPiece(0.5),
+            "TransferPiece(0.0)" => Workload::TransferPiece(0.0),
+            "TransferPiece(0.1)" => Workload::TransferPiece(0.1),
+            "TransferPiece(0.5)" => Workload::TransferPiece(0.5),
 
             // "Ballot(1024, 0.0)" => Workload::Ballot(1024, 0.0),
             // "Ballot(1024, 0.5)" => Workload::Ballot(1024, 0.5),
@@ -171,21 +172,20 @@ impl Workload {
                         }
                     }).collect()
             },
-            TransferPiece(_conflict_rate) => {
-                // Workload::transfer_pairs(run.storage_size, run.batch_size, *conflict_rate, rng)
-                //     .iter()
-                //     .enumerate()
-                //     .map(|(tx_index, pair)| {
-                //         Transaction {
-                //             sender: pair.0 as SenderAddress,
-                //             function: AtomicFunction::TransferDecrement,
-                //             // addresses: bounded_array![pair.0],
-                //             // nb_addresses: 1,
-                //             addresses: bounded_array![pair.0, pair.1],
-                //             params: bounded_array!(2, tx_index as FunctionParameter)
-                //         }
-                //     }).collect()
-                todo!()
+            TransferPiece(conflict_rate) => {
+                Workload::transfer_pairs(run.storage_size, run.batch_size, *conflict_rate, rng)
+                    .iter()
+                    .enumerate()
+                    .map(|(tx_index, pair)| {
+                        Transaction {
+                            sender: pair.0 as SenderAddress,
+                            function: AtomicFunction::TransferDecrement,
+                            addresses: bounded_array![pair.0],
+                            // nb_addresses: 1,
+                            // addresses: bounded_array![pair.0, pair.1],
+                            params: bounded_array!(2, pair.1 as FunctionParameter)
+                        }
+                    }).collect()
             },
             Ballot(n, double_vote_rate) => todo!(),
             _ => todo!()
