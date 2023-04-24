@@ -1,9 +1,9 @@
 {
   "vm_types": [
-    "Sequential"
+    "Sequential", "ParallelCollect", "ParallelImmediate"
   ],
   "nb_schedulers": [
-    1
+    8
   ],
   "nb_executors": [
     1
@@ -12,9 +12,13 @@
     65536
   ],
   "workloads": [
-    "Fibonacci(10)", "Transfer(0.0)", "Transfer(0.1)", "Transfer(0.5)"
+    "Transfer(0.0)", "Transfer(0.1)", "Transfer(0.5)",
+    "TransferPiece(0.0)", "TransferPiece(0.1)", "TransferPiece(0.5)",
+    "Fibonacci(5)",
+    "Fibonacci(10)",
+    "Fibonacci(15)"
   ],
-  "repetitions": 10,
-  "warmup": 10,
+  "repetitions": 100,
+  "warmup": 0,
   "seed": 10
 }

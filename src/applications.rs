@@ -119,7 +119,7 @@ impl FromStr for Workload {
         let res = match s {
             "Fibonacci(5)" => Workload::Fibonacci(5),
             "Fibonacci(10)" => Workload::Fibonacci(10),
-            "Fibonacci(20)" => Workload::Fibonacci(20),
+            "Fibonacci(15)" => Workload::Fibonacci(15),
             "Transfer(0.0)" => Workload::Transfer(0.0),
             "Transfer(0.1)" => Workload::Transfer(0.1),
             "Transfer(0.5)" => Workload::Transfer(0.5),
@@ -152,12 +152,12 @@ impl Workload {
         use Workload::*;
         match self {
             Fibonacci(n) => {
-                (0..run.batch_size).enumerate().map(|(tx_index, el)| {
+                (0..run.batch_size).map(|tx_index| {
                     Transaction {
-                        sender: el as SenderAddress,
+                        sender: tx_index as SenderAddress,
                         function: AtomicFunction::Fibonacci,
                         // nb_addresses: 2,
-                        addresses: bounded_array![el as StaticAddress, (run.batch_size + el) as StaticAddress],
+                        addresses: bounded_array![tx_index as StaticAddress],
                         params: bounded_array!(*n as FunctionParameter, tx_index as FunctionParameter),
                     }
                 }).collect()

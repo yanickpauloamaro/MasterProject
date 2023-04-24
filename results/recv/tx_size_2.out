@@ -1,0 +1,122 @@
+Sequential {
+	8 schedulers, 24 executors {
+		Transfer(0.0%) {
+			38.76 ± 0.16 tx/µs
+			1.691ms ± 7µs
+		}
+		Transfer(0.1%) {
+			38.39 ± 0.09 tx/µs
+			1.707ms ± 4µs
+		}
+		Transfer(0.5%) {
+			39.01 ± 0.07 tx/µs
+			1.68ms ± 3µs
+		}
+		TransferPiece(0.0%) {
+			15.04 ± 0.07 tx/µs
+			4.356ms ± 21µs
+		}
+		TransferPiece(0.1%) {
+			15.06 ± 0.04 tx/µs
+			4.351ms ± 11µs
+		}
+		TransferPiece(0.5%) {
+			15.36 ± 0.04 tx/µs
+			4.267ms ± 10µs
+		}
+		Fibonacci(5) {
+			46.45 ± 0.07 tx/µs
+			1.411ms ± 2µs
+		}
+		Fibonacci(10) {
+			6.87 ± 0.00 tx/µs
+			9.537ms ± 5µs
+		}
+		Fibonacci(15) {
+			0.64 ± 0.00 tx/µs
+			102.584ms ± 3µs
+		}
+	}
+}
+ParallelCollect {
+	8 schedulers, 24 executors {
+		Transfer(0.0%) {
+			31.27 ± 0.76 tx/µs
+			2.096ms ± 50µs	(scheduling: 1.334ms ± 48µs, execution: 1.175ms ± 37µs)
+		}
+		Transfer(0.1%) {
+			26.68 ± 0.84 tx/µs
+			2.456ms ± 75µs	(scheduling: 1.471ms ± 44µs, execution: 1.531ms ± 72µs)
+		}
+		Transfer(0.5%) {
+			26.93 ± 0.80 tx/µs
+			2.434ms ± 70µs	(scheduling: 1.593ms ± 40µs, execution: 1.483ms ± 63µs)
+		}
+		TransferPiece(0.0%) {
+			7.12 ± 0.05 tx/µs
+			9.204ms ± 67µs	(scheduling: 2.11ms ± 41µs, execution: 7.881ms ± 64µs)
+		}
+		TransferPiece(0.1%) {
+			6.65 ± 0.06 tx/µs
+			9.852ms ± 89µs	(scheduling: 2.239ms ± 40µs, execution: 8.42ms ± 73µs)
+		}
+		TransferPiece(0.5%) {
+			6.60 ± 0.05 tx/µs
+			9.933ms ± 77µs	(scheduling: 2.38ms ± 32µs, execution: 8.485ms ± 72µs)
+		}
+		Fibonacci(5) {
+			37.77 ± 0.94 tx/µs
+			1.735ms ± 42µs	(scheduling: 1.364ms ± 26µs, execution: 659µs ± 33µs)
+		}
+		Fibonacci(10) {
+			23.82 ± 0.32 tx/µs
+			2.751ms ± 37µs	(scheduling: 1.333ms ± 32µs, execution: 1.828ms ± 26µs)
+		}
+		Fibonacci(15) {
+			5.83 ± 0.01 tx/µs
+			11.235ms ± 21µs	(scheduling: 2.143ms ± 25µs, execution: 10.406ms ± 20µs)
+		}
+	}
+}
+ParallelImmediate {
+	8 schedulers, 24 executors {
+		Transfer(0.0%) {
+			32.49 ± 0.67 tx/µs
+			2.017ms ± 41µs	(scheduling: 1.27ms ± 34µs, execution: 1.166ms ± 35µs)
+		}
+		Transfer(0.1%) {
+			28.08 ± 0.80 tx/µs
+			2.334ms ± 65µs	(scheduling: 1.397ms ± 34µs, execution: 1.477ms ± 63µs)
+		}
+		Transfer(0.5%) {
+			27.33 ± 0.87 tx/µs
+			2.398ms ± 74µs	(scheduling: 1.596ms ± 44µs, execution: 1.43ms ± 63µs)
+		}
+		TransferPiece(0.0%) {
+			7.86 ± 0.07 tx/µs
+			8.341ms ± 76µs	(scheduling: 3.293ms ± 31µs, execution: 7.285ms ± 65µs)
+		}
+		TransferPiece(0.1%) {
+			7.81 ± 0.08 tx/µs
+			8.394ms ± 83µs	(scheduling: 3.443ms ± 29µs, execution: 7.435ms ± 82µs)
+		}
+		TransferPiece(0.5%) {
+			6.63 ± 0.09 tx/µs
+			9.881ms ± 136µs	(scheduling: 3.41ms ± 24µs, execution: 8.972ms ± 135µs)
+		}
+		Fibonacci(5) {
+			39.67 ± 0.96 tx/µs
+			1.652ms ± 39µs	(scheduling: 1.298ms ± 25µs, execution: 620µs ± 30µs)
+		}
+		Fibonacci(10) {
+			23.85 ± 0.29 tx/µs
+			2.748ms ± 33µs	(scheduling: 1.339ms ± 27µs, execution: 1.817ms ± 23µs)
+		}
+		Fibonacci(15) {
+			5.70 ± 0.02 tx/µs
+			11.505ms ± 43µs	(scheduling: 2.202ms ± 88µs, execution: 10.408ms ± 19µs)
+		}
+	}
+}
+Done. Took 42.61s
+
