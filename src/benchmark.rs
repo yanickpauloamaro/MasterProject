@@ -140,14 +140,14 @@ fn bench_with_parameter_new(run: RunParameter) -> BenchmarkResult {
     let batch = run.workload.new_batch(&run, &mut rng);
     for _ in 0..run.warmup {
         let batch = batch.clone();
-        vm.set_storage(200);
+        vm.init_vm_storage(&run);
         let _vm_output = vm.execute(batch);
     }
 
     for _ in 0..run.repetitions {
         // let batch = Bench::next_batch(&run, &mut rng);
         let batch = batch.clone();
-        vm.set_storage(200);
+        vm.init_vm_storage(&run);
 
         let start = Instant::now();
         let _vm_output = vm.execute(batch);
@@ -175,7 +175,7 @@ fn bench_with_parameter_and_details(run: RunParameter) -> BenchmarkResult {
     let batch = run.workload.new_batch(&run, &mut rng);
     for _ in 0..run.warmup {
         let batch = batch.clone();
-        vm.set_storage(200);
+        vm.init_vm_storage(&run);
         let _vm_output = vm.execute(batch);
     }
 
@@ -183,7 +183,7 @@ fn bench_with_parameter_and_details(run: RunParameter) -> BenchmarkResult {
         // let batch = run.workload.new_batch(&run, &mut rng);
         let batch = batch.clone();
 
-        vm.set_storage(200);
+        vm.init_vm_storage(&run);
         let start = Instant::now();
         let (scheduling, execution) = vm.execute(batch).unwrap();
         let duration = start.elapsed();
@@ -221,7 +221,16 @@ impl Bench {
         }
     }
 
-    pub fn execute(&mut self, batch: Vec<Transaction>) -> Result<(Duration, Duration)>{
+    pub fn init_vm_storage(&mut self, run: &RunParameter) {
+        match self {
+            Bench::Sequential(vm) => vm.set_storage(200),
+            Bench::ParallelCollect(vm) => vm.set_storage(200),
+            Bench::ParallelImmediate(vm) => vm.set_storage(200),
+            _ => todo!()
+        }
+    }
+
+    pub fn execute(&mut self, batch: Vec<Transaction<2, 2>>) -> Result<(Duration, Duration)>{
         match self {
             Bench::Sequential(vm) => { vm.execute(batch) },
             Bench::ParallelCollect(vm) => { vm.execute(batch) },

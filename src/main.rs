@@ -47,7 +47,7 @@ use testbench::vm_c::VMc;
 use testbench::vm_utils::{assign_workers, UNASSIGNED, VmStorage, VmType};
 use testbench::wip::{assign_workers_new_impl, assign_workers_new_impl_2, BackgroundVM, BackgroundVMDeque, ConcurrentVM, Param, Word};
 use testbench::contract::FunctionResult::Another;
-use testbench::parallel_vm::{ParallelVM, ParallelVmCollect, ParallelVmImmediate, WipOptimizedParallelVM};
+use testbench::parallel_vm::{ParallelVM, ParallelVmCollect, ParallelVmImmediate};
 use testbench::sequential_vm::SequentialVM;
 use testbench::worker_implementation::WorkerC;
 use std::str::FromStr;
@@ -124,7 +124,7 @@ fn manual_test() -> Result<()> {
     let iter = 100;
 
     let a = Instant::now();
-    let batch: Vec<Transaction> = Currency::transfers_workload(
+    let batch: Vec<Transaction<2, 2>> = Currency::transfers_workload(
         storage_size,
         batch_size,
         0.0,
@@ -352,8 +352,8 @@ async fn wip_main() -> Result<()>{
             sender: tx.from as SenderAddress,
             function: AtomicFunction::Transfer,
             // nb_addresses: 2,
-            addresses: bounded_array![tx.from as StaticAddress, tx.to as StaticAddress],
-            params: bounded_array![2, tx_index as FunctionParameter]
+            addresses: [tx.from as StaticAddress, tx.to as StaticAddress],
+            params: [2, tx_index as FunctionParameter]
         }).collect();
     println!("Mapping took {:?}", xyz.elapsed());
 
@@ -368,7 +368,7 @@ async fn wip_main() -> Result<()>{
         nb_schedulers,
         nb_executors)?;
 
-    let mut parallel = WipOptimizedParallelVM::new(
+    let mut parallel = ParallelVmImmediate::new(
         test_storage,
         nb_schedulers,
         nb_executors)?;
@@ -383,7 +383,7 @@ async fn wip_main() -> Result<()>{
     let mut duration = Duration::from_nanos(0);
     concurrent.storage.set_storage(20 * iter);
     background.storage.set_storage(20 * iter);
-    parallel.storage.set_storage(20 * iter);
+    parallel.vm.storage.set_storage(20 * iter);
     wtf.vm.storage.set_storage(20 * iter);
 
     println!("Testing different variants: ==========================");
@@ -586,15 +586,15 @@ async fn wip_main() -> Result<()>{
     // }
 
     let mut data = Vec::with_capacity(nb_schedulers);
-    let chunks: Vec<Vec<Transaction>> = b
+    let chunks: Vec<Vec<Transaction<2, 2>>> = b
         .into_iter()
         .chunks(chunk_size)
         .into_iter()
         .map(|chunk| chunk.collect())
         .collect();
     for chunk in chunks {
-        let mut scheduled: Vec<Transaction> = Vec::with_capacity(chunk_size);
-        let mut postponed: Vec<Transaction> = Vec::with_capacity(chunk_size);
+        let mut scheduled: Vec<Transaction<2, 2>> = Vec::with_capacity(chunk_size);
+        let mut postponed: Vec<Transaction<2, 2>> = Vec::with_capacity(chunk_size);
         let mut working_set = SetU64::with_capacity_and_max(
             2 * 32,
             100 * 65536 as u64
@@ -605,7 +605,7 @@ async fn wip_main() -> Result<()>{
         data.push((chunk, scheduled, postponed, working_set));
     }
 
-    type ClosureInput = (Vec<Transaction>, Vec<Transaction>, Vec<Transaction>, SetU64);
+    type ClosureInput = (Vec<Transaction<2, 2>>, Vec<Transaction<2, 2>>, Vec<Transaction<2, 2>>, SetU64);
     // type ClosureInput = (Vec<ContractTransaction>, Vec<ContractTransaction>, Vec<ContractTransaction>, Vec<StaticAddress>);
     // type ClosureInput = (Vec<ContractTransaction>, Vec<ContractTransaction>, Vec<ContractTransaction>, HashSet<StaticAddress>);
     let a = Instant::now();
@@ -1182,7 +1182,7 @@ fn profile_template() {
     println!("--- latency = {:?}", total_latency.clone());
 }
 
-fn profile_schedule_chunk(mut batch: Vec<Transaction>, iter: usize, chunk_fraction: usize, nb_executors: usize) {
+fn profile_schedule_chunk(mut batch: Vec<Transaction<2, 2>>, iter: usize, chunk_fraction: usize, nb_executors: usize) {
     let mut sequential = SequentialVM::new(100 * batch.len()).unwrap();
     sequential.storage.fill(20 * iter as Word);
 
@@ -1196,7 +1196,7 @@ fn profile_schedule_chunk(mut batch: Vec<Transaction>, iter: usize, chunk_fracti
     let mut sequential_duration = Duration::from_nanos(0);
     let mut parallel_duration = Duration::from_nanos(0);
 
-    let computation = |(scheduler_index, b): (usize, Vec<Transaction>)| {
+    let computation = |(scheduler_index, b): (usize, Vec<Transaction<2, 2>>)| {
         let mut scheduled = Vec::with_capacity(b.len());
         let mut postponed = Vec::with_capacity(b.len());
         let mut working_set = ThinSetWrapper::with_capacity_and_max(
@@ -1258,7 +1258,7 @@ fn profile_schedule_chunk(mut batch: Vec<Transaction>, iter: usize, chunk_fracti
     println!("\tparallel exec latency = {:?} -> {:?}", avg_parallel, avg_parallel.mul(chunk_fraction as u32));
 }
 
-async fn profile_schedule_backlog_single_pass(mut batch: Vec<Transaction>, iter: usize, nb_schedulers: usize) {
+async fn profile_schedule_backlog_single_pass(mut batch: Vec<Transaction<2, 2>>, iter: usize, nb_schedulers: usize) {
     batch.truncate(65536);
     let mut duration = Duration::from_nanos(0);
     let computation_latency = Duration::from_micros(250);
@@ -1395,8 +1395,8 @@ async fn profile_schedule_backlog_single_pass(mut batch: Vec<Transaction>, iter:
             .enumerate()
             .map(|(index, chunk)| {
 
-                let mut scheduled: Box<Vec<Transaction>> = Box::new(Vec::with_capacity(chunk.len()));
-                let mut postponed: Box<Vec<Transaction>> = Box::new(Vec::with_capacity(chunk.len()));
+                let mut scheduled: Box<Vec<Transaction<2, 2>>> = Box::new(Vec::with_capacity(chunk.len()));
+                let mut postponed: Box<Vec<Transaction<2, 2>>> = Box::new(Vec::with_capacity(chunk.len()));
                 // let mut working_set = Box::new(ThinSet::with_capacity_and_hasher(2 * 65536, BuildNoHashHasher::default()));
                 let mut working_set = Box::new(ThinSetWrapper::with_capacity_and_max( // TODO Is faster with ThinSetWrapper
                       2 * 65536,
@@ -1421,11 +1421,11 @@ async fn profile_schedule_backlog_single_pass(mut batch: Vec<Transaction>, iter:
 
         println!("Sequentially:");
         let sequential = Instant::now();
-        let res: Vec<(usize, Box<Vec<Transaction>>, Box<Vec<Transaction>>)> = tmp.clone()
+        let res: Vec<(usize, Box<Vec<Transaction<2, 2>>>, Box<Vec<Transaction<2, 2>>>)> = tmp.clone()
             .into_iter()
             .map(|(scheduler_index, chunk, mut scheduled, mut postponed, mut working_set, mut set):
                     // (usize, &[ContractTransaction], Box<Vec<ContractTransaction>>, Box<Vec<ContractTransaction>>, Box<SetU64>, HashSet<u64, BuildNoHashHasher<u64>>)| {
-                  (usize, Vec<Transaction>, Box<Vec<Transaction>>, Box<Vec<Transaction>>, Box<ThinSetWrapper>, HashSet<u64, BuildNoHashHasher<u64>>)| {
+                  (usize, Vec<Transaction<2, 2>>, Box<Vec<Transaction<2, 2>>>, Box<Vec<Transaction<2, 2>>>, Box<ThinSetWrapper>, HashSet<u64, BuildNoHashHasher<u64>>)| {
                 let a = Instant::now();
 
                 // let mut fast_path = working_set.clone();
@@ -1496,10 +1496,10 @@ async fn profile_schedule_backlog_single_pass(mut batch: Vec<Transaction>, iter:
         println!();
         println!("Parallel:");
         let parallel = Instant::now();
-        let res: Vec<(usize, Box<Vec<Transaction>>, Box<Vec<Transaction>>)> = tmp
+        let res: Vec<(usize, Box<Vec<Transaction<2, 2>>>, Box<Vec<Transaction<2, 2>>>)> = tmp
             .into_par_iter()
             .map(|(scheduler_index, chunk, mut scheduled, mut postponed, mut working_set, mut set):
-                  (usize, Vec<Transaction>, Box<Vec<Transaction>>, Box<Vec<Transaction>>, Box<ThinSetWrapper>, HashSet<u64, BuildNoHashHasher<u64>>)| {
+                  (usize, Vec<Transaction<2, 2>>, Box<Vec<Transaction<2, 2>>>, Box<Vec<Transaction<2, 2>>>, Box<ThinSetWrapper>, HashSet<u64, BuildNoHashHasher<u64>>)| {
                 let a = Instant::now();
 
                 let chunk_size = chunk.len();
@@ -1607,7 +1607,7 @@ async fn profile_schedule_backlog_single_pass(mut batch: Vec<Transaction>, iter:
     // println!("schedule_backlog_single_pass latency = {:?}", duration.div(iter as u32));
 }
 
-async fn test_profile_schedule_backlog_single_pass(mut batch: Vec<Transaction>, iter: usize) {
+async fn test_profile_schedule_backlog_single_pass(mut batch: Vec<Transaction<2, 2>>, iter: usize) {
     batch.truncate(65536);
     let mut duration = Duration::from_nanos(0);
     for _ in 0..iter {
@@ -1889,7 +1889,7 @@ impl SparseSet {
 // }
 //endregion
 
-async fn try_other_method(mut batch: Vec<Transaction>, iter: usize, nb_schedulers: usize, parallel_schedule: bool, nb_executors: usize,) {
+async fn try_other_method(mut batch: Vec<Transaction<2, 2>>, iter: usize, nb_schedulers: usize, parallel_schedule: bool, nb_executors: usize,) {
 
     let mut duration = Duration::from_nanos(0);
     // let nb_schedulers = 8;
@@ -2034,7 +2034,7 @@ async fn try_other_method(mut batch: Vec<Transaction>, iter: usize, nb_scheduler
                                         _ => None,
                                     }
                                 })
-                                .collect::<Vec<Transaction>>()
+                                .collect::<Vec<Transaction<2, 2>>>()
                         }
                     ).collect();
                 let mut generated_tx = acc.lock().unwrap();

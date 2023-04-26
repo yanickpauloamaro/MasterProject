@@ -26,7 +26,7 @@ impl SequentialVM {
         self.storage.fill(value);
     }
 
-    pub fn execute(&mut self, mut batch: Vec<Transaction>) -> anyhow::Result<(Duration, Duration)> {
+    pub fn execute<const A: usize, const P: usize>(&mut self, mut batch: Vec<Transaction<A, P>>) -> anyhow::Result<(Duration, Duration)> {
 
         let storage = SharedStorage{ ptr: self.storage.as_mut_ptr(), size: self.storage.len() };
 
@@ -56,7 +56,7 @@ impl SequentialVM {
         return Ok((Duration::from_micros(0), execution_start.elapsed()));
     }
 
-    pub fn execute_with_results(&mut self, mut batch: Vec<Transaction>) -> anyhow::Result<Vec<FunctionResult>> {
+    pub fn execute_with_results<const A: usize, const P: usize>(&mut self, mut batch: Vec<Transaction<A, P>>) -> anyhow::Result<Vec<FunctionResult<A, P>>> {
 
         let mut results = vec![FunctionResult::Error; batch.len()];
         let mut tx_index = batch.len() - 1;

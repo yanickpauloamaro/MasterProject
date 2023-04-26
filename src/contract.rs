@@ -13,22 +13,22 @@ pub type FunctionAddress = u32;
 pub type StaticAddress = u32;
 pub type FunctionParameter = u32;
 
-pub type Round = Vec<Transaction>;
-pub type Schedule = Vec<Round>;
+// pub type Round = Vec<Transaction>;
+// pub type Schedule = Vec<Round>;
 
 pub const MAX_NB_ADDRESSES: usize = 2;
 pub const MAX_NB_PARAMETERS: usize = 2;
-pub const MAX_TX_SIZE: usize = mem::size_of::<Transaction>();
+// pub const MAX_TX_SIZE: usize = mem::size_of::<Transaction>();
 
 // TODO Find safe way to have a variable length array?
 #[derive(Clone, Debug, Copy)]
-pub struct Transaction {
+pub struct Transaction<const ADDRESS_COUNT: usize, const PARAM_COUNT: usize> {
     pub sender: SenderAddress,
     pub function: AtomicFunction,
-    pub addresses: BoundedArray<StaticAddress, MAX_NB_ADDRESSES>,
-    pub params: BoundedArray<FunctionParameter, MAX_NB_PARAMETERS>,
-    // pub addresses: [StaticAddress; MAX_NB_ADDRESSES],
-    // pub params: [FunctionParameter; MAX_NB_PARAMETERS],
+    // pub addresses: BoundedArray<StaticAddress, MAX_NB_ADDRESSES>,
+    // pub params: BoundedArray<FunctionParameter, MAX_NB_PARAMETERS>,
+    pub addresses: [StaticAddress; ADDRESS_COUNT],
+    pub params: [FunctionParameter; PARAM_COUNT],
     // pub nb_addresses: usize,
 }
 
@@ -52,11 +52,11 @@ impl AtomicFunction {
     // pub fn index(&self) -> usize {
     //     mem::discriminant(self)
     // }
-    pub unsafe fn execute(
+    pub unsafe fn execute<const ADDRESS_COUNT: usize, const PARAM_COUNT: usize>(
         &self,
-        mut tx: Transaction,
+        mut tx: Transaction<ADDRESS_COUNT, PARAM_COUNT>,
         mut storage: SharedStorage
-    ) -> FunctionResult {
+    ) -> FunctionResult<ADDRESS_COUNT, PARAM_COUNT> {
         let _sender = tx.sender;
         let addresses = tx.addresses;
         let params = tx.params;
@@ -104,80 +104,85 @@ impl AtomicFunction {
                 AtomicFunction::fib(params[0]);
                 FunctionResult::Success
             },
-            Ballot(piece) => piece.execute(tx, storage),
+            Ballot(piece) => {
+                // piece.execute(tx, storage)
+                todo!()
+            },
             BestFitStart => {
-                let _addr: Vec<_> = addresses.iter().collect();
-                println!("Start range = {:?}", _addr);
-                // addresses: [start_addr..end_addr]
-                // params: []
-                let start_addr = addresses[0];
-                let mut max_addr = start_addr;
-                let mut max = storage.get(start_addr as usize);
-
-                for addr in addresses.iter() {
-                    let value = storage.get(*addr as usize);
-                    // println!("\t{}->{}", *addr, value);
-                    if value > max {
-                        max = storage.get(max_addr as usize);
-                        max_addr = *addr;
-                    }
-                }
-
-                // store max for next tx piece
-                tx.params[0] = max as FunctionParameter;
-
-                // Compute next range
-                let new_starting_addr = start_addr + MAX_NB_ADDRESSES as StaticAddress;
-                let new_end_addr = min(new_starting_addr + MAX_NB_ADDRESSES as StaticAddress - 1, storage.len() as StaticAddress);
-
-                if new_starting_addr as usize >= storage.len() {
-                    // Commit
-                    return FunctionResult::SuccessValue(max);
-                }
-
-                //"lock" the max value
-                tx.addresses = BoundedArray::from_range_with(max_addr, new_starting_addr..new_end_addr);
-
-                tx.function = BestFit;
-                FunctionResult::Another(tx)
+                // let _addr: Vec<_> = addresses.iter().collect();
+                // println!("Start range = {:?}", _addr);
+                // // addresses: [start_addr..end_addr]
+                // // params: []
+                // let start_addr = addresses[0];
+                // let mut max_addr = start_addr;
+                // let mut max = storage.get(start_addr as usize);
+                //
+                // for addr in addresses.iter() {
+                //     let value = storage.get(*addr as usize);
+                //     // println!("\t{}->{}", *addr, value);
+                //     if value > max {
+                //         max = storage.get(max_addr as usize);
+                //         max_addr = *addr;
+                //     }
+                // }
+                //
+                // // store max for next tx piece
+                // tx.params[0] = max as FunctionParameter;
+                //
+                // // Compute next range
+                // let new_starting_addr = start_addr + MAX_NB_ADDRESSES as StaticAddress;
+                // let new_end_addr = min(new_starting_addr + MAX_NB_ADDRESSES as StaticAddress - 1, storage.len() as StaticAddress);
+                //
+                // if new_starting_addr as usize >= storage.len() {
+                //     // Commit
+                //     return FunctionResult::SuccessValue(max);
+                // }
+                //
+                // //"lock" the max value
+                // tx.addresses = BoundedArray::from_range_with(max_addr, new_starting_addr..new_end_addr);
+                //
+                // tx.function = BestFit;
+                // FunctionResult::Another(tx)
+                FunctionResult::Success
             },
             BestFit => {
-                let _addr: Vec<_> = addresses.iter().collect();
-                println!("Searching range = {:?}", _addr);
-                // addresses: [old_max_addr, start_addr..end_addr]
-                // params: [old_max]
-                let old_max_addr = addresses[0];
-                let old_max = params[0] as Word;
-                let start_addr = addresses[1];
-
-                let mut max_addr = old_max_addr;
-                let mut max = old_max;
-
-                for addr in addresses.iter() {
-                    let value = storage.get(*addr as usize);
-                    if value > max {
-                        max = storage.get(max_addr as usize);
-                        max_addr = *addr;
-                    }
-                }
-
-                // store max for next tx piece
-                tx.params[0] = max as FunctionParameter;
-
-                // Compute next range
-                let new_starting_addr = start_addr + MAX_NB_ADDRESSES as StaticAddress - 1;
-                let new_end_addr = min(new_starting_addr + MAX_NB_ADDRESSES as StaticAddress - 1, storage.len() as StaticAddress);
-
-                if new_starting_addr as usize >= storage.len() {
-                    // Commit
-                    return FunctionResult::SuccessValue(max);
-                }
-
-                //"lock" the max value
-                tx.addresses = BoundedArray::from_range_with(max_addr, new_starting_addr..new_end_addr);
-
-                tx.function = BestFit;
-                FunctionResult::Another(tx)
+                // let _addr: Vec<_> = addresses.iter().collect();
+                // println!("Searching range = {:?}", _addr);
+                // // addresses: [old_max_addr, start_addr..end_addr]
+                // // params: [old_max]
+                // let old_max_addr = addresses[0];
+                // let old_max = params[0] as Word;
+                // let start_addr = addresses[1];
+                //
+                // let mut max_addr = old_max_addr;
+                // let mut max = old_max;
+                //
+                // for addr in addresses.iter() {
+                //     let value = storage.get(*addr as usize);
+                //     if value > max {
+                //         max = storage.get(max_addr as usize);
+                //         max_addr = *addr;
+                //     }
+                // }
+                //
+                // // store max for next tx piece
+                // tx.params[0] = max as FunctionParameter;
+                //
+                // // Compute next range
+                // let new_starting_addr = start_addr + MAX_NB_ADDRESSES as StaticAddress - 1;
+                // let new_end_addr = min(new_starting_addr + MAX_NB_ADDRESSES as StaticAddress - 1, storage.len() as StaticAddress);
+                //
+                // if new_starting_addr as usize >= storage.len() {
+                //     // Commit
+                //     return FunctionResult::SuccessValue(max);
+                // }
+                //
+                // //"lock" the max value
+                // tx.addresses = BoundedArray::from_range_with(max_addr, new_starting_addr..new_end_addr);
+                //
+                // tx.function = BestFit;
+                // FunctionResult::Another(tx)
+                FunctionResult::Success
             },
         }
     }
@@ -192,11 +197,11 @@ impl AtomicFunction {
 }
 
 #[derive(Clone, Copy, Debug)]
-pub enum FunctionResult {
+pub enum FunctionResult<const ADDRESS_COUNT: usize, const PARAM_COUNT: usize> {
     // Running,
     Success,
     SuccessValue(Word),
-    Another(Transaction),
+    Another(Transaction<ADDRESS_COUNT, PARAM_COUNT>),
     Error,
     ErrorMsg(&'static str)
 }

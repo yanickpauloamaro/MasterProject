@@ -19,7 +19,7 @@ pub struct Currency {}
 
 impl Currency {
 
-    pub fn transfers_workload(storage_size: usize, batch_size: usize, conflict_rate: f64, mut rng: &mut StdRng) -> Vec<Transaction> {
+    pub fn transfers_workload(storage_size: usize, batch_size: usize, conflict_rate: f64, mut rng: &mut StdRng) -> Vec<Transaction<2, 2>> {
 
         let batch: Vec<_> = Workload::transfer_pairs(storage_size, batch_size, conflict_rate, rng)
             .iter()
@@ -29,15 +29,15 @@ impl Currency {
                     sender: pair.0 as SenderAddress,
                     function: AtomicFunction::Transfer,
                     // nb_addresses: 2,
-                    addresses: bounded_array![pair.0, pair.1],
-                    params: bounded_array!(2, tx_index as FunctionParameter),// [2, tx_index as FunctionParameter]
+                    addresses: [pair.0, pair.1],
+                    params: [2, tx_index as FunctionParameter],
                 }
         }).collect();
 
         batch
     }
 
-    pub fn split_transfers_workload(storage_size: usize, batch_size: usize, conflict_rate: f64, mut rng: &mut StdRng) -> Vec<Transaction> {
+    pub fn split_transfers_workload(storage_size: usize, batch_size: usize, conflict_rate: f64, mut rng: &mut StdRng) -> Vec<Transaction<1, 3>> {
 
         let batch: Vec<_> = Workload::transfer_pairs(storage_size, batch_size, conflict_rate, rng)
             .iter()
@@ -46,10 +46,10 @@ impl Currency {
                 Transaction {
                     sender: pair.0 as SenderAddress,
                     function: AtomicFunction::TransferDecrement,
-                    addresses: bounded_array![pair.0],
+                    addresses: [pair.0],
                     // nb_addresses: 1,
                     // addresses: bounded_array![pair.0, pair.1],
-                    params: bounded_array!(2, pair.1 as FunctionParameter)
+                    params: [2, pair.1 as FunctionParameter, tx_index as FunctionParameter]
                 }
             }).collect();
 
@@ -70,7 +70,7 @@ pub enum Ballot {
 }
 
 impl Ballot {
-    pub fn execute(&self, mut tx: Transaction, mut storage: SharedStorage) -> FunctionResult {
+    pub fn execute<const A: usize, const P: usize>(&self, mut tx: Transaction<A, P>, mut storage: SharedStorage) -> FunctionResult<1, 1> {
         use Ballot::*;
         match self {
             InitBallot => FunctionResult::Success,
@@ -148,19 +148,21 @@ impl FromStr for Workload {
 
 impl Workload {
 
-    pub fn new_batch(&self, run: &RunParameter, rng: &mut StdRng) -> Vec<Transaction> {
+    // TODO merge new_batch and execute together since we can't return a multiple types in new_batch
+    pub fn new_batch(&self, run: &RunParameter, rng: &mut StdRng) -> Vec<Transaction<2, 2>> {
         use Workload::*;
         match self {
             Fibonacci(n) => {
-                (0..run.batch_size).map(|tx_index| {
-                    Transaction {
-                        sender: tx_index as SenderAddress,
-                        function: AtomicFunction::Fibonacci,
-                        // nb_addresses: 2,
-                        addresses: bounded_array![tx_index as StaticAddress],
-                        params: bounded_array!(*n as FunctionParameter, tx_index as FunctionParameter),
-                    }
-                }).collect()
+                // (0..run.batch_size).map(|tx_index| {
+                //     Transaction {
+                //         sender: tx_index as SenderAddress,
+                //         function: AtomicFunction::Fibonacci,
+                //         // nb_addresses: 2,
+                //         addresses: bounded_array![tx_index as StaticAddress],
+                //         params: bounded_array!(*n as FunctionParameter, tx_index as FunctionParameter),
+                //     }
+                // }).collect()
+                vec!()
             },
             Transfer(conflict_rate) => {
                 Workload::transfer_pairs(run.storage_size, run.batch_size, *conflict_rate, rng)
@@ -171,45 +173,47 @@ impl Workload {
                             sender: pair.0 as SenderAddress,
                             function: AtomicFunction::Transfer,
                             // nb_addresses: 2,
-                            addresses: bounded_array![pair.0, pair.1],
-                            params: bounded_array!(2, tx_index as FunctionParameter),// [2, tx_index as FunctionParameter]
+                            addresses: [pair.0, pair.1],
+                            params: [2, tx_index as FunctionParameter],
                         }
                     }).collect()
             },
             TransferPiece(conflict_rate) => {
-                Workload::transfer_pairs(run.storage_size, run.batch_size, *conflict_rate, rng)
-                    .iter()
-                    .enumerate()
-                    .map(|(tx_index, pair)| {
-                        Transaction {
-                            sender: pair.0 as SenderAddress,
-                            function: AtomicFunction::TransferDecrement,
-                            addresses: bounded_array![pair.0],
-                            // nb_addresses: 1,
-                            // addresses: bounded_array![pair.0, pair.1],
-                            params: bounded_array!(2, pair.1 as FunctionParameter)
-                        }
-                    }).collect()
+                // Workload::transfer_pairs(run.storage_size, run.batch_size, *conflict_rate, rng)
+                //     .iter()
+                //     .enumerate()
+                //     .map(|(tx_index, pair)| {
+                //         Transaction {
+                //             sender: pair.0 as SenderAddress,
+                //             function: AtomicFunction::TransferDecrement,
+                //             addresses: bounded_array![pair.0],
+                //             // nb_addresses: 1,
+                //             // addresses: bounded_array![pair.0, pair.1],
+                //             params: bounded_array!(2, pair.1 as FunctionParameter)
+                //         }
+                //     }).collect()
+                vec!()
             },
             Ballot(n, double_vote_rate) => todo!(),
             BestFit => {
-                let addresses: Vec<_> = (0..run.storage_size).collect();
-                let mut batch = Vec::with_capacity(run.batch_size);
-                for sender in 0..run.batch_size {
-                    let addr = *addresses.choose(rng).unwrap_or(&0) as StaticAddress;
-                    let end_point = min(addr + MAX_NB_ADDRESSES as StaticAddress, run.storage_size as StaticAddress);
-
-                    let tx = Transaction{
-                        sender: sender as SenderAddress,
-                        function: AtomicFunction::BestFitStart,
-                        addresses: BoundedArray::from_range(addr..end_point),
-                        // nb_addresses: 1,
-                        // addresses: bounded_array![pair.0, pair.1],
-                        params: bounded_array!(0)
-                    };
-                    batch.push(tx)
-                }
-                batch
+                // let addresses: Vec<_> = (0..run.storage_size).collect();
+                // let mut batch = Vec::with_capacity(run.batch_size);
+                // for sender in 0..run.batch_size {
+                //     let addr = *addresses.choose(rng).unwrap_or(&0) as StaticAddress;
+                //     let end_point = min(addr + MAX_NB_ADDRESSES as StaticAddress, run.storage_size as StaticAddress);
+                //
+                //     let tx = Transaction{
+                //         sender: sender as SenderAddress,
+                //         function: AtomicFunction::BestFitStart,
+                //         addresses: BoundedArray::from_range(addr..end_point),
+                //         // nb_addresses: 1,
+                //         // addresses: bounded_array![pair.0, pair.1],
+                //         params: bounded_array!(0)
+                //     };
+                //     batch.push(tx)
+                // }
+                // batch
+                vec!()
             }
             _ => todo!()
         }
@@ -346,7 +350,6 @@ impl Serialize for Workload {
 }
 
 struct WorkloadVisitor;
-
 impl<'de> Visitor<'de> for WorkloadVisitor {
     type Value = Workload;
 
