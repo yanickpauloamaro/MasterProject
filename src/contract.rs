@@ -57,16 +57,12 @@ impl AtomicFunction {
         mut tx: Transaction<ADDRESS_COUNT, PARAM_COUNT>,
         mut storage: SharedStorage
     ) -> FunctionResult<ADDRESS_COUNT, PARAM_COUNT> {
-        let _sender = tx.sender;
-        let addresses = tx.addresses;
-        let params = tx.params;
-
         use AtomicFunction::*;
         return match self {
             Transfer => {
-                let from = addresses[0] as usize;
-                let to = addresses[1] as usize;
-                let amount = params[0] as Word;
+                let from = tx.addresses[0] as usize;
+                let to = tx.addresses[1] as usize;
+                let amount = tx.params[0] as Word;
 
                 let balance_from = storage.get(from);
                 if balance_from >= amount {
@@ -74,34 +70,36 @@ impl AtomicFunction {
                     *storage.get_mut(to) += amount;
                     FunctionResult::Success
                 } else {
-                    println!("*****************");
+                    eprintln!("Transfer: Insufficient funds !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!");
                     FunctionResult::ErrorMsg("Insufficient funds")
                 }
             },
             TransferDecrement => {
                 // Example of function that output another function
-                let from = addresses[0] as usize;
-                let amount = params[0] as Word;
+                let from = tx.addresses[0] as usize;
+                let to = tx.params[1] as usize;
+                let amount = tx.params[0] as Word;
+
                 if storage.get(from) >= amount {
                     *storage.get_mut(from) -= amount;
 
                     tx.function = TransferIncrement;
-                    tx.addresses[0] = params[1] as StaticAddress;
+                    tx.addresses[0] = to as StaticAddress;
 
                     FunctionResult::Another(tx)
                 } else {
-                    println!("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!");
+                    eprintln!("TransferDecrement: Insufficient funds !!!!!!!!!!!!!!!!!!!!!!!!!!!!!");
                     FunctionResult::ErrorMsg("Insufficient funds")
                 }
             },
             TransferIncrement => {
-                let to = addresses[0] as usize;
-                let amount = params[0] as Word;
+                let to = tx.addresses[0] as usize;
+                let amount = tx.params[0] as Word;
                 *storage.get_mut(to) += amount;
                 FunctionResult::Success
             },
             Fibonacci => {
-                AtomicFunction::fib(params[0]);
+                AtomicFunction::fib(tx.params[0]);
                 FunctionResult::Success
             },
             Ballot(piece) => {

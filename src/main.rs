@@ -34,7 +34,7 @@ use strum::IntoEnumIterator;
 use tinyset::SetU64;
 use tokio::task::JoinHandle;
 
-use testbench::benchmark::benchmarking;
+use testbench::benchmark::{benchmarking, TestBench};
 use testbench::config::{BenchmarkConfig, ConfigFile, RunParameter};
 use testbench::{bounded_array, contract, debug, debugging, utils};
 use testbench::applications::{Currency, Workload};
@@ -65,7 +65,12 @@ async fn main() -> Result<()> {
 
     let total = Instant::now();
     tokio::task::spawn_blocking(|| {
-        benchmarking("benchmark_config.json")
+        println!("Previous version");
+        benchmarking("benchmark_config.json");
+
+        println!();
+        println!("New version");
+        TestBench::benchmark("benchmark_config.json")
     }).await.expect("Task panicked")?;
 
     // let param = BenchmarkConfig{
@@ -3063,7 +3068,7 @@ fn profile_old_tx(path: &str) -> Result<()> {
     let batch_size = config.batch_sizes[0];
     let storage_size = batch_size * 100;
     // let nb_cores = config.nb_cores[0];
-    let conflict_rate = config.workloads[0];
+    let conflict_rate = config.workloads[0].as_str();
 
     let mut rng = match config.seed {
         Some(seed) => {
@@ -3196,7 +3201,7 @@ fn profiling(path: &str) -> Result<()> {
     let batch_size = config.batch_sizes[0];
     let storage_size = batch_size * 100;
     let nb_cores = config.nb_executors[0];
-    let conflict_rate = config.workloads[0];
+    let conflict_rate = config.workloads[0].as_str();
 
     let mut rng = match config.seed {
         Some(seed) => {

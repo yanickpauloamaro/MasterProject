@@ -37,6 +37,10 @@ impl ParallelVmCollect {
     pub fn set_storage(&mut self, value: Word) {
         self.vm.storage.set_storage(value);
     }
+
+    pub fn init_storage(&mut self, init: Box<dyn Fn(&mut Vec<Word>)>) {
+        self.vm.init_storage(init);
+    }
 }
 
 #[derive(Debug)]
@@ -60,6 +64,10 @@ impl ParallelVmImmediate {
 
     pub fn set_storage(&mut self, value: Word) {
         self.vm.storage.set_storage(value);
+    }
+
+    pub fn init_storage(&mut self, init: Box<dyn Fn(&mut Vec<Word>)>) {
+        self.vm.init_storage(init);
     }
 }
 
@@ -133,6 +141,10 @@ impl ParallelVM {
 
         let vm = Self{ storage, functions, nb_schedulers, scheduler_chunk_size, nb_workers, executor_chunk_size };
         return Ok(vm);
+    }
+
+    pub fn init_storage(&mut self, init: Box<dyn Fn(&mut Vec<Word>)>) {
+        init(&mut self.storage.content)
     }
 
     #[inline]

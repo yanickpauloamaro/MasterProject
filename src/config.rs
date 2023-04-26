@@ -13,7 +13,7 @@ use crate::vm_utils::VmType;
 
 pub trait ConfigFile {
     fn new(path: &str) -> Result<Self>
-        where Self: Serialize + DeserializeOwned + Sized
+        where Self: Serialize + Sized + DeserializeOwned
     {
         let str = fs::read_to_string(path)
             .context(format!("Unable to read {} file", Self::name()))?;
@@ -42,13 +42,13 @@ pub struct BenchmarkConfig {
     pub nb_executors: Vec<usize>,
     pub batch_sizes: Vec<usize>,
     // pub storage_size: u64, // TODO Add storage size as a config parameter, 2 * batch_size for now
-    pub workloads: Vec<Workload>,
+    pub workloads: Vec<String>,
     pub repetitions: u64,   // For 95% confidence interval
     pub warmup: u64,
     pub seed: Option<u64>,
 }
 
-impl ConfigFile for BenchmarkConfig{
+impl ConfigFile for BenchmarkConfig {
     fn name() -> String {
         String::from("benchmark config")
     }
@@ -61,7 +61,8 @@ impl Default for BenchmarkConfig {
             nb_schedulers: vec![0],
             nb_executors: vec![1],
             batch_sizes: vec![128],
-            workloads: vec![Workload::Transfer(0.0)],
+            workloads: vec![String::from("Transfer(0.0)")],
+            // workloads: vec!["Transfer(0.0)"],
             repetitions: 1,
             warmup: 1,
             seed: Some(42),
@@ -76,7 +77,7 @@ pub struct RunParameter {
     pub nb_executors: usize,
     pub batch_size: usize,
     pub storage_size: usize,
-    pub workload: Workload,
+    pub workload: String,
     pub repetitions: u64,   // For 95% confidence interval
     pub warmup: u64,
     pub seed: Option<u64>,
@@ -89,7 +90,7 @@ impl RunParameter {
         nb_executors: usize,
         batch_size: usize,
         storage_size: usize,
-        workload: Workload,
+        workload: String,
         repetitions: u64,
         warmup: u64,
         seed: Option<u64>

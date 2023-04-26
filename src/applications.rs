@@ -153,16 +153,16 @@ impl Workload {
         use Workload::*;
         match self {
             Fibonacci(n) => {
-                // (0..run.batch_size).map(|tx_index| {
-                //     Transaction {
-                //         sender: tx_index as SenderAddress,
-                //         function: AtomicFunction::Fibonacci,
-                //         // nb_addresses: 2,
-                //         addresses: bounded_array![tx_index as StaticAddress],
-                //         params: bounded_array!(*n as FunctionParameter, tx_index as FunctionParameter),
-                //     }
-                // }).collect()
-                vec!()
+                (0..run.batch_size).map(|tx_index| {
+                    Transaction {
+                        sender: tx_index as SenderAddress,
+                        function: AtomicFunction::Fibonacci,
+                        // nb_addresses: 2,
+                        addresses: [tx_index as StaticAddress, (run.batch_size + tx_index) as StaticAddress],
+                        params: [*n as FunctionParameter, tx_index as FunctionParameter],
+                    }
+                }).collect()
+                // vec!()
             },
             Transfer(conflict_rate) => {
                 Workload::transfer_pairs(run.storage_size, run.batch_size, *conflict_rate, rng)
@@ -179,20 +179,20 @@ impl Workload {
                     }).collect()
             },
             TransferPiece(conflict_rate) => {
-                // Workload::transfer_pairs(run.storage_size, run.batch_size, *conflict_rate, rng)
-                //     .iter()
-                //     .enumerate()
-                //     .map(|(tx_index, pair)| {
-                //         Transaction {
-                //             sender: pair.0 as SenderAddress,
-                //             function: AtomicFunction::TransferDecrement,
-                //             addresses: bounded_array![pair.0],
-                //             // nb_addresses: 1,
-                //             // addresses: bounded_array![pair.0, pair.1],
-                //             params: bounded_array!(2, pair.1 as FunctionParameter)
-                //         }
-                //     }).collect()
-                vec!()
+                Workload::transfer_pairs(run.storage_size, run.batch_size, *conflict_rate, rng)
+                    .iter()
+                    .enumerate()
+                    .map(|(tx_index, pair)| {
+                        Transaction {
+                            sender: pair.0 as SenderAddress,
+                            function: AtomicFunction::TransferDecrement,
+                            addresses: [pair.0, run.batch_size as StaticAddress + pair.0],
+                            // nb_addresses: 1,
+                            // addresses: bounded_array![pair.0, pair.1],
+                            params: [2, pair.1 as FunctionParameter]
+                        }
+                    }).collect()
+                // vec!()
             },
             Ballot(n, double_vote_rate) => todo!(),
             BestFit => {

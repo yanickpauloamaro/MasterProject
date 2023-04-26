@@ -26,6 +26,10 @@ impl SequentialVM {
         self.storage.fill(value);
     }
 
+    pub fn init_storage(&mut self, init: Box<dyn Fn(&mut Vec<Word>)>) {
+        init(&mut self.storage)
+    }
+
     pub fn execute<const A: usize, const P: usize>(&mut self, mut batch: Vec<Transaction<A, P>>) -> anyhow::Result<(Duration, Duration)> {
 
         let storage = SharedStorage{ ptr: self.storage.as_mut_ptr(), size: self.storage.len() };
