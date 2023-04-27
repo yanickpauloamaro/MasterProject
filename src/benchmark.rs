@@ -527,7 +527,6 @@ impl Fib {
     const NAME: &'static str = "Fibonacci";
 
     fn new_boxed(params: &RunParameter, args: &str) -> Box<Self> {
-        // TODO use parsing
         match usize::from_str(args) {
             Ok(n) => Box::new(Fib{ n }),
             _ => panic!("Unable to parse argument to Fibonacci workload")
@@ -562,7 +561,6 @@ impl Transfer {
     const NAME: &'static str = "Transfer";
 
     fn new_boxed(params: &RunParameter, args: &str) -> Box<Self> {
-        // todo!("Need to parse input");
         match f64::from_str(args) {
             Ok(conflict_rate) => Box::new(Transfer{ conflict_rate }),
             _ => panic!("Unable to parse argument to Transfer workload")
@@ -601,7 +599,6 @@ impl TransferPieces {
     const NAME: &'static str = "TransferPiece";
 
     fn new_boxed(params: &RunParameter, args: &str) -> Box<Self> {
-        // todo!("Need to parse input");
         match f64::from_str(args) {
             Ok(conflict_rate) => Box::new(TransferPieces{ conflict_rate }),
             _ => panic!("Unable to parse argument to Transfer workload")
@@ -626,6 +623,53 @@ impl ApplicationWorkload<1, 2> for TransferPieces {
 
     fn initialisation(&self, params: &RunParameter, rng: &mut StdRng) -> Box<dyn Fn(&mut Vec<Word>)> {
         let nb_repetitions = params.repetitions;
+        Box::new(move |storage: &mut Vec<Word>| { storage.fill(20 * nb_repetitions as Word) })
+    }
+}
+//endregion
+
+//region Votation workload -------------------------------------------------------------------------
+struct Voting {
+    nb_subjects: usize,
+    nb_proposals_per_subject: usize,
+    nb_voters_per_subject: usize,
+}
+impl Voting {
+    const NAME: &'static str = "Vote";
+
+    fn new_boxed(params: &RunParameter, args: &str) -> Box<Self> {
+        // todo!("Need to parse input");
+        match f64::from_str(args) {
+            Ok(_) => Box::new(Voting {
+                nb_subjects: 1,
+                nb_proposals_per_subject: 2,
+                nb_voters_per_subject: 10,
+            }),
+            _ => panic!("Unable to parse argument to Votation workload")
+        }
+    }
+}
+
+impl ApplicationWorkload<2, 1> for Voting {
+    fn next_batch(&mut self, params: &RunParameter, rng: &mut StdRng) -> Vec<Transaction<2, 1>> {
+        /* For now assume that:
+            - the subjects are initialized and stored in the vm beforehand
+            - the voters are initialized are initialized and stored in the vm beforehand
+            => batch consists of vote and delegate calls
+            TODO Create batch (all on the same address to force conflict? (the address of the subject))
+            TODO Implement AtomicFunction (monolithic version)
+            TODO Create batch (pieced version) -> /!\ addresses Transaction<?, ?>
+            TODO Implement AtomicFunction (pieced version)
+            TODO Add delegation rate param
+            TODO Add proposal distribution param
+         */
+        todo!()
+    }
+
+    fn initialisation(&self, params: &RunParameter, rng: &mut StdRng) -> Box<dyn Fn(&mut Vec<Word>)> {
+        let nb_repetitions = params.repetitions;
+        todo!();
+        // Create nb_ballots
         Box::new(move |storage: &mut Vec<Word>| { storage.fill(20 * nb_repetitions as Word) })
     }
 }

@@ -15,3 +15,7 @@ pub mod contract;
 pub mod sequential_vm;
 pub mod parallel_vm;
 pub mod applications;
+pub mod voting;
+pub mod auction;
+pub mod key_value;
+pub mod best_fit;
