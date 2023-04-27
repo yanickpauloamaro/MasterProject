@@ -65,11 +65,11 @@ async fn main() -> Result<()> {
 
     let total = Instant::now();
     tokio::task::spawn_blocking(|| {
-        println!("Previous version");
-        benchmarking("benchmark_config.json");
-
-        println!();
-        println!("New version");
+        // println!("Previous version");
+        // benchmarking("benchmark_config.json");
+        //
+        // println!();
+        // println!("New version");
         TestBench::benchmark("benchmark_config.json")
     }).await.expect("Task panicked")?;
 

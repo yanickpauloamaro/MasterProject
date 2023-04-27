@@ -6,25 +6,31 @@ use std::str::FromStr;
 use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result};
+use nom::IResult;
+use nom::bytes::complete::take_until;
+use nom::character::complete::{alpha1, char};
+use nom::sequence::delimited;
+use nom::sequence::Tuple;
 use rand::prelude::SliceRandom;
 use rand::rngs::StdRng;
 use rand::SeedableRng;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use serde::de::Visitor;
 use thincollections::thin_map::ThinMap;
-use crate::applications::Workload;
 
+use crate::applications::Workload;
 use crate::config::{BenchmarkConfig, BenchmarkResult, ConfigFile, RunParameter};
-// use crate::contract::AtomicFunction::Transfer;
 use crate::contract::{AtomicFunction, FunctionParameter, SenderAddress, StaticAddress, Transaction};
 use crate::parallel_vm::{ParallelVmCollect, ParallelVmImmediate};
 use crate::sequential_vm::SequentialVM;
-use crate::utils::{batch_with_conflicts_new_impl, mean_ci};
+use crate::utils::batch_with_conflicts_new_impl;
 use crate::vm::Executor;
 use crate::vm_utils::{VmFactory, VmType};
 use crate::wip::Word;
 
 pub fn benchmarking(path: &str) -> Result<()> {
+
+    eprintln!("/!\\ Using old workload generation with fixed (larger) size transactions, this can lead to slower performance! /!\\");
 
     let config = BenchmarkConfig::new(path)
         .context("Unable to create benchmark config")?;
@@ -54,12 +60,11 @@ pub fn benchmarking(path: &str) -> Result<()> {
                         );
 
                         let result = if vm_type.new() {
-                            bench_with_parameter_new(parameter)
-                            // if *vm_type == VmType::Sequential {
-                            //     bench_with_parameter_new(parameter)
-                            // } else {
-                            //     bench_with_parameter_and_details(parameter)
-                            // }
+                            if *vm_type == VmType::Sequential {
+                                bench_with_parameter_new(parameter)
+                            } else {
+                                bench_with_parameter_and_details(parameter)
+                            }
                         } else {
                             bench_with_parameter(parameter)
                         };
@@ -171,43 +176,44 @@ fn bench_with_parameter_new(run: RunParameter) -> BenchmarkResult {
 
     return BenchmarkResult::from_latency(run, latency_reps);
 }
-//
-// fn bench_with_parameter_and_details(run: RunParameter) -> BenchmarkResult {
-//
-//     let mut vm = Bench::from(&run);
-//
-//     let mut latency_reps = Vec::with_capacity(run.repetitions as usize);
-//     let mut scheduling_latency = Vec::with_capacity(run.repetitions as usize);
-//     let mut execution_latency = Vec::with_capacity(run.repetitions as usize);
-//
-//     let mut rng = match run.seed {
-//         Some(seed) => StdRng::seed_from_u64(seed),
-//         None => StdRng::seed_from_u64(rand::random())
-//     };
-//
-//     let batch = run.workload.new_batch(&run, &mut rng);
-//     for _ in 0..run.warmup {
-//         let batch = batch.clone();
-//         vm.init_vm_storage(&run);
-//         let _vm_output = vm.execute(batch);
-//     }
-//
-//     for _ in 0..run.repetitions {
-//         // let batch = run.workload.new_batch(&run, &mut rng);
-//         let batch = batch.clone();
-//
-//         vm.init_vm_storage(&run);
-//         let start = Instant::now();
-//         let (scheduling, execution) = vm.execute(batch).unwrap();
-//         let duration = start.elapsed();
-//
-//         latency_reps.push(duration);
-//         scheduling_latency.push(scheduling);
-//         execution_latency.push(execution);
-//     }
-//
-//     return BenchmarkResult::from_latency_with_breakdown(run, latency_reps, scheduling_latency, execution_latency);
-// }
+
+fn bench_with_parameter_and_details(run: RunParameter) -> BenchmarkResult {
+
+    let mut vm = Bench::from(&run);
+    let workload = Workload::from_str(run.workload.as_str()).unwrap();
+
+    let mut latency_reps = Vec::with_capacity(run.repetitions as usize);
+    let mut scheduling_latency = Vec::with_capacity(run.repetitions as usize);
+    let mut execution_latency = Vec::with_capacity(run.repetitions as usize);
+
+    let mut rng = match run.seed {
+        Some(seed) => StdRng::seed_from_u64(seed),
+        None => StdRng::seed_from_u64(rand::random())
+    };
+
+    let batch = workload.new_batch(&run, &mut rng);
+    for _ in 0..run.warmup {
+        let batch = batch.clone();
+        vm.init_vm_storage(&run);
+        let _vm_output = vm.execute(batch);
+    }
+
+    for _ in 0..run.repetitions {
+        // let batch = run.workload.new_batch(&run, &mut rng);
+        let batch = batch.clone();
+
+        vm.init_vm_storage(&run);
+        let start = Instant::now();
+        let (scheduling, execution) = vm.execute(batch).unwrap();
+        let duration = start.elapsed();
+
+        latency_reps.push(duration);
+        scheduling_latency.push(scheduling);
+        execution_latency.push(execution);
+    }
+
+    return BenchmarkResult::from_latency_with_breakdown(run, latency_reps, scheduling_latency, execution_latency);
+}
 
 enum Bench {
     Sequential(SequentialVM),
@@ -339,22 +345,31 @@ impl TestBench {
     }
 
     fn run(params: RunParameter) -> BenchmarkResult {
-        // TODO parse first part of input
-        match params.workload.as_str() {
-            "Fibonacci(5)" => {
-                let workload = Fib::new_boxed(&params);
+
+        // TODO Add error handling
+        let parsed = Self::parser(params.workload.as_str());
+
+        match parsed {
+            Ok(("", (Fib::NAME, args))) => {
+                let workload = Fib::new_boxed(&params, args);
                 TestBench::dispatch(params, workload)
             },
-            "Transfer(0.0)" => {
-                let workload = Transfer::new_boxed(&params);
+            Ok(("", (Transfer::NAME, args))) => {
+                let workload = Transfer::new_boxed(&params, args);
                 TestBench::dispatch(params, workload)
             },
-            "TransferPiece(0.0)" => {
-                let workload = TransferPieces::new_boxed(&params);
+            Ok(("", (TransferPieces::NAME, args))) => {
+                let workload = TransferPieces::new_boxed(&params, args);
                 TestBench::dispatch(params, workload)
             },
-            _ => todo!(),//panic!("Unknown workload")
+            other => {
+                panic!("Unknown workload: {:?}", other);
+            }
         }
+    }
+
+    fn parser(input: &str) -> IResult<&str, (&str, &str)> {
+        (alpha1, delimited(char('('), take_until(")"), char(')'))).parse(input)
     }
 
     fn dispatch<const A: usize, const P: usize>(params: RunParameter, mut workload: Box<dyn ApplicationWorkload<A, P>>) -> BenchmarkResult {
@@ -364,7 +379,7 @@ impl TestBench {
         let result = match params.vm_type {
             VmType::Sequential => TestBench::bench_with_parameter_new(params, workload),
             // VmType::ParallelCollect | VmType::ParallelImmediate if params.with_details => TestBench::bench_with_parameter_and_details(params),
-            VmType::ParallelCollect | VmType::ParallelImmediate => TestBench::bench_with_parameter_new(params, workload),
+            VmType::ParallelCollect | VmType::ParallelImmediate => TestBench::bench_with_parameter_new_and_details(params, workload),
             _ => TestBench::bench_with_parameter(params)
         };
 
@@ -458,6 +473,43 @@ impl TestBench {
 
         return BenchmarkResult::from_latency(params, latency_reps);
     }
+
+    fn bench_with_parameter_new_and_details<const A: usize, const P: usize>(params: RunParameter, mut workload: Box<dyn ApplicationWorkload<A, P>>) -> BenchmarkResult {
+
+        let mut vm = VmWrapper::new(&params);
+
+        let mut latency_reps = Vec::with_capacity(params.repetitions as usize);
+        let mut scheduling_latency = Vec::with_capacity(params.repetitions as usize);
+        let mut execution_latency = Vec::with_capacity(params.repetitions as usize);
+
+        let mut rng = match params.seed {
+            Some(seed) => StdRng::seed_from_u64(seed),
+            None => StdRng::seed_from_u64(rand::random())
+        };
+
+        let batch = workload.next_batch(&params, &mut rng);
+        for _ in 0..params.warmup {
+            let batch = batch.clone();
+            vm.init_vm_storage(workload.initialisation(&params, &mut rng));
+            let _vm_output = vm.execute(batch);
+        }
+
+        for _ in 0..params.repetitions {
+            // let batch = workload.new_batch(&params, &mut rng);
+            let batch = batch.clone();
+            vm.init_vm_storage(workload.initialisation(&params, &mut rng));
+
+            let start = Instant::now();
+            let (scheduling, execution) = vm.execute(batch).unwrap();
+            let duration = start.elapsed();
+
+            latency_reps.push(duration);
+            scheduling_latency.push(scheduling);
+            execution_latency.push(execution);
+        }
+
+        return BenchmarkResult::from_latency_with_breakdown(params, latency_reps, scheduling_latency, execution_latency);
+    }
 }
 
 trait ApplicationWorkload<const ADDRESS: usize, const PARAMS: usize> {
@@ -471,9 +523,12 @@ struct Fib {
 }
 
 impl Fib {
-    fn new_boxed(params: &RunParameter) -> Box<Self> {
+
+    const NAME: &'static str = "Fibonacci";
+
+    fn new_boxed(params: &RunParameter, args: &str) -> Box<Self> {
         // TODO use parsing
-        match usize::from_str("5") {
+        match usize::from_str(args) {
             Ok(n) => Box::new(Fib{ n }),
             _ => panic!("Unable to parse argument to Fibonacci workload")
         }
@@ -504,9 +559,11 @@ struct Transfer {
     conflict_rate: f64,
 }
 impl Transfer {
-    fn new_boxed(params: &RunParameter) -> Box<Self> {
+    const NAME: &'static str = "Transfer";
+
+    fn new_boxed(params: &RunParameter, args: &str) -> Box<Self> {
         // todo!("Need to parse input");
-        match f64::from_str("0.0") {
+        match f64::from_str(args) {
             Ok(conflict_rate) => Box::new(Transfer{ conflict_rate }),
             _ => panic!("Unable to parse argument to Transfer workload")
         }
@@ -541,9 +598,11 @@ struct TransferPieces {
     conflict_rate: f64,
 }
 impl TransferPieces {
-    fn new_boxed(params: &RunParameter) -> Box<Self> {
+    const NAME: &'static str = "TransferPiece";
+
+    fn new_boxed(params: &RunParameter, args: &str) -> Box<Self> {
         // todo!("Need to parse input");
-        match f64::from_str("0.0") {
+        match f64::from_str(args) {
             Ok(conflict_rate) => Box::new(TransferPieces{ conflict_rate }),
             _ => panic!("Unable to parse argument to Transfer workload")
         }
