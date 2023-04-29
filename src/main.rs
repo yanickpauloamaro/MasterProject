@@ -65,16 +65,16 @@ async fn main() -> Result<()> {
 
     let total = Instant::now();
 
-    TestSharedMap::test_all();
+    // TestSharedMap::test_all();
 
-    // tokio::task::spawn_blocking(|| {
-    //     // println!("Previous version");
-    //     // benchmarking("benchmark_config.json");
-    //     //
-    //     // println!();
-    //     // println!("New version");
-    //     TestBench::benchmark("benchmark_config.json")
-    // }).await.expect("Task panicked")?;
+    tokio::task::spawn_blocking(|| {
+        // println!("Previous version");
+        // benchmarking("benchmark_config.json");
+        //
+        // println!();
+        // println!("New version");
+        TestBench::benchmark("benchmark_config.json")
+    }).await.expect("Task panicked")?;
 
     // let param = BenchmarkConfig{
     //     vm_types: vec![VmType::A],
@@ -1977,7 +1977,7 @@ async fn try_other_method(mut batch: Vec<Transaction<2, 2>>, iter: usize, nb_sch
             let previous = synchro;
             let acc = output.clone();
             let mut shared_storage = storage.get_shared();
-            let functions: Vec<_> = AtomicFunction::iter().collect();
+            let functions: Vec<_> = AtomicFunction::all();
 
             let handle = tokio::spawn(async move {
                 let (

@@ -16,7 +16,7 @@ pub struct SequentialVM {
 impl SequentialVM {
     pub fn new(storage_size: usize) -> anyhow::Result<Self> {
         let storage = vec![0; storage_size];
-        let functions = AtomicFunction::iter().collect();
+        let functions = AtomicFunction::all();
 
         let vm = Self{ storage, functions };
         return Ok(vm);

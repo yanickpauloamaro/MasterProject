@@ -1,6 +1,6 @@
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::error::Error;
-use std::fmt;
+use std::{fmt, mem};
 use std::fmt::{Debug, Write};
 use std::str::FromStr;
 use std::time::{Duration, Instant};
@@ -20,7 +20,8 @@ use thincollections::thin_map::ThinMap;
 
 use crate::applications::Workload;
 use crate::config::{BenchmarkConfig, BenchmarkResult, ConfigFile, RunParameter};
-use crate::contract::{AtomicFunction, FunctionParameter, SenderAddress, StaticAddress, Transaction};
+use crate::contract::{AtomicFunction, FunctionParameter, SenderAddress, SharedMap, StaticAddress, Transaction};
+use crate::key_value::{KeyValue, KeyValueOperation};
 use crate::parallel_vm::{ParallelVmCollect, ParallelVmImmediate};
 use crate::sequential_vm::SequentialVM;
 use crate::utils::batch_with_conflicts_new_impl;
@@ -362,6 +363,10 @@ impl TestBench {
                 let workload = TransferPieces::new_boxed(&params, args);
                 TestBench::dispatch(params, workload)
             },
+            Ok(("", (KeyValueWorkload::NAME, args))) => {
+                let workload = KeyValueWorkload::new_boxed(&params, args);
+                TestBench::dispatch(params, workload)
+            },
             other => {
                 panic!("Unknown workload: {:?}", other);
             }
@@ -628,6 +633,169 @@ impl ApplicationWorkload<1, 2> for TransferPieces {
 }
 //endregion
 
+//region KeyValue workload -------------------------------------------------------------------------
+struct KeyValueWorkload {
+    read_proportion: f64,
+    write_proportion: f64,
+    read_modify_write_proportion: f64,
+    scan_proportion: f64,
+    insert_proportion: f64,
+    // key_distribution: ??? uniform, or zipfian
+}
+impl KeyValueWorkload {
+    const NAME: &'static str = "KeyValue";
+
+    fn new_boxed(params: &RunParameter, args: &str) -> Box<Self> {
+        // todo!("Need to parse input");
+        match f64::from_str(args) {
+            Ok(read_proportion) => {
+                let write_proportion = 0.0;
+                let read_modify_write_proportion = 0.0;
+                let scan_proportion = 0.0;
+                let insert_proportion = 1.0
+                    - read_proportion
+                    - write_proportion
+                    - read_modify_write_proportion
+                    - scan_proportion;
+
+                Box::new(KeyValueWorkload {
+                    read_proportion,
+                    write_proportion,
+                    read_modify_write_proportion,
+                    scan_proportion,
+                    insert_proportion,
+                })
+            },
+            _ => panic!("Unable to parse argument to Votation workload")
+        }
+    }
+}
+
+impl ApplicationWorkload<1, 2> for KeyValueWorkload {
+    fn next_batch(&mut self, params: &RunParameter, rng: &mut StdRng) -> Vec<Transaction<1, 2>> {
+        /*
+            ---- Create batch (all on the same address to force conflict?)
+            ---- Implement AtomicFunction (monolithic version)
+            TODO Proper test batch
+            TODO Create batch (pieced version) -> /!\ addresses Transaction<?, ?>
+            TODO Implement AtomicFunction (pieced version)
+            TODO Add params
+         */
+        // Read only
+        // TODO Requires all addresses to have been inserted already
+        // let mut batch: Vec<_> = (0..params.batch_size).map(|tx_index| {
+        //     let address_to_read = tx_index;
+        //     let unused_parameter = 0 as FunctionParameter;
+        //     Transaction {
+        //         sender: tx_index as SenderAddress,
+        //         function: AtomicFunction::KeyValue(KeyValueOperation::Read),
+        //         addresses: [0],
+        //         params: [address_to_read as FunctionParameter, unused_parameter],
+        //     }
+        // }).collect();
+
+        // // Write
+        // // TODO Requires all addresses to have been inserted already
+        // let mut batch: Vec<_> = (0..params.batch_size/2).flat_map(|tx_index| {
+        //     let address_to_write = tx_index;
+        //     let value_to_write = 42 as FunctionParameter;
+        //     let write = Transaction {
+        //         sender: tx_index as SenderAddress,
+        //         function: AtomicFunction::KeyValue(KeyValueOperation::Write),
+        //         addresses: [0],
+        //         params: [address_to_write as FunctionParameter, value_to_write],
+        //     };
+        //
+        //     let unused_parameter = 0 as FunctionParameter;
+        //     let read = Transaction {
+        //         sender: tx_index as SenderAddress,
+        //         function: AtomicFunction::KeyValue(KeyValueOperation::Read),
+        //         addresses: [0],
+        //         params: [address_to_write as FunctionParameter, unused_parameter],
+        //     };
+        //     [read, write]
+        // }).collect();
+
+        // read-modify-write
+        // todo!(How to represent different read-modify-write operations?)
+        // TODO Requires all addresses to have been inserted already
+        // let mut batch: Vec<_> = (0..params.batch_size/2).flat_map(|tx_index| {
+        //     let address_to_modify = tx_index;
+        //     let unused_parameter = 0 as FunctionParameter;
+        //     let modify = Transaction {
+        //         sender: tx_index as SenderAddress,
+        //         function: AtomicFunction::KeyValue(KeyValueOperation::ReadModifyWrite),
+        //         addresses: [0],
+        //         params: [address_to_modify as FunctionParameter, unused_parameter],
+        //     };
+        //     let unused_parameter = 0 as FunctionParameter;
+        //     let read = Transaction {
+        //         sender: tx_index as SenderAddress,
+        //         function: AtomicFunction::KeyValue(KeyValueOperation::Read),
+        //         addresses: [0],
+        //         params: [address_to_modify as FunctionParameter, unused_parameter],
+        //     };
+        //     [read, modify]
+        // }).collect();
+
+        // // Scan only
+        // // TODO Requires scheduling to be aware of the operation it is scheduling
+        // // TODO Add address ranges support
+        // // TODO Requires all addresses to have been inserted already
+        let scan_width = 4;
+        let mut batch: Vec<_> = (0..(params.batch_size-scan_width)).map(|tx_index| {
+            let from = tx_index;    // Inclusive
+            let to = tx_index+scan_width;    // Exclusive
+            Transaction {
+                sender: tx_index as SenderAddress,
+                function: AtomicFunction::KeyValue(KeyValueOperation::Scan),
+                addresses: [0],
+                params: [from as FunctionParameter, to as FunctionParameter],
+            }
+        }).collect();
+
+        // // Insert
+        // let mut batch: Vec<_> = (0..params.batch_size).flat_map(|tx_index| {
+        //     let address_to_insert = tx_index;
+        //     let value_to_insert = 42 as FunctionParameter;
+        //     let insert = Transaction {
+        //         sender: tx_index as SenderAddress,
+        //         function: AtomicFunction::KeyValue(KeyValueOperation::Insert),
+        //         addresses: [0],
+        //         params: [address_to_insert as FunctionParameter, value_to_insert],
+        //     };
+        //     let unused_parameter = 0 as FunctionParameter;
+        //     let read = Transaction {
+        //         sender: tx_index as SenderAddress,
+        //         function: AtomicFunction::KeyValue(KeyValueOperation::Read),
+        //         addresses: [0],
+        //         params: [address_to_insert as FunctionParameter, unused_parameter],
+        //     };
+        //     [read, insert]
+        // }).collect();
+
+        batch
+    }
+
+    fn initialisation(&self, params: &RunParameter, rng: &mut StdRng) -> Box<dyn Fn(&mut Vec<Word>)> {
+        let batch_size = params.batch_size;
+        Box::new(move |storage: &mut Vec<Word>| unsafe {
+            storage[0] = batch_size as Word;
+            let nb_elem_in_map = storage[0] as usize;
+            let map_start = (storage.as_mut_ptr().add(1)) as *mut Option<Word>;
+            let _shared_map = SharedMap::new(
+                Cell::new(map_start),
+                nb_elem_in_map,
+                storage.len() * mem::size_of::<Word>(),
+            );
+            let mut key_value = KeyValue { inner_map: _shared_map };
+            for key in 0..batch_size {
+                key_value.insert(key as StaticAddress, key as Word);
+            }
+        })
+    }
+}
+//endregion
 //region Votation workload -------------------------------------------------------------------------
 struct Voting {
     nb_subjects: usize,

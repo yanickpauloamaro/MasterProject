@@ -51,7 +51,7 @@ impl ConcurrentVM {
 
     pub fn new(storage_size: usize, nb_schedulers: usize, nb_workers: usize) -> anyhow::Result<Self> {
         let storage = VmStorage::new(storage_size);
-        let functions = AtomicFunction::iter().collect();
+        let functions = AtomicFunction::all();
 
         let vm = Self{ storage, functions, nb_schedulers, nb_workers };
         return Ok(vm);
@@ -874,7 +874,7 @@ impl<const A: usize, const P: usize> BackgroundVMDeque<A, P> {
     pub fn new(storage_size: usize, nb_schedulers: usize, nb_workers: usize) -> anyhow::Result<Self> {
         let storage = VmStorage::new(storage_size);
         // let functions = Arc::new(std::sync::RwLock::new(AtomicFunction::iter().collect::<Vec<AtomicFunction>>()));
-        let functions = Arc::new(AtomicFunction::iter().collect::<Vec<AtomicFunction>>());
+        let functions = Arc::new(AtomicFunction::all());
 
         let channel_size = 10;
         let chunk_size = 65536/nb_schedulers + 1;
@@ -1225,7 +1225,7 @@ impl<const A: usize, const P: usize> BackgroundVM<A, P> {
     pub fn new(storage_size: usize, nb_schedulers: usize, nb_workers: usize) -> anyhow::Result<Self> {
         let storage = VmStorage::new(storage_size);
         // let functions = Arc::new(std::sync::RwLock::new(AtomicFunction::iter().collect::<Vec<AtomicFunction>>()));
-        let functions = Arc::new(AtomicFunction::iter().collect::<Vec<AtomicFunction>>());
+        let functions = Arc::new(AtomicFunction::all());
 
         let channel_size = 10;
         let chunk_size = 65536/nb_schedulers + 1;

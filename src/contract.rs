@@ -5,6 +5,8 @@ use rand::seq::SliceRandom;
 use std::fmt::Debug;
 use std::marker::PhantomData;
 use crate::applications::Ballot;
+use crate::key_value;
+use crate::key_value::{KeyValue, KeyValueOperation};
 use crate::vm_utils::SharedStorage;
 use crate::wip::Word;
 
@@ -29,13 +31,16 @@ pub struct Transaction<const ADDRESS_COUNT: usize, const PARAM_COUNT: usize> {
 }
 
 #[repr(u8)]
-#[derive(Clone, Copy, Debug, EnumIter)]
+#[derive(Clone, Copy, Debug)]
 pub enum AtomicFunction {
     Transfer = 0,
     // Transfer application split into pieces
     TransferDecrement,
     TransferIncrement,
     Fibonacci,
+
+    //Key-value application
+    KeyValue(KeyValueOperation),
 
     Ballot(Ballot),
     // BallotPiece(BallotPieces)
@@ -44,18 +49,44 @@ pub enum AtomicFunction {
     BestFit,
 }
 
+#[derive(Clone, Debug)]
+pub enum FunctionResult<const ADDRESS_COUNT: usize, const PARAM_COUNT: usize> {
+    // Running,
+    Success,
+    SuccessValue(Word),
+    Another(Transaction<ADDRESS_COUNT, PARAM_COUNT>),
+    Error,
+    ErrorMsg(&'static str),
+    // TODO Rename all functions, results and errors with qualified names -> i.e. key_value::Result
+    KeyValueSuccess(key_value::OperationResult),
+    KeyValueError(key_value::KeyValueError)
+}
+
 impl AtomicFunction {
     // pub fn index(&self) -> usize {
     //     mem::discriminant(self)
     // }
+    pub fn all() -> Vec<AtomicFunction> {
+        vec![
+            AtomicFunction::Transfer,
+            AtomicFunction::TransferDecrement,
+            AtomicFunction::TransferIncrement,
+            AtomicFunction::Fibonacci,
+            AtomicFunction::KeyValue(KeyValueOperation::Read),
+            AtomicFunction::KeyValue(KeyValueOperation::Write),
+            AtomicFunction::KeyValue(KeyValueOperation::ReadModifyWrite),
+            AtomicFunction::KeyValue(KeyValueOperation::Scan),
+            AtomicFunction::KeyValue(KeyValueOperation::Insert),
+        ]
+    }
     pub unsafe fn execute<const ADDRESS_COUNT: usize, const PARAM_COUNT: usize>(
         &self,
         mut tx: Transaction<ADDRESS_COUNT, PARAM_COUNT>,
         mut storage: SharedStorage
     ) -> FunctionResult<ADDRESS_COUNT, PARAM_COUNT> {
-        use AtomicFunction::*;
+        // use AtomicFunction::*;
         return match self {
-            Transfer => {
+            AtomicFunction::Transfer => {
                 let from = tx.addresses[0] as usize;
                 let to = tx.addresses[1] as usize;
                 let amount = tx.params[0] as Word;
@@ -70,7 +101,7 @@ impl AtomicFunction {
                     FunctionResult::ErrorMsg("Insufficient funds")
                 }
             },
-            TransferDecrement => {
+            AtomicFunction::TransferDecrement => {
                 // Example of function that output another function
                 let from = tx.addresses[0] as usize;
                 let to = tx.params[1] as usize;
@@ -79,7 +110,7 @@ impl AtomicFunction {
                 if storage.get(from) >= amount {
                     *storage.get_mut(from) -= amount;
 
-                    tx.function = TransferIncrement;
+                    tx.function = AtomicFunction::TransferIncrement;
                     tx.addresses[0] = to as StaticAddress;
 
                     FunctionResult::Another(tx)
@@ -88,21 +119,67 @@ impl AtomicFunction {
                     FunctionResult::ErrorMsg("Insufficient funds")
                 }
             },
-            TransferIncrement => {
+            AtomicFunction::TransferIncrement => {
                 let to = tx.addresses[0] as usize;
                 let amount = tx.params[0] as Word;
                 *storage.get_mut(to) += amount;
                 FunctionResult::Success
             },
-            Fibonacci => {
+            AtomicFunction::Fibonacci => {
                 AtomicFunction::fib(tx.params[0]);
                 FunctionResult::Success
             },
-            Ballot(piece) => {
+            AtomicFunction::KeyValue(op) => {
+                let nb_elem_in_map = storage.get(0) as usize;
+                let map_start = (storage.ptr.add(1)) as *mut Option<Word>;
+                let shared_map = SharedMap::from_ptr(
+                    Cell::new(map_start),
+                    nb_elem_in_map,
+                    storage.size * mem::size_of::<Word>(),
+                );
+                let mut key_value = KeyValue { inner_map: shared_map };
+
+                use KeyValueOperation::*;
+                let res = match op {
+                    Read => {
+                        let key = tx.params[0] as StaticAddress;
+                        key_value.read(key)
+                    }
+                    Write => {
+                        let key = tx.params[0] as StaticAddress;
+                        let new_value = tx.params[1] as Word;
+                        key_value.write(key, new_value)
+                    }
+                    ReadModifyWrite => {
+                        let key = tx.params[0] as StaticAddress;
+                        // todo!(How to represent different read modify functions?)
+                        let op = |input: Word| {
+                            2 * input
+                        };
+                        key_value.read_modify_write(key, op)
+                    }
+                    Scan => {
+                        let from = tx.params[0] as StaticAddress;
+                        let to = tx.params[1] as StaticAddress;
+                        key_value.scan(from, to)
+                    }
+                    Insert => {
+                        let key = tx.params[0] as StaticAddress;
+                        let value = tx.params[1] as Word;
+                        key_value.insert(key, value)
+                    }
+                };
+    // eprintln!("\tOperation result: {} -> {:?}", tx.params[0], res);
+                match res {
+                    Ok(success) => FunctionResult::KeyValueSuccess(success),
+                    Err(failure) => FunctionResult::KeyValueError(failure)
+                }
+            }
+            AtomicFunction::Ballot(piece) => {
                 // piece.execute(tx, storage)
                 todo!()
             },
-            BestFitStart => {
+            AtomicFunction::BestFitStart => {
                 // let _addr: Vec<_> = addresses.iter().collect();
                 // println!("Start range = {:?}", _addr);
                 // // addresses: [start_addr..end_addr]
@@ -139,7 +216,7 @@ impl AtomicFunction {
                 // FunctionResult::Another(tx)
                 FunctionResult::Success
             },
-            BestFit => {
+            AtomicFunction::BestFit => {
                 // let _addr: Vec<_> = addresses.iter().collect();
                 // println!("Searching range = {:?}", _addr);
                 // // addresses: [old_max_addr, start_addr..end_addr]
@@ -188,16 +265,6 @@ impl AtomicFunction {
             AtomicFunction::fib(n-1) + AtomicFunction::fib(n-2)
         }
     }
-}
-
-#[derive(Clone, Copy, Debug)]
-pub enum FunctionResult<const ADDRESS_COUNT: usize, const PARAM_COUNT: usize> {
-    // Running,
-    Success,
-    SuccessValue(Word),
-    Another(Transaction<ADDRESS_COUNT, PARAM_COUNT>),
-    Error,
-    ErrorMsg(&'static str)
 }
 
 pub struct SharedMap<'a, V: Clone + Debug> {
@@ -261,7 +328,7 @@ impl<'a, V: Clone + Debug> SharedMap<'a, V> {
 
     #[inline]
     pub unsafe fn get(&self, key: StaticAddress) -> Option<&'a V> {
-        if key as usize >= self.size { panic!("Access out of range"); }
+        if key as usize >= self.size { panic!("Access out of range: key {} >= {}", key, self.size); }
 
         let value = self.base_address.get().add(key as usize);
         (*value).as_ref()
@@ -269,7 +336,7 @@ impl<'a, V: Clone + Debug> SharedMap<'a, V> {
 
     #[inline]
     pub unsafe fn get_mut(&self, key: StaticAddress) -> Option<&'a mut V> {
-        if key as usize >= self.size { panic!("Access out of range"); }
+        if key as usize >= self.size { panic!("Access out of range: key {} >= {}", key, self.size); }
 
         let value = self.base_address.get().add(key as usize);
         (*value).as_mut()
@@ -277,7 +344,7 @@ impl<'a, V: Clone + Debug> SharedMap<'a, V> {
 
     #[inline]
     pub unsafe fn insert(&self, key: StaticAddress, new_value: V) -> Option<V> {
-        if key as usize >= self.size { panic!("Access out of range"); }
+        if key as usize >= self.size { panic!("Access out of range: key {} >= {}", key, self.size); }
 
         let value = self.base_address.get().add(key as usize);
         (*value).replace(new_value)

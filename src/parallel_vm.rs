@@ -106,7 +106,7 @@ pub struct ParallelVM {
 impl ParallelVM {
     pub fn new(storage_size: usize, nb_schedulers: usize, nb_workers: usize) -> anyhow::Result<Self> {
         let storage = VmStorage::new(storage_size);
-        let functions = AtomicFunction::iter().collect();
+        let functions = AtomicFunction::all();
 
         // TODO Try to reuse channels/vectors
         // let (tx_nb_rounds, rx_nb_rounds) = unbounded();
@@ -439,7 +439,7 @@ impl ParallelVM {
 //     pub fn new(storage_size: usize, nb_schedulers: usize, nb_workers: usize) -> anyhow::Result<Self> {
 //
 //         let storage = VmStorage::new(storage_size);
-//         let functions = AtomicFunction::iter().collect();
+//         let functions = AtomicFunction::all();
 //
 //         let (tx_nb_rounds, rx_nb_rounds) = unbounded();
 //         let (sets, (scheduling_outputs, execution_inputs)): (Vec<_>, (Vec<_>, Vec<_>)) = (0..nb_schedulers).map(|_| {
