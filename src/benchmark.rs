@@ -6,12 +6,16 @@ use std::str::FromStr;
 use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result};
+use nom::branch::alt;
 use nom::IResult;
-use nom::bytes::complete::take_until;
-use nom::character::complete::{alpha1, char};
-use nom::sequence::delimited;
+use nom::bytes::complete::{is_a, take_till, take_until};
+use nom::character::complete::{alpha1, char, one_of};
+use nom::combinator::rest;
+use nom::number::complete::double;
+use nom::sequence::{delimited, terminated};
 use nom::sequence::Tuple;
-use rand::prelude::SliceRandom;
+use rand::distributions::WeightedIndex;
+use rand::prelude::{Distribution, SliceRandom};
 use rand::rngs::StdRng;
 use rand::SeedableRng;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
@@ -645,28 +649,34 @@ struct KeyValueWorkload {
 impl KeyValueWorkload {
     const NAME: &'static str = "KeyValue";
 
+    fn parser(input: &str) -> IResult<&str, (f64, f64, f64, f64)> {
+        // TODO use numbers from 0-100 instead of floats to ensure we have exact proportions?
+        (
+            terminated(double, is_a(" ,)")), // read
+            terminated(double, is_a(" ,)")), // write
+            terminated(double, is_a(" ,)")), // rmw
+            double, // scan
+        ).parse(input)
+    }
+
     fn new_boxed(params: &RunParameter, args: &str) -> Box<Self> {
         // todo!("Need to parse input");
-        match f64::from_str(args) {
-            Ok(read_proportion) => {
-                let write_proportion = 0.0;
-                let read_modify_write_proportion = 0.0;
-                let scan_proportion = 0.0;
-                let insert_proportion = 1.0
-                    - read_proportion
-                    - write_proportion
-                    - read_modify_write_proportion
-                    - scan_proportion;
+        match KeyValueWorkload::parser(args) {
+            Ok((_, (read, write, rmw, scan))) => {
+                let sum = read + write + rmw + scan;
+                assert!(0.0 <= sum);
+                assert!(sum <= 1.0);
+                let insert = 1.0 - sum;
 
                 Box::new(KeyValueWorkload {
-                    read_proportion,
-                    write_proportion,
-                    read_modify_write_proportion,
-                    scan_proportion,
-                    insert_proportion,
+                    read_proportion: read,
+                    write_proportion: write,
+                    read_modify_write_proportion: rmw,
+                    scan_proportion: scan,
+                    insert_proportion: insert,
                 })
-            },
-            _ => panic!("Unable to parse argument to Votation workload")
+            }
+            other => panic!("Unable to parse argument to KeyValue workload: {:?}", other)
         }
     }
 }
@@ -676,11 +686,86 @@ impl ApplicationWorkload<1, 2> for KeyValueWorkload {
         /*
             ---- Create batch (all on the same address to force conflict?)
             ---- Implement AtomicFunction (monolithic version)
-            TODO Proper test batch
+            ---- Proper test batch
             TODO Create batch (pieced version) -> /!\ addresses Transaction<?, ?>
             TODO Implement AtomicFunction (pieced version)
-            TODO Add params
+            ---- Add params
          */
+        use AtomicFunction::KeyValue;
+        let items = [
+            (self.read_proportion, KeyValue(KeyValueOperation::Read)),
+            (self.write_proportion, KeyValue(KeyValueOperation::Write)),
+            (self.read_modify_write_proportion, KeyValue(KeyValueOperation::ReadModifyWrite)),
+            (self.scan_proportion, KeyValue(KeyValueOperation::Scan)),
+            (self.insert_proportion, KeyValue(KeyValueOperation::Insert)),
+        ];
+        let dist2 = WeightedIndex::new(items.iter().map(|item| item.0)).unwrap();
+
+        let scan_width = 4;
+        let write_value = 33;
+        let insert_value = 42;
+        let unused_parameter = 0 as FunctionParameter;
+
+        let keys: Vec<StaticAddress> = (0..50*params.batch_size).map(|i| i as StaticAddress).collect();
+
+        let batch = (0..params.batch_size).map(|mut tx_index| {
+            let mut key = *keys.choose(rng).unwrap_or(&(tx_index as StaticAddress));
+            match items[dist2.sample(rng)].1 {
+                KeyValue(KeyValueOperation::Read) => {
+                    Transaction {
+                        sender: key as SenderAddress,
+                        function: KeyValue(KeyValueOperation::Read),
+                        addresses: [0],
+                        params: [key as FunctionParameter, unused_parameter],
+                    }
+                },
+                KeyValue(KeyValueOperation::Write) => {
+                    Transaction {
+                        sender: key as SenderAddress,
+                        function: KeyValue(KeyValueOperation::Write),
+                        addresses: [0],
+                        params: [key as FunctionParameter, write_value],
+                    }
+                },
+                KeyValue(KeyValueOperation::ReadModifyWrite) => {
+                    // todo!(How to represent different read-modify-write operations?)
+                    Transaction {
+                        sender: key as SenderAddress,
+                        function: KeyValue(KeyValueOperation::ReadModifyWrite),
+                        addresses: [0],
+                        params: [key as FunctionParameter, unused_parameter],
+                    }
+                },
+                KeyValue(KeyValueOperation::Scan) => {
+                    // TODO Requires scheduling to be aware of the operation it is scheduling
+                    // TODO Add address ranges support
+                    // TODO Requires all addresses to have been inserted already
+
+                    if key + scan_width >= params.batch_size as StaticAddress {
+                        // Ensure we don't scan over the limit
+                        // TODO scan implementation should prevent that themselves...
+                        key -= scan_width;
+                    }
+                    Transaction {
+                        sender: key as SenderAddress,
+                        function: KeyValue(KeyValueOperation::Scan),
+                        addresses: [0],
+                        params: [key as FunctionParameter, (key + scan_width) as FunctionParameter],
+                    }
+                },
+                KeyValue(KeyValueOperation::Insert) => {
+                    Transaction {
+                        sender: key as SenderAddress,
+                        function: KeyValue(KeyValueOperation::Insert),
+                        addresses: [0],
+                        params: [key as FunctionParameter, insert_value],
+                    }
+                },
+                _ => { todo!() }
+            }
+        }).collect();
+
+        // // Debug batches
         // Read only
         // TODO Requires all addresses to have been inserted already
         // let mut batch: Vec<_> = (0..params.batch_size).map(|tx_index| {
@@ -716,71 +801,15 @@ impl ApplicationWorkload<1, 2> for KeyValueWorkload {
         //     [read, write]
         // }).collect();
 
-        // read-modify-write
-        // todo!(How to represent different read-modify-write operations?)
-        // TODO Requires all addresses to have been inserted already
-        // let mut batch: Vec<_> = (0..params.batch_size/2).flat_map(|tx_index| {
-        //     let address_to_modify = tx_index;
-        //     let unused_parameter = 0 as FunctionParameter;
-        //     let modify = Transaction {
-        //         sender: tx_index as SenderAddress,
-        //         function: AtomicFunction::KeyValue(KeyValueOperation::ReadModifyWrite),
-        //         addresses: [0],
-        //         params: [address_to_modify as FunctionParameter, unused_parameter],
-        //     };
-        //     let unused_parameter = 0 as FunctionParameter;
-        //     let read = Transaction {
-        //         sender: tx_index as SenderAddress,
-        //         function: AtomicFunction::KeyValue(KeyValueOperation::Read),
-        //         addresses: [0],
-        //         params: [address_to_modify as FunctionParameter, unused_parameter],
-        //     };
-        //     [read, modify]
-        // }).collect();
-
-        // // Scan only
-        // // TODO Requires scheduling to be aware of the operation it is scheduling
-        // // TODO Add address ranges support
-        // // TODO Requires all addresses to have been inserted already
-        let scan_width = 4;
-        let mut batch: Vec<_> = (0..(params.batch_size-scan_width)).map(|tx_index| {
-            let from = tx_index;    // Inclusive
-            let to = tx_index+scan_width;    // Exclusive
-            Transaction {
-                sender: tx_index as SenderAddress,
-                function: AtomicFunction::KeyValue(KeyValueOperation::Scan),
-                addresses: [0],
-                params: [from as FunctionParameter, to as FunctionParameter],
-            }
-        }).collect();
-
-        // // Insert
-        // let mut batch: Vec<_> = (0..params.batch_size).flat_map(|tx_index| {
-        //     let address_to_insert = tx_index;
-        //     let value_to_insert = 42 as FunctionParameter;
-        //     let insert = Transaction {
-        //         sender: tx_index as SenderAddress,
-        //         function: AtomicFunction::KeyValue(KeyValueOperation::Insert),
-        //         addresses: [0],
-        //         params: [address_to_insert as FunctionParameter, value_to_insert],
-        //     };
-        //     let unused_parameter = 0 as FunctionParameter;
-        //     let read = Transaction {
-        //         sender: tx_index as SenderAddress,
-        //         function: AtomicFunction::KeyValue(KeyValueOperation::Read),
-        //         addresses: [0],
-        //         params: [address_to_insert as FunctionParameter, unused_parameter],
-        //     };
-        //     [read, insert]
-        // }).collect();
-
         batch
     }
 
     fn initialisation(&self, params: &RunParameter, rng: &mut StdRng) -> Box<dyn Fn(&mut Vec<Word>)> {
-        let batch_size = params.batch_size;
+        // TODO determine key space based on storage_size
+        let key_space = 50 * params.batch_size;
+
         Box::new(move |storage: &mut Vec<Word>| unsafe {
-            storage[0] = batch_size as Word;
+            storage[0] = key_space as Word;
             let nb_elem_in_map = storage[0] as usize;
             let map_start = (storage.as_mut_ptr().add(1)) as *mut Option<Word>;
             let _shared_map = SharedMap::new(
@@ -789,13 +818,55 @@ impl ApplicationWorkload<1, 2> for KeyValueWorkload {
                 storage.len() * mem::size_of::<Word>(),
             );
             let mut key_value = KeyValue { inner_map: _shared_map };
-            for key in 0..batch_size {
+            for key in 0..key_space {
                 key_value.insert(key as StaticAddress, key as Word);
             }
         })
     }
 }
 //endregion
+
+//region BestFit workload --------------------------------------------------------------------------
+struct BestFitWorkload {
+    nb_best_fit_problems: usize,
+    nb_options_per_problem: usize,
+}
+impl BestFitWorkload {
+    const NAME: &'static str = "BestFit";
+
+    fn new_boxed(params: &RunParameter, args: &str) -> Box<Self> {
+        // todo!("Need to parse input");
+        match f64::from_str(args) {
+            Ok(_) => Box::new(BestFitWorkload {
+                nb_best_fit_problems: 1,
+                nb_options_per_problem: 100,
+            }),
+            _ => panic!("Unable to parse argument to Votation workload")
+        }
+    }
+}
+
+impl ApplicationWorkload<2, 1> for BestFitWorkload {
+    fn next_batch(&mut self, params: &RunParameter, rng: &mut StdRng) -> Vec<Transaction<2, 1>> {
+        /*
+            TODO Write assumptions
+            TODO Create batch (all on the same address to force conflict? (the address of the subject))
+            TODO Implement AtomicFunction (monolithic version)
+            TODO Create batch (pieced version) -> /!\ addresses Transaction<?, ?>
+            TODO Implement AtomicFunction (pieced version)
+            TODO Add params
+         */
+        todo!()
+    }
+
+    fn initialisation(&self, params: &RunParameter, rng: &mut StdRng) -> Box<dyn Fn(&mut Vec<Word>)> {
+        let nb_repetitions = params.repetitions;
+        todo!();
+        Box::new(move |storage: &mut Vec<Word>| { storage.fill(20 * nb_repetitions as Word) })
+    }
+}
+//endregion
+
 //region Votation workload -------------------------------------------------------------------------
 struct Voting {
     nb_subjects: usize,

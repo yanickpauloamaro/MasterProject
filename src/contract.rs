@@ -279,8 +279,9 @@ impl<'a, V: Clone + Debug> SharedMap<'a, V> {
 
     #[inline]
     pub fn from_ptr(base_address: Cell<*mut Option<V>>, size: usize, capacity: usize) -> SharedMap<'a, V> {
-        if capacity < size * mem::size_of::<Option<V>>() {
-            panic!("Not enough capacity to fit {} elements", size);
+        let required = size * mem::size_of::<Option<V>>();
+        if capacity < required {
+            panic!("Not enough capacity to fit {} elements ({} but only {} available)", size, required, capacity);
         }
         Self{
             base_address,
@@ -291,8 +292,9 @@ impl<'a, V: Clone + Debug> SharedMap<'a, V> {
     }
 
     pub fn new(base_address: Cell<*mut Option<V>>, size: usize, capacity: usize) -> SharedMap<'a, V> {
-        if capacity < size * mem::size_of::<Option<V>>() {
-            panic!("Not enough capacity to fit {} elements", size);
+        let required = size * mem::size_of::<Option<V>>();
+        if capacity < required {
+            panic!("Not enough capacity to fit {} elements ({} but only {} available)", size, required, capacity);
         }
         unsafe {
             let mut v = Vec::from_raw_parts(base_address.get(), size, size);
@@ -309,8 +311,9 @@ impl<'a, V: Clone + Debug> SharedMap<'a, V> {
     }
 
     pub fn new_with_default(base_address: Cell<*mut Option<V>>, size: usize, capacity: usize, default_value: V) -> SharedMap<'a, V> {
-        if capacity < size * mem::size_of::<Option<V>>() {
-            panic!("Not enough capacity to fit {} elements", size);
+        let required = size * mem::size_of::<Option<V>>();
+        if capacity < required {
+            panic!("Not enough capacity to fit {} elements (o{} but nly {} available)", size, required, capacity);
         }
         unsafe {
             let mut v = Vec::from_raw_parts(base_address.get(), size, size);
