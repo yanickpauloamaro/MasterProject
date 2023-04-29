@@ -65,7 +65,7 @@ async fn main() -> Result<()> {
 
     let total = Instant::now();
 
-    TestSharedMap::test_new();
+    TestSharedMap::test_all();
 
     // tokio::task::spawn_blocking(|| {
     //     // println!("Previous version");

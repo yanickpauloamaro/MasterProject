@@ -1,10 +1,10 @@
-use std::cmp::min;
+use std::cell::{Cell, RefCell};
 use strum::EnumIter;
 use std::mem;
 use rand::seq::SliceRandom;
 use std::fmt::Debug;
-use crate::applications::{Ballot, BallotPieces};
-use crate::utils::BoundedArray;
+use std::marker::PhantomData;
+use crate::applications::Ballot;
 use crate::vm_utils::SharedStorage;
 use crate::wip::Word;
 
@@ -13,12 +13,8 @@ pub type FunctionAddress = u32;
 pub type StaticAddress = u32;
 pub type FunctionParameter = u32;
 
-// pub type Round = Vec<Transaction>;
-// pub type Schedule = Vec<Round>;
-
 pub const MAX_NB_ADDRESSES: usize = 2;
 pub const MAX_NB_PARAMETERS: usize = 2;
-// pub const MAX_TX_SIZE: usize = mem::size_of::<Transaction>();
 
 // TODO Find safe way to have a variable length array?
 #[derive(Clone, Debug, Copy)]
@@ -204,118 +200,93 @@ pub enum FunctionResult<const ADDRESS_COUNT: usize, const PARAM_COUNT: usize> {
     ErrorMsg(&'static str)
 }
 
-// type MapWord = Word;
-pub type MapWord = u8;
-
-// TODO change base address to *mut V where V: Clone so that we don't need value_size anymore
-pub struct SharedMap {
-    pub base_address: *mut MapWord,
-    value_size: usize,
+pub struct SharedMap<'a, V: Clone + Debug> {
+    pub base_address: Cell<*mut Option<V>>,
     pub capacity: usize,
+    pub size: usize,
+    _lifetime: PhantomData<&'a ()>
 }
 
 // TODO Add mutex to be able to check if concurrent access is really prevented by scheduling?
-impl SharedMap {
+impl<'a, V: Clone + Debug> SharedMap<'a, V> {
+
     #[inline]
-    pub fn from_ptr(base_address: *mut MapWord, value_size: usize, capacity: usize) -> Self {
+    pub fn from_ptr(base_address: Cell<*mut Option<V>>, size: usize, capacity: usize) -> SharedMap<'a, V> {
+        if capacity < size * mem::size_of::<Option<V>>() {
+            panic!("Not enough capacity to fit {} elements", size);
+        }
         Self{
             base_address,
-            value_size,
-            capacity
+            capacity,
+            size,
+            _lifetime: PhantomData,
         }
     }
 
-    pub fn new(base_address: *mut MapWord, value_size: usize, capacity: usize) -> Self {
+    pub fn new(base_address: Cell<*mut Option<V>>, size: usize, capacity: usize) -> SharedMap<'a, V> {
+        if capacity < size * mem::size_of::<Option<V>>() {
+            panic!("Not enough capacity to fit {} elements", size);
+        }
         unsafe {
-            for key in 0..capacity {
-                let offset = key as usize * value_size;
-                let value_start = base_address.add(offset);
-                *value_start = MapWord::MAX;
-            }
+            let mut v = Vec::from_raw_parts(base_address.get(), size, size);
+            v.fill(None);
+            mem::forget(v);
         }
 
         Self{
             base_address,
-            value_size,
-            capacity
+            capacity,
+            size,
+            _lifetime: PhantomData,
         }
     }
 
-    pub fn new_with_default<V: Debug + Clone>(base_address: *mut MapWord, value_size: usize, capacity: usize, default_value: V) -> Self {
+    pub fn new_with_default(base_address: Cell<*mut Option<V>>, size: usize, capacity: usize, default_value: V) -> SharedMap<'a, V> {
+        if capacity < size * mem::size_of::<Option<V>>() {
+            panic!("Not enough capacity to fit {} elements", size);
+        }
         unsafe {
-            for key in 0..capacity {
-                let offset = key as usize * value_size;
-                let value_start = base_address.add(offset);
-                let value = value_start as *mut V;
-                *value = default_value.clone();
-            }
+            let mut v = Vec::from_raw_parts(base_address.get(), size, size);
+            v.fill(Some(default_value.clone()));
+            mem::forget(v);
         }
 
         Self{
             base_address,
-            value_size,
-            capacity
+            capacity,
+            size,
+            _lifetime: PhantomData,
         }
     }
 
     #[inline]
-    pub unsafe fn get<V>(&self, key: StaticAddress) -> Option<&'_ V> {
+    pub unsafe fn get(&self, key: StaticAddress) -> Option<&'a V> {
+        if key as usize >= self.size { panic!("Access out of range"); }
 
-        let offset = key as usize * self.value_size;
-        let value_start = self.base_address.add(offset);
-
-        if offset >= self.capacity {
-            panic!("Access out of range");
-        } else if *value_start == MapWord::MAX {
-            None
-        } else {
-            let value = value_start as *mut V;
-            let ref res = *value;
-            Some(res)
-        }
+        let value = self.base_address.get().add(key as usize);
+        (*value).as_ref()
     }
 
     #[inline]
-    pub unsafe fn get_mut<V>(&self, key: StaticAddress) -> Option<&'_ mut V> {
-        let offset = key as usize * self.value_size;
-        let value_start = self.base_address.add(offset);
+    pub unsafe fn get_mut(&self, key: StaticAddress) -> Option<&'a mut V> {
+        if key as usize >= self.size { panic!("Access out of range"); }
 
-        if offset >= self.capacity {
-            panic!("Access out of range");
-        } else if *value_start == MapWord::MAX {
-            None
-        } else {
-            let value = value_start as *mut V;
-            let ref mut res = *value;
-            Some(res)
-        }
+        let value = self.base_address.get().add(key as usize);
+        (*value).as_mut()
     }
 
     #[inline]
-    pub unsafe fn insert<V: Clone>(&self, key: StaticAddress, new_value: V) -> Option<V> {
-        let offset = key as usize * self.value_size;
-        let value_start = self.base_address.add(offset);
+    pub unsafe fn insert(&self, key: StaticAddress, new_value: V) -> Option<V> {
+        if key as usize >= self.size { panic!("Access out of range"); }
 
-        if offset >= self.capacity {
-            panic!("Inserting out of range");
-        } else if *value_start == MapWord::MAX {
-            // This is a new key
-            let value = value_start as *mut V;
-            *value = new_value;
-
-            None
-        } else {
-            let value = value_start as *mut V;
-            let previous_value = (*value).clone();
-            *value = new_value;
-            Some(previous_value)
-        }
+        let value = self.base_address.get().add(key as usize);
+        (*value).replace(new_value)
     }
 }
 
 #[derive(Debug, Clone)]
 pub struct TestSharedMap {
-    pub address: StaticAddress, // instead of mapping
+    pub address: StaticAddress,
     pub weight: u64,
     pub delegate: Option<StaticAddress>,
     pub vote: Option<usize>,
@@ -337,21 +308,22 @@ impl TestSharedMap {
     }
 
     pub fn test_new() {
+        println!("Testing SharedMap::new");
         let nb_elements = 4;
-        let mut test: Vec<TestSharedMap> = Vec::with_capacity(nb_elements);
-        let value_size = mem::size_of::<TestSharedMap>();
+        let mut test: Vec<Option<TestSharedMap>> = Vec::with_capacity(nb_elements);
+        let value_size = mem::size_of::<Option<TestSharedMap>>();
         let capacity = nb_elements * value_size;
 
         unsafe {
             println!("Testing new map:");
-            let shared_map = SharedMap::new(test.as_mut_ptr() as *mut MapWord, value_size, capacity);
-            let reference = shared_map.get::<TestSharedMap>(0);
+            let shared_map = SharedMap::new(Cell::new(test.as_mut_ptr()), nb_elements, capacity);
+            let reference = shared_map.get(0);
             println!("get(0): {:?}", reference);
-            let reference = shared_map.get::<TestSharedMap>(1);
+            let reference = shared_map.get(1);
             println!("get(1): {:?}", reference);
-            let reference = shared_map.get::<TestSharedMap>(2);
+            let reference = shared_map.get(2);
             println!("get(2): {:?}", reference);
-            let reference = shared_map.get::<TestSharedMap>(3);
+            let reference = shared_map.get(3);
             println!("get(3): {:?}", reference);
             // Index 4 should panic
             // let reference = shared_map.get::<TestSharedMap>(4);
@@ -361,14 +333,14 @@ impl TestSharedMap {
             let default_value = TestSharedMap::new(42, 20);
             println!("Testing new map with default value: {:?}", default_value);
 
-            let shared_map = SharedMap::new_with_default(test.as_mut_ptr() as *mut MapWord, value_size, capacity, default_value.clone());
-            let reference = shared_map.get::<TestSharedMap>(0);
+            let shared_map = SharedMap::new_with_default(Cell::new(test.as_mut_ptr()), nb_elements, capacity, default_value.clone());
+            let reference = shared_map.get(0);
             println!("get(0): {:?}", reference);
-            let reference = shared_map.get::<TestSharedMap>(1);
+            let reference = shared_map.get(1);
             println!("get(1): {:?}", reference);
-            let reference = shared_map.get::<TestSharedMap>(2);
+            let reference = shared_map.get(2);
             println!("get(2): {:?}", reference);
-            let reference = shared_map.get::<TestSharedMap>(3);
+            let reference = shared_map.get(3);
             println!("get(3): {:?}", reference);
             // Index 4 should panic
             // let reference = shared_map.get::<TestSharedMap>(4);
@@ -376,42 +348,44 @@ impl TestSharedMap {
             println!();
 
             println!("Testing new map + inserting: {:?}", default_value);
-            let shared_map = SharedMap::new_with_default(test.as_mut_ptr() as *mut MapWord, value_size, capacity, default_value.clone());
-            shared_map.insert::<TestSharedMap>(0, default_value.clone());
-            shared_map.insert::<TestSharedMap>(1, default_value.clone());
-            shared_map.insert::<TestSharedMap>(2, default_value.clone());
-            shared_map.insert::<TestSharedMap>(3, default_value.clone());
-            let reference = shared_map.get::<TestSharedMap>(0);
+            let shared_map = SharedMap::new_with_default(Cell::new(test.as_mut_ptr()), nb_elements, capacity, default_value.clone());
+            shared_map.insert(0, default_value.clone());
+            shared_map.insert(1, default_value.clone());
+            shared_map.insert(2, default_value.clone());
+            shared_map.insert(3, default_value.clone());
+            let reference = shared_map.get(0);
             println!("get(0): {:?}", reference);
-            let reference = shared_map.get::<TestSharedMap>(1);
+            let reference = shared_map.get(1);
             println!("get(1): {:?}", reference);
-            let reference = shared_map.get::<TestSharedMap>(2);
+            let reference = shared_map.get(2);
             println!("get(2): {:?}", reference);
-            let reference = shared_map.get::<TestSharedMap>(3);
+            let reference = shared_map.get(3);
             println!("get(3): {:?}", reference);
             // Index 4 should panic
             // let reference = shared_map.get::<TestSharedMap>(4);
             // println!("get(4): {:?}", reference);
+
+            println!();
         }
     }
 
     pub fn test_many_inserts() {
+        println!("Testing SharedMap::insert (many times)");
+        let nb_elements = 4;
+        let capacity = nb_elements * mem::size_of::<Option<TestSharedMap>>();
+        let mut test = Vec::with_capacity(nb_elements);
+        let mut shared_map = SharedMap::new(Cell::new(test.as_mut_ptr()), nb_elements, capacity);
 
-        let nb_voters = 4;
-        let capacity = nb_voters * mem::size_of::<TestSharedMap>();
-        let mut test = Vec::with_capacity(capacity);
-        let mut shared_map = SharedMap::new(test.as_mut_ptr(), mem::size_of::<TestSharedMap>(), capacity);
-
-        let try_get = |shared: &mut SharedMap, key: StaticAddress| unsafe {
+        let try_get = |shared: &mut SharedMap<TestSharedMap>, key: StaticAddress| unsafe {
             println!("map.get({}):", key);
-            if let Some(voter) = shared.get::<TestSharedMap>(key) {
+            if let Some(voter) = shared.get(key) {
                 println!("\t{:?}", voter);
             } else {
                 println!("\tNone");
             }
         };
 
-        let insert_new_voter = |shared: &mut SharedMap, key: StaticAddress, weight: u64, delegate: Option<StaticAddress>| unsafe {
+        let insert_new_voter = |shared: &mut SharedMap<TestSharedMap>, key: StaticAddress, weight: u64, delegate: Option<StaticAddress>| unsafe {
             let mut new_entry = TestSharedMap::new(key, weight);
             new_entry.delegate = delegate;
             println!("Inserting new voter with key {}:\n{:?}", key, new_entry);
@@ -424,7 +398,7 @@ impl TestSharedMap {
             try_get(&mut shared_map, 1);
             try_get(&mut shared_map, 2);
             try_get(&mut shared_map, 3);
-            try_get(&mut shared_map, 4);
+            // try_get(&mut shared_map, 4); // Should panic
             println!();
 
             insert_new_voter(&mut shared_map, 0, 0, None);
@@ -437,20 +411,20 @@ impl TestSharedMap {
             try_get(&mut shared_map, 1);
             try_get(&mut shared_map, 2);
             try_get(&mut shared_map, 3);
-            try_get(&mut shared_map, 4);
+            // try_get(&mut shared_map, 4); // Should panic
             println!();
 
-            if let Some(voter) = shared_map.get_mut::<TestSharedMap>(0) {
+            if let Some(voter) = shared_map.get_mut(0) {
                 println!("Modifying entry 0: test_bool <- true");
                 voter.test_bool = true;
             }
 
-            if let Some(voter) = shared_map.get_mut::<TestSharedMap>(1) {
+            if let Some(voter) = shared_map.get_mut(1) {
                 println!("Modifying entry 1: vote <- Some(42)");
                 voter.vote = Some(42);
             }
 
-            if let Some(voter) = shared_map.get_mut::<TestSharedMap>(2) {
+            if let Some(voter) = shared_map.get_mut(2) {
                 println!("Modifying entry 2: test_u16 <- 16");
                 voter.test_u16 = 16;
             }
@@ -460,20 +434,23 @@ impl TestSharedMap {
             try_get(&mut shared_map, 1);
             try_get(&mut shared_map, 2);
             try_get(&mut shared_map, 3);
-            try_get(&mut shared_map, 4);
+            // try_get(&mut shared_map, 4); // Should panic
             println!();
         }
     }
 
     pub fn test_single_insert_struct() {
+        println!("Testing single insert of struct");
         let max_nb_entries = 4;
-        let capacity = max_nb_entries * mem::size_of::<TestSharedMap>();
-        let mut test = Vec::with_capacity(capacity);
-        let mut shared_map = SharedMap::new(test.as_mut_ptr(), mem::size_of::<TestSharedMap>(), capacity);
+        let capacity = max_nb_entries * mem::size_of::<Option<TestSharedMap>>();
+
+        let extra = 10;
+        let mut test = Vec::with_capacity(max_nb_entries + extra);
+        let mut shared_map = SharedMap::new(Cell::new(test.as_mut_ptr()), max_nb_entries, capacity);
 
         unsafe {
             println!("Map is initially empty:");
-            let reference = shared_map.get::<TestSharedMap>(0);
+            let reference = shared_map.get(0);
             println!("map.get(0): {:?}", reference);
 
             let mut new_entry = TestSharedMap::new(20, 1);
@@ -481,40 +458,143 @@ impl TestSharedMap {
             println!("Inserting new entry with key 0:\n\t {:?}", new_entry);
             shared_map.insert(0, new_entry);
 
-            let reference = shared_map.get::<TestSharedMap>(0);
+            let reference = shared_map.get(0);
             println!("map.get(0): {:?}", reference);
+            let reference = shared_map.get(0);
+            println!("map.get(0): {:?}", reference);
+            println!();
         }
     }
 
     pub fn test_single_insert_balance() {
-        type Currency = u128;
+        println!("Testing insert of primitive integer (u16)");
+        type Currency = u16;
         let max_nb_entries = 4;
 
-        let capacity = max_nb_entries * mem::size_of::<Currency>();
-        let mut test = Vec::with_capacity(capacity);
-        let mut shared_map = SharedMap::new(test.as_mut_ptr(), mem::size_of::<Currency>(), capacity);
+        let capacity = max_nb_entries * mem::size_of::<Option<Currency>>();
+        let mut test: Vec<Option<Currency>> = Vec::with_capacity(max_nb_entries);
+        let mut shared_map = SharedMap::new(Cell::new(test.as_mut_ptr()), max_nb_entries, capacity);
 
         unsafe {
             println!("Map is initially empty:");
-            let reference = shared_map.get::<Currency>(0);
+            let reference = shared_map.get(0);
             println!("map.get(0): {:?}", reference);
+            assert_eq!(reference, None);
+            println!();
 
             let mut new_entry: Currency = (200 as Currency).into();
             println!("Inserting new entry with key 0:\t {:?}", new_entry);
-            shared_map.insert(0, new_entry);
+            let old_value = shared_map.insert(0, new_entry);
+            assert_eq!(old_value, None);
 
-            let reference = shared_map.get::<Currency>(0);
+            let reference = shared_map.get(0);
             println!("map.get(0): {:?}", reference);
+            assert_eq!(reference, Some(&new_entry));
+            println!();
 
             println!("Multiplying entry 0 by 2");
-            let mut balance = shared_map.get_mut::<Currency>(0).unwrap();
+            let mut balance = shared_map.get_mut(0).unwrap();
             let previous_balance = *balance;
             let new_balance = 2 * previous_balance;
-            println!("new balance = {}", new_balance);
             *balance = new_balance;
 
-            let reference = shared_map.get::<Currency>(0);
+            let reference = shared_map.get(0);
             println!("map.get(0): {:?}", reference);
+            assert_eq!(reference, Some(&new_balance));
+            println!()
+        }
+
+        println!("Testing insert of primitive integer (u128)");
+        type BigCurrency = u128;
+        let max_nb_entries = 4;
+
+        let capacity = max_nb_entries * mem::size_of::<Option<BigCurrency>>();
+        let mut test: Vec<Option<BigCurrency>> = Vec::with_capacity(max_nb_entries);
+        let mut shared_map = SharedMap::new(Cell::new(test.as_mut_ptr()), max_nb_entries, capacity);
+
+        unsafe {
+            println!("Map is initially empty:");
+            let reference = shared_map.get(0);
+            println!("map.get(0): {:?}", reference);
+            assert_eq!(reference, None);
+            println!();
+
+            let mut new_entry: BigCurrency = (200 as BigCurrency).into();
+            println!("Inserting new entry with key 0:\t {:?}", new_entry);
+            let old_value = shared_map.insert(0, new_entry);
+            assert_eq!(old_value, None);
+
+            let reference = shared_map.get(0);
+            println!("map.get(0): {:?}", reference);
+            assert_eq!(reference, Some(&new_entry));
+            println!();
+
+            println!("Multiplying entry 0 by 2");
+            let mut balance = shared_map.get_mut(0).unwrap();
+            let previous_balance = *balance;
+            let new_balance = 2 * previous_balance;
+            *balance = new_balance;
+
+            let reference = shared_map.get(0);
+            println!("map.get(0): {:?}", reference);
+            assert_eq!(reference, Some(&new_balance));
         }
     }
+
+    pub fn test_single_insert_base_u8() {
+        let max_nb_entries = 4;
+        let capacity = max_nb_entries * mem::size_of::<Option<Balance>>();
+        let mut test: Vec<u8> = Vec::with_capacity(capacity);
+
+        let mut shared_map = SharedMap::new(Cell::new(test.as_mut_ptr() as *mut Option<Balance>), max_nb_entries, capacity);
+
+        unsafe {
+            println!("Map is initially empty:");
+            let reference = shared_map.get(0);
+            println!("map.get(0): {:?}", reference);
+
+            let mut new_entry = Balance{ amount: 42 };
+            println!("Inserting new entry with key 0:\n\t {:?}", new_entry);
+            shared_map.insert(0, new_entry);
+
+            let reference = shared_map.get(0);
+            println!("map.get(0):\n\t{:?}", reference);
+        }
+
+        println!();
+        let max_nb_entries = 4;
+        let capacity = max_nb_entries * mem::size_of::<Option<TestSharedMap>>();
+        let mut test: Vec<u8> = Vec::with_capacity(capacity);
+
+        let mut shared_map = SharedMap::new(Cell::new(test.as_mut_ptr() as *mut Option<TestSharedMap>), max_nb_entries, capacity);
+
+        unsafe {
+            println!("Map is initially empty:");
+            let reference = shared_map.get(0);
+            println!("map.get(0): {:?}", reference);
+
+            let mut new_entry = TestSharedMap::new(20, 1);
+            new_entry.vote = Some(42);
+            println!("Inserting new entry with key 0:\n\t {:?}", new_entry);
+            shared_map.insert(0, new_entry);
+
+            let reference = shared_map.get(0);
+            println!("map.get(0):\n\t{:?}", reference);
+        }
+    }
+
+    pub fn test_all() {
+        // TODO Add asserts to all tests
+        Self::test_single_insert_balance();
+        Self::test_single_insert_base_u8();
+        Self::test_single_insert_struct();
+        Self::test_new();
+        Self::test_many_inserts();
+    }
+}
+
+#[repr(C)]
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+struct Balance {
+    pub amount: u64
 }
