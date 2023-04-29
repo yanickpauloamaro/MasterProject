@@ -88,6 +88,7 @@ impl SimpleAuction {
             *pending = 0;
 
             // TODO Send money back to the sender (new tx regardless of monolithic vs pieced)
+            // => generate a Transfer transaction
         }
 
         Ok(())
@@ -108,6 +109,7 @@ impl SimpleAuction {
         // emit AuctionEnded(highestBidder, highestBid);
 
         // TODO Send money to the beneficiary (new tx regardless of monolithic vs pieced)
+        // => generate a Transfer transaction
 
         Ok(())
     }

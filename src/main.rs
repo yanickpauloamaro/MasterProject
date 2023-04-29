@@ -38,7 +38,7 @@ use testbench::benchmark::{benchmarking, TestBench};
 use testbench::config::{BenchmarkConfig, ConfigFile, RunParameter};
 use testbench::{bounded_array, contract, debug, debugging, utils};
 use testbench::applications::{Currency, Workload};
-use testbench::contract::{AtomicFunction, FunctionParameter, SenderAddress, StaticAddress, Transaction};
+use testbench::contract::{AtomicFunction, FunctionParameter, SenderAddress, StaticAddress, TestSharedMap, Transaction};
 use testbench::transaction::{Transaction as BasicTransaction, TransactionAddress};
 use testbench::utils::{batch_with_conflicts, batch_with_conflicts_new_impl, BoundedArray};
 use testbench::vm::{ExecutionResult, Executor};
@@ -64,14 +64,17 @@ struct T {
 async fn main() -> Result<()> {
 
     let total = Instant::now();
-    tokio::task::spawn_blocking(|| {
-        // println!("Previous version");
-        // benchmarking("benchmark_config.json");
-        //
-        // println!();
-        // println!("New version");
-        TestBench::benchmark("benchmark_config.json")
-    }).await.expect("Task panicked")?;
+
+    TestSharedMap::test_new();
+
+    // tokio::task::spawn_blocking(|| {
+    //     // println!("Previous version");
+    //     // benchmarking("benchmark_config.json");
+    //     //
+    //     // println!();
+    //     // println!("New version");
+    //     TestBench::benchmark("benchmark_config.json")
+    // }).await.expect("Task panicked")?;
 
     // let param = BenchmarkConfig{
     //     vm_types: vec![VmType::A],

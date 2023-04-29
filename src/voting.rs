@@ -1,6 +1,7 @@
+use anyhow::Result;
 use thincollections::thin_map::ThinMap;
+
 use crate::contract::StaticAddress;
-use anyhow::{Result, Error, anyhow};
 use crate::wip::Word;
 
 /* Memory Layout
@@ -55,6 +56,7 @@ struct Voter {
     delegate: Option<StaticAddress>,
     vote: Option<usize>
 }
+
 impl Voter {
     fn new(address: StaticAddress, weight: u64) -> Self {
         Self {
