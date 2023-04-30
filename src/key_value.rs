@@ -30,7 +30,7 @@ impl Value {
 pub struct KeyValue<'a> {
     pub inner_map: SharedMap<'a, Value>
 }
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
 pub enum KeyValueOperation {
     Read,
     Write,

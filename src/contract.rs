@@ -32,7 +32,7 @@ pub struct Transaction<const ADDRESS_COUNT: usize, const PARAM_COUNT: usize> {
 }
 
 #[repr(u8)]
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum AtomicFunction {
     Transfer = 0,
     TransferTest,
@@ -46,7 +46,7 @@ pub enum AtomicFunction {
 
     Auction(auction::Operation),
 
-    Ballot(Ballot),
+    // Ballot(Ballot),
     // BallotPiece(BallotPieces)
 
     BestFitStart,
@@ -200,13 +200,6 @@ impl AtomicFunction {
                 use auction::Operation::*;
                 let res = match op {
                     Bid => {
-                        /* Accesses:
-                            - bidder
-                            - auction.ended
-                            - auction.highest_bid
-                            - auction.highest_bidder
-                            - auction.pending_returns(auction.highest_bidder)
-                         */
                         let bidder = tx.addresses[0];
                         if bidder != tx.sender {
                             eprintln!("{} is trying to bid for {}", tx.sender, bidder);
@@ -217,10 +210,6 @@ impl AtomicFunction {
                         auction.bid(bidder, new_bid)
                     },
                     Withdraw => {
-                        /* Accesses:
-                            auction.pending_returns(sender)
-                            auction.auction_address (read only)
-                         */
                         let recipient = tx.addresses[0];
                         if recipient != tx.sender {
                             return FunctionResult::ErrorMsg("Cannot withdraw someone else's funds");
@@ -229,12 +218,6 @@ impl AtomicFunction {
                         auction.withdraw(recipient)
                     },
                     Close => {
-                        /* Accesses:
-                            auction.ended
-                            auction.auction_address (read only)
-                            auction.beneficiary
-                            auction.highest_bid
-                         */
                         if tx.sender != beneficiary {
                             return FunctionResult::ErrorMsg("Only the beneficiary can end the auction");
                         }
@@ -275,16 +258,16 @@ impl AtomicFunction {
                 use KeyValueOperation::*;
                 let res = match op {
                     Read => {
-                        let key = tx.params[0] as StaticAddress;
+                        let key = tx.addresses[0] as StaticAddress;
                         key_value.read(key)
                     }
                     Write => {
-                        let key = tx.params[0] as StaticAddress;
+                        let key = tx.addresses[0] as StaticAddress;
                         let new_value = Value::new(tx.params[0] as u64);
                         key_value.write(key, new_value)
                     }
                     ReadModifyWrite => {
-                        let key = tx.params[0] as StaticAddress;
+                        let key = tx.addresses[0] as StaticAddress;
                         // todo!(How to represent different read modify functions?)
                         let op = |input: Value| {
                             Value::new(2 * input.content[0])
@@ -292,13 +275,13 @@ impl AtomicFunction {
                         key_value.read_modify_write(key, op)
                     }
                     Scan => {
-                        let from = tx.params[0] as StaticAddress;
-                        let to = tx.params[1] as StaticAddress;
+                        let from = tx.addresses[0] as StaticAddress;
+                        let to = tx.addresses[1] as StaticAddress;
                         key_value.scan(from, to)
                     }
                     Insert => {
-                        let key = tx.params[0] as StaticAddress;
-                        let value = Value::new(tx.params[1] as u64);
+                        let key = tx.addresses[0] as StaticAddress;
+                        let value = Value::new(tx.params[0] as u64);
                         key_value.insert(key, value)
                     }
                 };
@@ -308,10 +291,10 @@ impl AtomicFunction {
                     Err(failure) => FunctionResult::KeyValueError(failure)
                 }
             }
-            AtomicFunction::Ballot(piece) => {
-                // piece.execute(tx, storage)
-                todo!()
-            },
+            // AtomicFunction::Ballot(piece) => {
+            //     // piece.execute(tx, storage)
+            //     todo!()
+            // },
             AtomicFunction::BestFitStart => {
                 // let _addr: Vec<_> = addresses.iter().collect();
                 // println!("Start range = {:?}", _addr);

@@ -37,7 +37,7 @@ pub struct SimpleAuction<'a> {
     // auction_ended: fn(StaticAddress, u64), // TODO
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
 pub enum Operation {
     Bid,
     Withdraw,
@@ -78,6 +78,13 @@ impl<'a> SimpleAuction<'a> {
         }
     }
 
+    /* Accesses:
+        bidder
+        auction.ended
+        auction.highest_bid
+        auction.highest_bidder
+        auction.pending_returns(auction.highest_bidder)
+     */
     pub unsafe fn bid(&mut self, bidder: StaticAddress, new_bid: u64) -> Result {
         // TODO There is no concept of time in this vm
         // let now = 0;
@@ -111,6 +118,10 @@ impl<'a> SimpleAuction<'a> {
         Ok(Success::Transfer(bidder, self.auction_balance_address, new_bid))
     }
 
+    /* Accesses:
+        auction.pending_returns(sender)
+        auction.auction_balance_address (read only)
+     */
     pub unsafe fn withdraw(&mut self, sender: StaticAddress) -> Result {
         let pending = self.pending_returns.get_mut(sender)
             .ok_or(Error::UnknownBidder)?;
@@ -126,6 +137,12 @@ impl<'a> SimpleAuction<'a> {
         Err(Error::NothingToWithdraw)
     }
 
+    /* Accesses:
+        auction.ended
+        auction.auction_address (read only)
+        auction.beneficiary
+        auction.highest_bid
+     */
     pub fn close_auction(&mut self) -> Result {
         // TODO There is no concept of time in this vm
         // let now = 0;

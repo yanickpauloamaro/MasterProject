@@ -11,6 +11,7 @@ use strum::IntoEnumIterator;
 use tokio::time::{Instant, Duration};
 use crate::contract::{AtomicFunction, MAX_NB_ADDRESSES, StaticAddress, Transaction};
 use crate::contract::FunctionResult::Another;
+use crate::key_value::KeyValueOperation;
 use crate::vm::Executor;
 use crate::vm_utils::{AddressSet, SharedStorage, VmStorage};
 use crate::wip::Word;
@@ -174,11 +175,22 @@ impl ParallelVM {
         );
 
         'outer: for tx in chunk {
-            for addr in tx.addresses.iter() {
-                if !working_set.insert(*addr) {
-                    // Can't add tx to schedule
-                    postponed.push(tx);
-                    continue 'outer;
+            if tx.function != AtomicFunction::KeyValue(KeyValueOperation::Scan) {
+                for addr in tx.addresses.iter() {
+                    if !working_set.insert(*addr) {
+                        // Can't add tx to schedule
+                        postponed.push(tx);
+                        continue 'outer;
+                    }
+                }
+            } else {
+                // eprintln!("Processing a scan operation");
+                for addr in tx.addresses[0]..tx.addresses[1] {
+                    if !working_set.insert(addr) {
+                        // Can't add tx to schedule
+                        postponed.push(tx);
+                        continue 'outer;
+                    }
                 }
             }
             scheduled.push(tx);

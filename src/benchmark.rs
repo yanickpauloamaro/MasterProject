@@ -322,7 +322,7 @@ impl TestBench {
                     for batch_size in config.batch_sizes.iter() {
                         // TODO add storage size to config file
                         // let storage_size = 200 * batch_size;
-                        let storage_size = 50 * 1024 * 1024;
+                        let storage_size = 100 * batch_size;
 
                         for workload in config.workloads.iter() {
                             let parameter = RunParameter::new(
@@ -462,8 +462,9 @@ impl TestBench {
         return BenchmarkResult::from_latency(run, latency_reps);
     }
 
-    fn bench_with_parameter_new<const A: usize, const P: usize>(params: RunParameter, mut workload: Box<dyn ApplicationWorkload<A, P>>) -> BenchmarkResult {
+    fn bench_with_parameter_new<const A: usize, const P: usize>(mut params: RunParameter, mut workload: Box<dyn ApplicationWorkload<A, P>>) -> BenchmarkResult {
 
+        params.storage_size = workload.storage_size(&params);
         let mut vm = VmWrapper::new(&params);
 
         let mut latency_reps = Vec::with_capacity(params.repetitions as usize);
@@ -495,8 +496,9 @@ impl TestBench {
         return BenchmarkResult::from_latency(params, latency_reps);
     }
 
-    fn bench_with_parameter_new_and_details<const A: usize, const P: usize>(params: RunParameter, mut workload: Box<dyn ApplicationWorkload<A, P>>) -> BenchmarkResult {
+    fn bench_with_parameter_new_and_details<const A: usize, const P: usize>(mut params: RunParameter, mut workload: Box<dyn ApplicationWorkload<A, P>>) -> BenchmarkResult {
 
+        params.storage_size = workload.storage_size(&params);
         let mut vm = VmWrapper::new(&params);
 
         let mut latency_reps = Vec::with_capacity(params.repetitions as usize);
@@ -536,6 +538,9 @@ impl TestBench {
 trait ApplicationWorkload<const ADDRESS: usize, const PARAMS: usize> {
     fn next_batch(&mut self, params: &RunParameter, rng: &mut StdRng) -> Vec<Transaction<ADDRESS, PARAMS>>;
     fn initialisation(&self, params: &RunParameter, rng: &mut StdRng) -> Box<dyn Fn(&mut Vec<Word>)>;
+    fn storage_size(&self, params: &RunParameter) -> usize {
+        100 * params.batch_size
+    }
 }
 
 //region Fibonacci workload ------------------------------------------------------------------------
@@ -598,7 +603,6 @@ impl ApplicationWorkload<2, 1> for Transfer {
                 Transaction {
                     sender: pair.0 as SenderAddress,
                     function: AtomicFunction::Transfer,
-                    // nb_addresses: 2,
                     addresses: [pair.0, pair.1],
                     params: [2],
                 }
@@ -754,8 +758,8 @@ impl KeyValueWorkload {
     }
 }
 
-impl ApplicationWorkload<1, 2> for KeyValueWorkload {
-    fn next_batch(&mut self, params: &RunParameter, rng: &mut StdRng) -> Vec<Transaction<1, 2>> {
+impl ApplicationWorkload<2, 1> for KeyValueWorkload {
+    fn next_batch(&mut self, params: &RunParameter, rng: &mut StdRng) -> Vec<Transaction<2, 1>> {
         /*
             ---- Create batch (all on the same address to force conflict?)
             ---- Implement AtomicFunction (monolithic version)
@@ -783,21 +787,22 @@ impl ApplicationWorkload<1, 2> for KeyValueWorkload {
 
         let batch = (0..params.batch_size).map(|mut tx_index| {
             let mut key = *keys.choose(rng).unwrap_or(&(tx_index as StaticAddress));
+            let unique_addr = (params.storage_size + tx_index) as StaticAddress;
             match items[dist2.sample(rng)].1 {
                 KeyValue(KeyValueOperation::Read) => {
                     Transaction {
                         sender: key as SenderAddress,
                         function: KeyValue(KeyValueOperation::Read),
-                        addresses: [0],
-                        params: [key as FunctionParameter, unused_parameter],
+                        addresses: [key, unique_addr],
+                        params: [unused_parameter],
                     }
                 },
                 KeyValue(KeyValueOperation::Write) => {
                     Transaction {
                         sender: key as SenderAddress,
                         function: KeyValue(KeyValueOperation::Write),
-                        addresses: [0],
-                        params: [key as FunctionParameter, write_value],
+                        addresses: [key, unique_addr],
+                        params: [write_value],
                     }
                 },
                 KeyValue(KeyValueOperation::ReadModifyWrite) => {
@@ -805,8 +810,8 @@ impl ApplicationWorkload<1, 2> for KeyValueWorkload {
                     Transaction {
                         sender: key as SenderAddress,
                         function: KeyValue(KeyValueOperation::ReadModifyWrite),
-                        addresses: [0],
-                        params: [key as FunctionParameter, unused_parameter],
+                        addresses: [key, unique_addr],
+                        params: [unused_parameter],
                     }
                 },
                 KeyValue(KeyValueOperation::Scan) => {
@@ -822,16 +827,16 @@ impl ApplicationWorkload<1, 2> for KeyValueWorkload {
                     Transaction {
                         sender: key as SenderAddress,
                         function: KeyValue(KeyValueOperation::Scan),
-                        addresses: [0],
-                        params: [key as FunctionParameter, (key + scan_width) as FunctionParameter],
+                        addresses: [key, key + scan_width],
+                        params: [unused_parameter],
                     }
                 },
                 KeyValue(KeyValueOperation::Insert) => {
                     Transaction {
                         sender: key as SenderAddress,
                         function: KeyValue(KeyValueOperation::Insert),
-                        addresses: [0],
-                        params: [key as FunctionParameter, insert_value],
+                        addresses: [key, unique_addr],
+                        params: [insert_value],
                     }
                 },
                 _ => { todo!() }
