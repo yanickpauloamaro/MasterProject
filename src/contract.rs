@@ -5,7 +5,8 @@ use rand::seq::SliceRandom;
 use std::fmt::Debug;
 use std::marker::PhantomData;
 use crate::applications::Ballot;
-use crate::key_value;
+use crate::{auction, key_value};
+use crate::auction::SimpleAuction;
 use crate::key_value::{KeyValue, KeyValueOperation};
 use crate::vm_utils::SharedStorage;
 use crate::wip::Word;
@@ -34,6 +35,7 @@ pub struct Transaction<const ADDRESS_COUNT: usize, const PARAM_COUNT: usize> {
 #[derive(Clone, Copy, Debug)]
 pub enum AtomicFunction {
     Transfer = 0,
+    TransferTest,
     // Transfer application split into pieces
     TransferDecrement,
     TransferIncrement,
@@ -41,6 +43,8 @@ pub enum AtomicFunction {
 
     //Key-value application
     KeyValue(KeyValueOperation),
+
+    Auction(auction::Operation),
 
     Ballot(Ballot),
     // BallotPiece(BallotPieces)
@@ -59,7 +63,8 @@ pub enum FunctionResult<const ADDRESS_COUNT: usize, const PARAM_COUNT: usize> {
     ErrorMsg(&'static str),
     // TODO Rename all functions, results and errors with qualified names -> i.e. key_value::Result
     KeyValueSuccess(key_value::OperationResult),
-    KeyValueError(key_value::KeyValueError)
+    KeyValueError(key_value::KeyValueError),
+    Auction(auction::Result)
 }
 
 impl AtomicFunction {
@@ -69,9 +74,13 @@ impl AtomicFunction {
     pub fn all() -> Vec<AtomicFunction> {
         vec![
             AtomicFunction::Transfer,
+            AtomicFunction::TransferTest,
             AtomicFunction::TransferDecrement,
             AtomicFunction::TransferIncrement,
             AtomicFunction::Fibonacci,
+            AtomicFunction::Auction(auction::Operation::Bid),
+            AtomicFunction::Auction(auction::Operation::Withdraw),
+            AtomicFunction::Auction(auction::Operation::Close),
             AtomicFunction::KeyValue(KeyValueOperation::Read),
             AtomicFunction::KeyValue(KeyValueOperation::Write),
             AtomicFunction::KeyValue(KeyValueOperation::ReadModifyWrite),
@@ -90,7 +99,7 @@ impl AtomicFunction {
                 let from = tx.addresses[0] as usize;
                 let to = tx.addresses[1] as usize;
                 let amount = tx.params[0] as Word;
-
+                // eprintln!("{} transfers {}$ to {}", from, amount, to);
                 let balance_from = storage.get(from);
                 if balance_from >= amount {
                     *storage.get_mut(from) -= amount;
@@ -101,6 +110,34 @@ impl AtomicFunction {
                     FunctionResult::ErrorMsg("Insufficient funds")
                 }
             },
+            AtomicFunction::TransferTest => {
+                let nb_accounts = storage.get(0) as usize;
+                let map_start = (storage.ptr.add(1)) as *mut Option<Word>;
+                let balances = SharedMap::from_ptr(
+                    Cell::new(map_start),
+                    nb_accounts,
+                    storage.size * mem::size_of::<Word>(),
+                );
+
+                let from = tx.addresses[0];
+                let to = tx.addresses[1];
+                let amount = tx.params[0] as Word;
+
+                let balance_from = balances.get(from).unwrap();
+                // eprintln!("Transfer {}$ from {} to {}:", amount, from, to);
+                // eprintln!("\tbalance before: from: {:?}, to: {:?}", balances.get(from), balances.get(to));
+                if *balance_from >= amount {
+                    *(balances.get_mut(from).unwrap()) -= amount;
+                    *(balances.get_mut(to).unwrap()) += amount;
+
+                    // eprintln!("\tbalance after: from: {:?}, to: {:?}", balances.get(from), balances.get(to));
+                    // eprintln!();
+                    FunctionResult::Success
+                } else {
+                    eprintln!("Transfer: Insufficient funds !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!");
+                    FunctionResult::ErrorMsg("Insufficient funds")
+                }
+            }
             AtomicFunction::TransferDecrement => {
                 // Example of function that output another function
                 let from = tx.addresses[0] as usize;
@@ -126,9 +163,105 @@ impl AtomicFunction {
                 FunctionResult::Success
             },
             AtomicFunction::Fibonacci => {
+                // TODO change to AtomicFunction::Compute(ComputeFunction::Fibonacci)
                 AtomicFunction::fib(tx.params[0]);
                 FunctionResult::Success
             },
+            AtomicFunction::Auction(op) => {
+
+                let auction_address = tx.params[1] as usize;
+                let auction_obj_start = storage.ptr.add(auction_address);
+
+                let beneficiary = auction_obj_start.read() as StaticAddress;
+                let auction_balance_address = auction_obj_start.add(1).read() as StaticAddress;
+                let end_time = auction_obj_start.add(2).read();
+                let ended = auction_obj_start.add(3).read() == 0;   // TODO 0 is true?
+                let highest_bidder = auction_obj_start.add(4).read() as StaticAddress;
+                let highest_bid = auction_obj_start.add(5).read();
+                let nb_elem_in_map = auction_obj_start.add(6).read() as usize;
+                let map_start = auction_obj_start.add(7) as *mut Option<Word>;
+
+                let pending_returns = SharedMap::from_ptr(
+                    Cell::new(map_start),
+                    nb_elem_in_map,
+                    (storage.size - auction_address - 7) * mem::size_of::<Word>(),
+                );
+                let mut auction = SimpleAuction {
+                    beneficiary,
+                    auction_balance_address,
+                    end_time,
+                    ended,
+                    highest_bidder,
+                    highest_bid,
+                    pending_returns,
+                };
+
+                // println!("Retrieved auction object: {:?}", auction);
+                use auction::Operation::*;
+                let res = match op {
+                    Bid => {
+                        /* Accesses:
+                            - bidder
+                            - auction.ended
+                            - auction.highest_bid
+                            - auction.highest_bidder
+                            - auction.pending_returns(auction.highest_bidder)
+                         */
+                        let bidder = tx.addresses[0];
+                        if bidder != tx.sender {
+                            eprintln!("{} is trying to bid for {}", tx.sender, bidder);
+                            return FunctionResult::ErrorMsg("Cannot bid for someone else");
+                        }
+                        let new_bid = tx.params[0] as Word;
+                        // println!("{} bids {}", bidder, new_bid);
+                        auction.bid(bidder, new_bid)
+                    },
+                    Withdraw => {
+                        /* Accesses:
+                            auction.pending_returns(sender)
+                            auction.auction_address (read only)
+                         */
+                        let recipient = tx.addresses[0];
+                        if recipient != tx.sender {
+                            return FunctionResult::ErrorMsg("Cannot withdraw someone else's funds");
+                        }
+                        // println!("{} withdraws", recipient);
+                        auction.withdraw(recipient)
+                    },
+                    Close => {
+                        /* Accesses:
+                            auction.ended
+                            auction.auction_address (read only)
+                            auction.beneficiary
+                            auction.highest_bid
+                         */
+                        if tx.sender != beneficiary {
+                            return FunctionResult::ErrorMsg("Only the beneficiary can end the auction");
+                        }
+                        // println!("{} closes auction", tx.sender);
+                        auction.close_auction()
+                    },
+                };
+
+                // eprintln!("\t{:?}", res);
+                auction_obj_start.add(3).write(if auction.ended { 0 } else { 2 });
+                auction_obj_start.add(4).write(auction.highest_bidder as Word);
+                auction_obj_start.add(5).write(auction.highest_bid);
+
+                match res {
+                    Ok(auction::Success::Transfer(from, to, amount)) => {
+                        tx.function = AtomicFunction::Transfer;
+                        // TODO Could use negative numbers to represent addresses that don't need to be scheduled
+                        // TODO Still need scheduling needs to know how to interpret the addresses when we add ranges
+                        tx.addresses[0] = from;
+                        tx.addresses[1] = to;
+                        tx.params[0] = amount as FunctionParameter;
+
+                        FunctionResult::Another(tx)
+                    },
+                    err => FunctionResult::Auction(err)
+                }
+            }
             AtomicFunction::KeyValue(op) => {
                 let nb_elem_in_map = storage.get(0) as usize;
                 let map_start = (storage.ptr.add(1)) as *mut Option<Word>;
@@ -169,7 +302,7 @@ impl AtomicFunction {
                         key_value.insert(key, value)
                     }
                 };
-    // eprintln!("\tOperation result: {} -> {:?}", tx.params[0], res);
+                // eprintln!("\tOperation result: {} -> {:?}", tx.params[0], res);
                 match res {
                     Ok(success) => FunctionResult::KeyValueSuccess(success),
                     Err(failure) => FunctionResult::KeyValueError(failure)
@@ -267,6 +400,7 @@ impl AtomicFunction {
     }
 }
 
+#[derive(Debug)]
 pub struct SharedMap<'a, V: Clone + Debug> {
     pub base_address: Cell<*mut Option<V>>,
     pub capacity: usize,
@@ -668,3 +802,4 @@ impl TestSharedMap {
 struct Balance {
     pub amount: u64
 }
+

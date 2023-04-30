@@ -15,7 +15,7 @@ use nom::number::complete::double;
 use nom::sequence::{delimited, terminated};
 use nom::sequence::Tuple;
 use rand::distributions::WeightedIndex;
-use rand::prelude::{Distribution, SliceRandom};
+use rand::prelude::{Distribution, IteratorRandom, SliceRandom};
 use rand::rngs::StdRng;
 use rand::SeedableRng;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
@@ -23,6 +23,8 @@ use serde::de::Visitor;
 use thincollections::thin_map::ThinMap;
 
 use crate::applications::Workload;
+use crate::auction;
+use crate::auction::SimpleAuction;
 use crate::config::{BenchmarkConfig, BenchmarkResult, ConfigFile, RunParameter};
 use crate::contract::{AtomicFunction, FunctionParameter, SenderAddress, SharedMap, StaticAddress, Transaction};
 use crate::key_value::{KeyValue, KeyValueOperation};
@@ -319,7 +321,7 @@ impl TestBench {
 
                     for batch_size in config.batch_sizes.iter() {
                         // TODO add storage size to config file
-                        let storage_size = 100 * batch_size;
+                        let storage_size = 200 * batch_size;
 
                         for workload in config.workloads.iter() {
                             let parameter = RunParameter::new(
@@ -369,6 +371,15 @@ impl TestBench {
             },
             Ok(("", (KeyValueWorkload::NAME, args))) => {
                 let workload = KeyValueWorkload::new_boxed(&params, args);
+                TestBench::dispatch(params, workload)
+            },
+            Ok(("", (AuctionWorkload::NAME, args))) => {
+                let workload = AuctionWorkload::new_boxed(&params, args);
+                TestBench::dispatch(params, workload)
+            },
+
+            Ok(("", (TransferTest::NAME, args))) => {
+                let workload = TransferTest::new_boxed(&params, args);
                 TestBench::dispatch(params, workload)
             },
             other => {
@@ -594,8 +605,67 @@ impl ApplicationWorkload<2, 1> for Transfer {
     }
 
     fn initialisation(&self, params: &RunParameter, rng: &mut StdRng) -> Box<dyn Fn(&mut Vec<Word>)> {
+
         let nb_repetitions = params.repetitions;
-        Box::new(move |storage: &mut Vec<Word>| { storage.fill(20 * nb_repetitions as Word) })
+        Box::new(move |storage: &mut Vec<Word>| {
+            storage.fill(20 * nb_repetitions as Word)
+        })
+    }
+}
+//endregion
+
+//region TransferTest workload -------------------------------------------------------------------------
+struct TransferTest {
+    conflict_rate: f64,
+}
+impl TransferTest {
+    const NAME: &'static str = "TransferTest";
+
+    fn new_boxed(params: &RunParameter, args: &str) -> Box<Self> {
+        match f64::from_str(args) {
+            Ok(conflict_rate) => Box::new(TransferTest{ conflict_rate }),
+            _ => panic!("Unable to parse argument to TransferTest workload")
+        }
+    }
+}
+
+impl ApplicationWorkload<2, 1> for TransferTest {
+    fn next_batch(&mut self, params: &RunParameter, rng: &mut StdRng) -> Vec<Transaction<2, 1>> {
+        WorkloadUtils::transfer_pairs(50 * params.batch_size, params.batch_size, self.conflict_rate, rng)
+            .iter()
+            .enumerate()
+            .map(|(tx_index, pair)| {
+                Transaction {
+                    sender: pair.0 as SenderAddress,
+                    function: AtomicFunction::TransferTest,
+                    addresses: [pair.0, pair.1],
+                    params: [2],
+                }
+            }).collect()
+    }
+
+    fn initialisation(&self, params: &RunParameter, rng: &mut StdRng) -> Box<dyn Fn(&mut Vec<Word>)> {
+
+        let nb_repetitions = params.repetitions;
+        let nb_accounts = 50 * params.batch_size;
+        let capacity = params.storage_size * mem::size_of::<Word>();
+        // eprintln!("max account = {}", nb_accounts);
+        // println!("capacity = {}, storage_size = {}", capacity, storage_size);
+
+        Box::new(move |storage: &mut Vec<Word>| unsafe {
+            storage[0] = nb_accounts as Word;
+            let map_start = (storage.as_mut_ptr().add(1)) as *mut Option<Word>;
+            let mut shared_map = SharedMap::new(
+                Cell::new(map_start),
+                nb_accounts,
+                capacity);
+
+            for key in 0..nb_accounts {
+                unsafe {
+                    shared_map.insert(key as StaticAddress, 20 * nb_repetitions as Word);
+                }
+            }
+        })
     }
 }
 //endregion
@@ -706,7 +776,7 @@ impl ApplicationWorkload<1, 2> for KeyValueWorkload {
         let insert_value = 42;
         let unused_parameter = 0 as FunctionParameter;
 
-        let keys: Vec<StaticAddress> = (0..50*params.batch_size).map(|i| i as StaticAddress).collect();
+        let keys: Vec<StaticAddress> = (0..50 * params.batch_size).map(|i| i as StaticAddress).collect();
 
         let batch = (0..params.batch_size).map(|mut tx_index| {
             let mut key = *keys.choose(rng).unwrap_or(&(tx_index as StaticAddress));
@@ -908,8 +978,136 @@ impl ApplicationWorkload<2, 1> for Voting {
     fn initialisation(&self, params: &RunParameter, rng: &mut StdRng) -> Box<dyn Fn(&mut Vec<Word>)> {
         let nb_repetitions = params.repetitions;
         todo!();
-        // Create nb_ballots
+        // Create subjects, proposals and voters
         Box::new(move |storage: &mut Vec<Word>| { storage.fill(20 * nb_repetitions as Word) })
+    }
+}
+//endregion
+
+//region Auction workload --------------------------------------------------------------------------
+struct AuctionWorkload {
+    nb_auctions: usize,
+    nb_bidders: usize,
+}
+impl AuctionWorkload {
+    const NAME: &'static str = "Auction";
+
+    fn new_boxed(params: &RunParameter, args: &str) -> Box<Self> {
+        // todo!("Need to parse input");
+        match f64::from_str(args) {
+            Ok(_) => Box::new(AuctionWorkload {
+                nb_auctions: 1,
+                nb_bidders: 10,
+            }),
+            _ => panic!("Unable to parse argument to Votation workload")
+        }
+    }
+}
+
+impl ApplicationWorkload<2, 2> for AuctionWorkload {
+    fn next_batch(&mut self, params: &RunParameter, rng: &mut StdRng) -> Vec<Transaction<2, 2>> {
+        /*
+            Assume auctions have already started
+            TODO Create batch (all on the same address to force conflict? (the address of the subject))
+            ---- Implement AtomicFunction (monolithic version)
+            TODO Create batch (pieced version) -> /!\ addresses Transaction<?, ?>
+            TODO Implement AtomicFunction (pieced version)
+            ---- Add params (for now we just have one auction with batch_size bidders and no withdraws)
+         */
+        let max_bid = 20 * params.batch_size;
+        let auction_address = params.batch_size + 2;
+
+        let beneficiary = params.batch_size as StaticAddress;
+        let unique_addr = params.storage_size as StaticAddress + beneficiary;
+        let mut batch = vec![
+            // // This is the last tx executed by the sequential version -> can check that the result is correct
+            // Transaction {
+            //     sender: beneficiary as SenderAddress,
+            //     function: AtomicFunction::Auction(auction::Operation::Close),
+            //     addresses: [beneficiary, unique_addr],
+            //     params: [0, auction_address as FunctionParameter],
+            // }
+        ];
+
+        // let nb_withdraw = todo!();
+        // batch.extend((0..nb_withdraw).map(|tx_index| {
+        //     let bidder = tx_index as StaticAddress;
+        //     let unique_addr = 2 * params.storage_size as StaticAddress + bidder;
+        //     Transaction {
+        //         sender: bidder as SenderAddress,
+        //         function: AtomicFunction::Auction(auction::Operation::Withdraw),
+        //         // addresses: [bidder, unique_addr],
+        //         addresses: [bidder, beneficiary],   // Ensure they all conflict
+        //         params: [0, auction_address as FunctionParameter],
+        //     }
+        // }));
+        batch.extend((0..params.batch_size).map(|tx_index| {
+            let bidder = tx_index as StaticAddress;
+            // let bid = max_bid - tx_index;
+            let bid = (0..max_bid+1).choose(rng).unwrap_or(0);
+            let unique_addr = params.storage_size as StaticAddress + bidder;
+            Transaction {
+                sender: bidder as SenderAddress,
+                function: AtomicFunction::Auction(auction::Operation::Bid),
+                // addresses: [bidder, unique_addr],
+                addresses: [bidder, beneficiary],   // Ensure they all conflict
+                params: [bid as FunctionParameter, auction_address as FunctionParameter],
+            }
+        }));
+
+        batch
+    }
+
+    fn initialisation(&self, params: &RunParameter, rng: &mut StdRng) -> Box<dyn Fn(&mut Vec<Word>)> {
+        // let nb_repetitions = params.repetitions;
+        let storage_size = params.storage_size;
+        let bidder_balance = 20 * params.batch_size;
+
+        let nb_bidders = params.batch_size;
+        let beneficiary = nb_bidders as StaticAddress;
+        let auction_balance_address = beneficiary + 1;
+        let auction_address = beneficiary + 2;
+
+        // Create auctions and bidders
+        Box::new(move |storage: &mut Vec<Word>| unsafe {
+
+            for account in 0..nb_bidders {
+                storage[account] = bidder_balance as Word;
+            }
+            storage[beneficiary as usize] = 0;
+            storage[auction_balance_address as usize] = 0;
+
+            let auction_obj_start = storage.as_mut_ptr().add(auction_address as usize);
+            auction_obj_start.write(beneficiary as Word);
+            auction_obj_start.add(1).write(auction_balance_address as Word);
+            auction_obj_start.add(2).write(0); // end_time
+            auction_obj_start.add(3).write(2); // ended == 0 <-> true
+            auction_obj_start.add(4).write(beneficiary as Word);  // highest_bidder
+            auction_obj_start.add(5).write(0); // highest_bid
+
+            auction_obj_start.add(6).write(nb_bidders as Word);
+            let map_start = auction_obj_start.add(7) as *mut Option<Word>;
+
+            // Initializes the all entries to None
+            let pending_returns = SharedMap::from_ptr(
+                Cell::new(map_start),
+                nb_bidders,
+                (storage_size - 7) * mem::size_of::<Word>(),
+            );
+
+            let mut auction = SimpleAuction {
+                beneficiary,
+                auction_balance_address,
+                end_time: 0,
+                ended: false,
+                highest_bidder: beneficiary,
+                highest_bid: 0,
+                pending_returns,
+            };
+
+            // println!("Initial auction object: {:?}", auction);
+            // println!()
+        })
     }
 }
 //endregion
