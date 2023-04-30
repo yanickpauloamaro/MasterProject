@@ -7,7 +7,7 @@ use std::marker::PhantomData;
 use crate::applications::Ballot;
 use crate::{auction, key_value};
 use crate::auction::SimpleAuction;
-use crate::key_value::{KeyValue, KeyValueOperation};
+use crate::key_value::{Value, KeyValue, KeyValueOperation};
 use crate::vm_utils::SharedStorage;
 use crate::wip::Word;
 
@@ -264,7 +264,7 @@ impl AtomicFunction {
             }
             AtomicFunction::KeyValue(op) => {
                 let nb_elem_in_map = storage.get(0) as usize;
-                let map_start = (storage.ptr.add(1)) as *mut Option<Word>;
+                let map_start = (storage.ptr.add(1)) as *mut Option<Value>;
                 let shared_map = SharedMap::from_ptr(
                     Cell::new(map_start),
                     nb_elem_in_map,
@@ -280,14 +280,14 @@ impl AtomicFunction {
                     }
                     Write => {
                         let key = tx.params[0] as StaticAddress;
-                        let new_value = tx.params[1] as Word;
+                        let new_value = Value::new(tx.params[0] as u64);
                         key_value.write(key, new_value)
                     }
                     ReadModifyWrite => {
                         let key = tx.params[0] as StaticAddress;
                         // todo!(How to represent different read modify functions?)
-                        let op = |input: Word| {
-                            2 * input
+                        let op = |input: Value| {
+                            Value::new(2 * input.content[0])
                         };
                         key_value.read_modify_write(key, op)
                     }
@@ -298,7 +298,7 @@ impl AtomicFunction {
                     }
                     Insert => {
                         let key = tx.params[0] as StaticAddress;
-                        let value = tx.params[1] as Word;
+                        let value = Value::new(tx.params[1] as u64);
                         key_value.insert(key, value)
                     }
                 };

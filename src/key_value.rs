@@ -15,7 +15,18 @@ Notes to make the workload
 # key_i_address + FIELD_SIZE - 1 < key_j_address
 
  */
-type Value = Word;
+const BIG_WORD_SIZE: usize = 1;
+#[derive(Debug, Copy, Clone)]
+pub struct Value {
+    pub content: [u64; BIG_WORD_SIZE]
+}
+impl Value {
+    pub fn new(input: u64) -> Self {
+        Value { content: [input; BIG_WORD_SIZE] }
+    }
+}
+// type Value = Word;
+
 pub struct KeyValue<'a> {
     pub inner_map: SharedMap<'a, Value>
 }
@@ -85,7 +96,8 @@ impl<'a> KeyValue<'a> {
         let mut result = Vec::with_capacity((to - from) as usize);
 
         for addr in from..to {
-            result.push(*self.inner_map.get(addr).unwrap_or(&Value::MAX))
+            // result.push(*self.inner_map.get(addr).unwrap_or(&Value::MAX))
+            result.push(*self.inner_map.get(addr).unwrap_or(&Value::new(u64::MAX)))
         }
 
         Ok(OperationResult::Scan(result))

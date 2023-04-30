@@ -27,7 +27,7 @@ use crate::auction;
 use crate::auction::SimpleAuction;
 use crate::config::{BenchmarkConfig, BenchmarkResult, ConfigFile, RunParameter};
 use crate::contract::{AtomicFunction, FunctionParameter, SenderAddress, SharedMap, StaticAddress, Transaction};
-use crate::key_value::{KeyValue, KeyValueOperation};
+use crate::key_value::{Value, KeyValue, KeyValueOperation};
 use crate::parallel_vm::{ParallelVmCollect, ParallelVmImmediate};
 use crate::sequential_vm::SequentialVM;
 use crate::utils::batch_with_conflicts_new_impl;
@@ -321,7 +321,8 @@ impl TestBench {
 
                     for batch_size in config.batch_sizes.iter() {
                         // TODO add storage size to config file
-                        let storage_size = 200 * batch_size;
+                        // let storage_size = 200 * batch_size;
+                        let storage_size = 50 * 1024 * 1024;
 
                         for workload in config.workloads.iter() {
                             let parameter = RunParameter::new(
@@ -714,6 +715,7 @@ struct KeyValueWorkload {
     read_modify_write_proportion: f64,
     scan_proportion: f64,
     insert_proportion: f64,
+    key_space: usize,
     // key_distribution: ??? uniform, or zipfian
 }
 impl KeyValueWorkload {
@@ -744,6 +746,7 @@ impl KeyValueWorkload {
                     read_modify_write_proportion: rmw,
                     scan_proportion: scan,
                     insert_proportion: insert,
+                    key_space: 50,
                 })
             }
             other => panic!("Unable to parse argument to KeyValue workload: {:?}", other)
@@ -776,7 +779,7 @@ impl ApplicationWorkload<1, 2> for KeyValueWorkload {
         let insert_value = 42;
         let unused_parameter = 0 as FunctionParameter;
 
-        let keys: Vec<StaticAddress> = (0..50 * params.batch_size).map(|i| i as StaticAddress).collect();
+        let keys: Vec<StaticAddress> = (0..self.key_space * params.batch_size).map(|i| i as StaticAddress).collect();
 
         let batch = (0..params.batch_size).map(|mut tx_index| {
             let mut key = *keys.choose(rng).unwrap_or(&(tx_index as StaticAddress));
@@ -811,7 +814,7 @@ impl ApplicationWorkload<1, 2> for KeyValueWorkload {
                     // TODO Add address ranges support
                     // TODO Requires all addresses to have been inserted already
 
-                    if key + scan_width >= params.batch_size as StaticAddress {
+                    if key + scan_width >= params.storage_size as StaticAddress {
                         // Ensure we don't scan over the limit
                         // TODO scan implementation should prevent that themselves...
                         key -= scan_width;
@@ -876,12 +879,12 @@ impl ApplicationWorkload<1, 2> for KeyValueWorkload {
 
     fn initialisation(&self, params: &RunParameter, rng: &mut StdRng) -> Box<dyn Fn(&mut Vec<Word>)> {
         // TODO determine key space based on storage_size
-        let key_space = 50 * params.batch_size;
+        let key_space = self.key_space * params.batch_size;
 
         Box::new(move |storage: &mut Vec<Word>| unsafe {
             storage[0] = key_space as Word;
             let nb_elem_in_map = storage[0] as usize;
-            let map_start = (storage.as_mut_ptr().add(1)) as *mut Option<Word>;
+            let map_start = (storage.as_mut_ptr().add(1)) as *mut Option<Value>;
             let _shared_map = SharedMap::new(
                 Cell::new(map_start),
                 nb_elem_in_map,
@@ -889,7 +892,9 @@ impl ApplicationWorkload<1, 2> for KeyValueWorkload {
             );
             let mut key_value = KeyValue { inner_map: _shared_map };
             for key in 0..key_space {
-                key_value.insert(key as StaticAddress, key as Word);
+                let big_value = Value::new(key as u64);
+                key_value.insert(key as StaticAddress, big_value);
+                // key_value.insert(key as StaticAddress, key as Word);
             }
         })
     }
