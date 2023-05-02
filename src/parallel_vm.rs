@@ -291,6 +291,7 @@ impl ParallelVM {
         };
 
         let execution = |inputs: Vec<Receiver<Vec<Transaction<A, P>>>>, mut scheduling_pool: Sender<Vec<Transaction<A, P>>>| {
+                // TODO return results of transactions
                 let mut duration = Duration::from_secs(0);
                 let mut executed = 0;
                 'outer_loop: loop {

@@ -28,6 +28,7 @@ impl Currency {
                 Transaction {
                     sender: pair.0 as SenderAddress,
                     function: AtomicFunction::Transfer,
+                    tx_index,
                     // nb_addresses: 2,
                     addresses: [pair.0, pair.1],
                     params: [2, tx_index as FunctionParameter],
@@ -46,6 +47,7 @@ impl Currency {
                 Transaction {
                     sender: pair.0 as SenderAddress,
                     function: AtomicFunction::TransferDecrement,
+                    tx_index,
                     addresses: [pair.0],
                     // nb_addresses: 1,
                     // addresses: bounded_array![pair.0, pair.1],
@@ -157,6 +159,7 @@ impl Workload {
                     Transaction {
                         sender: tx_index as SenderAddress,
                         function: AtomicFunction::Fibonacci,
+                        tx_index,
                         // nb_addresses: 2,
                         addresses: [tx_index as StaticAddress, (run.batch_size + tx_index) as StaticAddress],
                         params: [*n as FunctionParameter, tx_index as FunctionParameter],
@@ -172,6 +175,7 @@ impl Workload {
                         Transaction {
                             sender: pair.0 as SenderAddress,
                             function: AtomicFunction::Transfer,
+                            tx_index,
                             // nb_addresses: 2,
                             addresses: [pair.0, pair.1],
                             params: [2, tx_index as FunctionParameter],
@@ -186,6 +190,7 @@ impl Workload {
                         Transaction {
                             sender: pair.0 as SenderAddress,
                             function: AtomicFunction::TransferDecrement,
+                            tx_index,
                             addresses: [pair.0, run.batch_size as StaticAddress + pair.0],
                             // nb_addresses: 1,
                             // addresses: bounded_array![pair.0, pair.1],

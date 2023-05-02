@@ -19,3 +19,4 @@ pub mod voting;
 pub mod auction;
 pub mod key_value;
 pub mod best_fit;
+pub mod micro_benchmark;

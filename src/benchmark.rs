@@ -259,6 +259,7 @@ impl Bench {
     pub fn execute<const A: usize, const B: usize>(&mut self, batch: Vec<Transaction<A, B>>) -> Result<(Duration, Duration)>{
         match self {
             Bench::Sequential(vm) => { vm.execute(batch) },
+            // Bench::Sequential(vm) => { vm.execute_with_results(batch); Ok((Duration::from_secs(0), Duration::from_secs(0))) },
             Bench::ParallelCollect(vm) => { vm.execute(batch) },
             Bench::ParallelImmediate(vm) => { vm.execute(batch) },
             _ => todo!()
@@ -567,6 +568,7 @@ impl ApplicationWorkload<0, 1> for Fib {
                 sender: tx_index as SenderAddress,
                 function: AtomicFunction::Fibonacci,
                 addresses: [],
+                tx_index,
                 params: [self.n as FunctionParameter],
             }
         }).collect()
@@ -603,6 +605,7 @@ impl ApplicationWorkload<2, 1> for Transfer {
                 Transaction {
                     sender: pair.0 as SenderAddress,
                     function: AtomicFunction::Transfer,
+                    tx_index,
                     addresses: [pair.0, pair.1],
                     params: [2],
                 }
@@ -643,6 +646,7 @@ impl ApplicationWorkload<2, 1> for TransferTest {
                 Transaction {
                     sender: pair.0 as SenderAddress,
                     function: AtomicFunction::TransferTest,
+                    tx_index,
                     addresses: [pair.0, pair.1],
                     params: [2],
                 }
@@ -699,6 +703,7 @@ impl ApplicationWorkload<1, 2> for TransferPieces {
                 Transaction {
                     sender: pair.0 as SenderAddress,
                     function: AtomicFunction::TransferDecrement,
+                    tx_index,
                     addresses: [pair.0],
                     params: [2, pair.1],
                 }
@@ -759,6 +764,7 @@ impl KeyValueWorkload {
 }
 
 impl ApplicationWorkload<2, 1> for KeyValueWorkload {
+
     fn next_batch(&mut self, params: &RunParameter, rng: &mut StdRng) -> Vec<Transaction<2, 1>> {
         /*
             ---- Create batch (all on the same address to force conflict?)
@@ -793,6 +799,7 @@ impl ApplicationWorkload<2, 1> for KeyValueWorkload {
                     Transaction {
                         sender: key as SenderAddress,
                         function: KeyValue(KeyValueOperation::Read),
+                        tx_index,
                         addresses: [key, unique_addr],
                         params: [unused_parameter],
                     }
@@ -801,6 +808,7 @@ impl ApplicationWorkload<2, 1> for KeyValueWorkload {
                     Transaction {
                         sender: key as SenderAddress,
                         function: KeyValue(KeyValueOperation::Write),
+                        tx_index,
                         addresses: [key, unique_addr],
                         params: [write_value],
                     }
@@ -810,6 +818,7 @@ impl ApplicationWorkload<2, 1> for KeyValueWorkload {
                     Transaction {
                         sender: key as SenderAddress,
                         function: KeyValue(KeyValueOperation::ReadModifyWrite),
+                        tx_index,
                         addresses: [key, unique_addr],
                         params: [unused_parameter],
                     }
@@ -827,6 +836,7 @@ impl ApplicationWorkload<2, 1> for KeyValueWorkload {
                     Transaction {
                         sender: key as SenderAddress,
                         function: KeyValue(KeyValueOperation::Scan),
+                        tx_index,
                         addresses: [key, key + scan_width],
                         params: [unused_parameter],
                     }
@@ -835,6 +845,7 @@ impl ApplicationWorkload<2, 1> for KeyValueWorkload {
                     Transaction {
                         sender: key as SenderAddress,
                         function: KeyValue(KeyValueOperation::Insert),
+                        tx_index,
                         addresses: [key, unique_addr],
                         params: [insert_value],
                     }
@@ -852,6 +863,7 @@ impl ApplicationWorkload<2, 1> for KeyValueWorkload {
         //     Transaction {
         //         sender: tx_index as SenderAddress,
         //         function: AtomicFunction::KeyValue(KeyValueOperation::Read),
+        //         tx_index,
         //         addresses: [0],
         //         params: [address_to_read as FunctionParameter, unused_parameter],
         //     }
@@ -865,6 +877,7 @@ impl ApplicationWorkload<2, 1> for KeyValueWorkload {
         //     let write = Transaction {
         //         sender: tx_index as SenderAddress,
         //         function: AtomicFunction::KeyValue(KeyValueOperation::Write),
+        //         tx_index,
         //         addresses: [0],
         //         params: [address_to_write as FunctionParameter, value_to_write],
         //     };
@@ -873,6 +886,7 @@ impl ApplicationWorkload<2, 1> for KeyValueWorkload {
         //     let read = Transaction {
         //         sender: tx_index as SenderAddress,
         //         function: AtomicFunction::KeyValue(KeyValueOperation::Read),
+        //         tx_index,
         //         addresses: [0],
         //         params: [address_to_write as FunctionParameter, unused_parameter],
         //     };
@@ -902,6 +916,11 @@ impl ApplicationWorkload<2, 1> for KeyValueWorkload {
                 // key_value.insert(key as StaticAddress, key as Word);
             }
         })
+    }
+
+    fn storage_size(&self, params: &RunParameter) -> usize {
+        // TODO depends on KeyValue field size
+        600 * params.batch_size
     }
 }
 //endregion
@@ -1034,6 +1053,7 @@ impl ApplicationWorkload<2, 2> for AuctionWorkload {
             // Transaction {
             //     sender: beneficiary as SenderAddress,
             //     function: AtomicFunction::Auction(auction::Operation::Close),
+            //     tx_index,
             //     addresses: [beneficiary, unique_addr],
             //     params: [0, auction_address as FunctionParameter],
             // }
@@ -1046,6 +1066,7 @@ impl ApplicationWorkload<2, 2> for AuctionWorkload {
         //     Transaction {
         //         sender: bidder as SenderAddress,
         //         function: AtomicFunction::Auction(auction::Operation::Withdraw),
+        //         tx_index,
         //         // addresses: [bidder, unique_addr],
         //         addresses: [bidder, beneficiary],   // Ensure they all conflict
         //         params: [0, auction_address as FunctionParameter],
@@ -1059,6 +1080,7 @@ impl ApplicationWorkload<2, 2> for AuctionWorkload {
             Transaction {
                 sender: bidder as SenderAddress,
                 function: AtomicFunction::Auction(auction::Operation::Bid),
+                tx_index,
                 // addresses: [bidder, unique_addr],
                 addresses: [bidder, beneficiary],   // Ensure they all conflict
                 params: [bid as FunctionParameter, auction_address as FunctionParameter],
@@ -1177,7 +1199,7 @@ impl WorkloadUtils {
             }
         }
 
-        // Workload::print_conflict_rate(&batch);
+        // WorkloadUtils::print_conflict_rate(&batch);
 
         batch
     }

@@ -26,6 +26,7 @@ pub struct Transaction<const ADDRESS_COUNT: usize, const PARAM_COUNT: usize> {
     pub function: AtomicFunction,
     // pub addresses: BoundedArray<StaticAddress, MAX_NB_ADDRESSES>,
     // pub params: BoundedArray<FunctionParameter, MAX_NB_PARAMETERS>,
+    pub tx_index: usize,
     pub addresses: [StaticAddress; ADDRESS_COUNT],
     pub params: [FunctionParameter; PARAM_COUNT],
     // pub nb_addresses: usize,

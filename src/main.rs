@@ -51,6 +51,9 @@ use testbench::parallel_vm::{ParallelVM, ParallelVmCollect, ParallelVmImmediate}
 use testbench::sequential_vm::SequentialVM;
 use testbench::worker_implementation::WorkerC;
 use std::str::FromStr;
+use core_affinity::CoreId;
+use futures::stream::iter;
+use testbench::micro_benchmark::{all_numa_latencies, numa_latency_between};
 
 type A = u64;
 type Set = IntSet<u64>;
@@ -67,14 +70,28 @@ async fn main() -> Result<()> {
 
     // TestSharedMap::test_all();
 
-    tokio::task::spawn_blocking(|| {
-        // println!("Previous version");
-        // benchmarking("benchmark_config.json");
-        //
-        // println!();
-        // println!("New version");
-        TestBench::benchmark("benchmark_config.json")
-    }).await.expect("Task panicked")?;
+    // tokio::task::spawn_blocking(|| {
+    //     // println!("Previous version");
+    //     // benchmarking("benchmark_config.json");
+    //     //
+    //     // println!();
+    //     // println!("New version");
+    //     TestBench::benchmark("benchmark_config.json")
+    // }).await.expect("Task panicked")?;
+
+    let from_power = 2;
+    // let to_power = 18;
+    let to_power = 5;
+
+    // match numa_latency_between(0, 0, from_power, to_power).await {
+    //     Ok(_) => {},
+    //     Err(e) => eprintln!("Failed to run micro benchmark: {:?}", e)
+    // }
+
+    match all_numa_latencies(4, from_power, to_power).await {
+        Ok(_) => {},
+        Err(e) => eprintln!("Failed to run micro benchmark: {:?}", e)
+    }
 
     // let param = BenchmarkConfig{
     //     vm_types: vec![VmType::A],
