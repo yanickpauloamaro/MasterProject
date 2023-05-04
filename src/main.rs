@@ -53,7 +53,7 @@ use testbench::worker_implementation::WorkerC;
 use std::str::FromStr;
 use core_affinity::CoreId;
 use futures::stream::iter;
-use testbench::micro_benchmark::{all_numa_latencies, numa_latency_between};
+use testbench::micro_benchmark::{all_numa_latencies};
 
 type A = u64;
 type Set = IntSet<u64>;
