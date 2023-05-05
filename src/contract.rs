@@ -1,13 +1,14 @@
-use std::cell::{Cell, RefCell};
-use strum::EnumIter;
-use std::mem;
-use rand::seq::SliceRandom;
+use std::cell::Cell;
 use std::fmt::Debug;
 use std::marker::PhantomData;
-use crate::applications::Ballot;
-use crate::{auction, key_value};
+use std::mem;
+use thincollections::thin_map::ThinMap;
+
+use crate::{auction, d_hash_map, key_value};
 use crate::auction::SimpleAuction;
-use crate::key_value::{Value, KeyValue, KeyValueOperation};
+use crate::d_hash_map::{DHashMap, SearchResult};
+use crate::d_hash_map::Success::Replaced;
+use crate::key_value::{KeyValue, KeyValueOperation, Value};
 use crate::vm_utils::SharedStorage;
 use crate::wip::Word;
 
@@ -19,17 +20,13 @@ pub type FunctionParameter = u32;
 pub const MAX_NB_ADDRESSES: usize = 2;
 pub const MAX_NB_PARAMETERS: usize = 2;
 
-// TODO Find safe way to have a variable length array?
 #[derive(Clone, Debug, Copy)]
 pub struct Transaction<const ADDRESS_COUNT: usize, const PARAM_COUNT: usize> {
     pub sender: SenderAddress,
     pub function: AtomicFunction,
-    // pub addresses: BoundedArray<StaticAddress, MAX_NB_ADDRESSES>,
-    // pub params: BoundedArray<FunctionParameter, MAX_NB_PARAMETERS>,
-    pub tx_index: usize,
+    pub tx_index: usize,    // Could use u32
     pub addresses: [StaticAddress; ADDRESS_COUNT],
     pub params: [FunctionParameter; PARAM_COUNT],
-    // pub nb_addresses: usize,
 }
 
 #[repr(u8)]
@@ -46,6 +43,9 @@ pub enum AtomicFunction {
     KeyValue(KeyValueOperation),
 
     Auction(auction::Operation),
+
+    DHashMap(d_hash_map::Operation),
+    PieceDHashMap(d_hash_map::PiecedOperation),
 
     // Ballot(Ballot),
     // BallotPiece(BallotPieces)
@@ -65,7 +65,8 @@ pub enum FunctionResult<const ADDRESS_COUNT: usize, const PARAM_COUNT: usize> {
     // TODO Rename all functions, results and errors with qualified names -> i.e. key_value::Result
     KeyValueSuccess(key_value::OperationResult),
     KeyValueError(key_value::KeyValueError),
-    Auction(auction::Result)
+    Auction(auction::Result),
+    DHashMap(d_hash_map::Result<PARAM_COUNT>),
 }
 
 impl AtomicFunction {
@@ -292,86 +293,183 @@ impl AtomicFunction {
                     Err(failure) => FunctionResult::KeyValueError(failure)
                 }
             }
-            // AtomicFunction::Ballot(piece) => {
-            //     // piece.execute(tx, storage)
-            //     todo!()
-            // },
-            AtomicFunction::BestFitStart => {
-                // let _addr: Vec<_> = addresses.iter().collect();
-                // println!("Start range = {:?}", _addr);
-                // // addresses: [start_addr..end_addr]
-                // // params: []
-                // let start_addr = addresses[0];
-                // let mut max_addr = start_addr;
-                // let mut max = storage.get(start_addr as usize);
-                //
-                // for addr in addresses.iter() {
-                //     let value = storage.get(*addr as usize);
-                //     // println!("\t{}->{}", *addr, value);
-                //     if value > max {
-                //         max = storage.get(max_addr as usize);
-                //         max_addr = *addr;
-                //     }
-                // }
-                //
-                // // store max for next tx piece
-                // tx.params[0] = max as FunctionParameter;
-                //
-                // // Compute next range
-                // let new_starting_addr = start_addr + MAX_NB_ADDRESSES as StaticAddress;
-                // let new_end_addr = min(new_starting_addr + MAX_NB_ADDRESSES as StaticAddress - 1, storage.len() as StaticAddress);
-                //
-                // if new_starting_addr as usize >= storage.len() {
-                //     // Commit
-                //     return FunctionResult::SuccessValue(max);
-                // }
-                //
-                // //"lock" the max value
-                // tx.addresses = BoundedArray::from_range_with(max_addr, new_starting_addr..new_end_addr);
-                //
-                // tx.function = BestFit;
-                // FunctionResult::Another(tx)
-                FunctionResult::Success
+            AtomicFunction::DHashMap(op) => {
+
+                use d_hash_map::Operation::*;
+                match op {
+                    Get => {
+                        todo!()
+                    },
+                    Insert => {
+                        todo!()
+                    },
+                    Remove => {
+                        todo!()
+                    },
+                    ContainsKey => {
+                        todo!()
+                    }
+                }
             },
-            AtomicFunction::BestFit => {
-                // let _addr: Vec<_> = addresses.iter().collect();
-                // println!("Searching range = {:?}", _addr);
-                // // addresses: [old_max_addr, start_addr..end_addr]
-                // // params: [old_max]
-                // let old_max_addr = addresses[0];
-                // let old_max = params[0] as Word;
-                // let start_addr = addresses[1];
-                //
-                // let mut max_addr = old_max_addr;
-                // let mut max = old_max;
-                //
-                // for addr in addresses.iter() {
-                //     let value = storage.get(*addr as usize);
-                //     if value > max {
-                //         max = storage.get(max_addr as usize);
-                //         max_addr = *addr;
-                //     }
-                // }
-                //
-                // // store max for next tx piece
-                // tx.params[0] = max as FunctionParameter;
-                //
-                // // Compute next range
-                // let new_starting_addr = start_addr + MAX_NB_ADDRESSES as StaticAddress - 1;
-                // let new_end_addr = min(new_starting_addr + MAX_NB_ADDRESSES as StaticAddress - 1, storage.len() as StaticAddress);
-                //
-                // if new_starting_addr as usize >= storage.len() {
-                //     // Commit
-                //     return FunctionResult::SuccessValue(max);
-                // }
-                //
-                // //"lock" the max value
-                // tx.addresses = BoundedArray::from_range_with(max_addr, new_starting_addr..new_end_addr);
-                //
-                // tx.function = BestFit;
-                // FunctionResult::Another(tx)
-                FunctionResult::Success
+
+            AtomicFunction::PieceDHashMap(op) => {
+
+                use d_hash_map::PiecedOperation::*;
+                use d_hash_map::Success::*;
+
+                // Since a tx must be able to store one key + one value
+                // let VALUE_SIZE: usize = tx.params.len() - 1;
+
+                let res = match op {
+                    InsertRequest | RemoveRequest | GetRequest | HasRequest => {
+                        println!("------------ Compute Hash ---------------");
+                        let key = tx.params[0];
+                        let hash = d_hash_map::DHashMap::compute_hash(key);
+
+                        let nb_buckets = storage.get(0);
+                        let bucket_index = (hash % (nb_buckets as u64)) as usize;
+
+                        // TODO move bucket capacity to storage(1) since they all have the same capacity
+                        let hash_table_start = 1;
+                        let bucket_info = hash_table_start + 2 * bucket_index;
+
+                        let bucket_start = storage.get(bucket_info) as usize;
+                        // TODO could store bucket size instead of bucket capacity
+                        let bucket_capacity = storage.get(bucket_info + 1) as usize;
+
+                        // Range of addresses that need to be locked
+                        // TODO StaticAddress should be u64 or usize?
+                        // TODO Should specify whether its read or write -> signed integers?
+                        tx.addresses[0] = bucket_start as StaticAddress;
+                        tx.addresses[1] = (bucket_start + PARAM_COUNT * bucket_capacity) as StaticAddress;
+
+                        tx.function = AtomicFunction::PieceDHashMap(op.next_operation());
+                        FunctionResult::Another(tx)
+                    }
+                    TryInsert => {
+
+                        let bucket_start = tx.addresses[0];
+                        let bucket_end = tx.addresses[1];
+                        let key = tx.params[0];
+                        println!("------------ INSERT ---------------");
+
+                        match DHashMap::search_bucket::<PARAM_COUNT>(key, bucket_start as usize, bucket_end as usize, &mut storage) {
+                            SearchResult::Entry(_entry, index) => {
+                                let mut previous = [0; PARAM_COUNT];
+                                for offset in 0..PARAM_COUNT {
+                                    let current = storage.get_mut(index + offset);
+                                    previous[offset] = *current;
+                                    *current = tx.params[offset] as Word;
+                                }
+
+                                FunctionResult::DHashMap(Ok(Replaced(previous)))
+                            },
+                            SearchResult::EmptySpot(_entry, index) => {
+                                // Remove is responsible for updating adjacent keys and sentinels
+                                // let current_key = storage.get_mut(index);
+                                // *current_key = key as Word;
+                                // println!("\tFound an empty spot at index {}", index);
+                                for offset in 0..PARAM_COUNT {
+                                    // println!("\t\twriting value to storage {}")
+                                    let current = storage.get_mut(index + offset);
+                                    *current = tx.params[offset] as Word;
+                                }
+
+                                FunctionResult::DHashMap(Ok(Inserted))
+                            },
+                            SearchResult::BucketFull => {
+
+                                // DHashMap::println_ptr::<PARAM_COUNT>(storage.ptr, storage.size, 10, 10);
+                                println!("Bucket full ============");
+                                // Trigger a full resize
+                                tx.function = AtomicFunction::PieceDHashMap(ResizeInsert);
+                                // TODO set Exclusive address (write all)
+                                FunctionResult::Another(tx)
+                            }
+                        }
+                    },
+                    ResizeInsert => {
+                        println!("------------ RESIZE ---------------");
+                        // Check if bucket is still full (otherwise just insert)
+                        // Double the number of buckets
+                        // Compute new size: if too large for vm storage return error
+                        // Put every entry in a temporary vec (using the same layout, i.e. do DHashMapInit)
+                        //  keep a pointer to bucket end to avoid going through the whole bucket for each insert)
+                        // mempcy the temporary vec in place of the previous hashmap
+                        // Insert the new value
+                        todo!()
+                    },
+                    Get => {
+                        let bucket_start = tx.addresses[0] as usize;
+                        let bucket_end = tx.addresses[1] as usize;
+                        let key = tx.params[0];
+                        println!("------------ GET ---------------");
+                        match DHashMap::search_bucket::<PARAM_COUNT>(key, bucket_start, bucket_end, &mut storage) {
+                            SearchResult::Entry(_entry, index) => {
+                                let mut found = [0; PARAM_COUNT];
+                                for offset in 0..PARAM_COUNT {
+                                    found[offset] = storage.get(index + offset);
+                                }
+                                FunctionResult::DHashMap(Ok(Value(found)))
+                            },
+                            _ => {
+                                FunctionResult::DHashMap(Ok(None))
+                            },
+                        }
+                    },
+                    Remove => {
+                        let bucket_start = tx.addresses[0] as usize;
+                        let bucket_end = tx.addresses[1] as usize;
+                        let key = tx.params[0];
+                        println!("------------ REMOVE ---------------");
+                        match DHashMap::search_bucket::<PARAM_COUNT>(key, bucket_start, bucket_end, &mut storage) {
+                            SearchResult::Entry(_entry, index) => {
+                                let mut found = [0; PARAM_COUNT];
+                                for offset in 0..PARAM_COUNT {
+                                    found[offset] = storage.get(index + offset);
+                                }
+
+                                let next_index = index + PARAM_COUNT;
+                                if next_index >= bucket_end || storage.get(next_index) == DHashMap::LAST {
+                                    // // Lazy version: only mark the current entry as "last" => search will take longer
+                                    // storage.set(index, DHashMap::LAST);
+
+                                    // Make sure to mark the end of the bucket to speed up future search operations
+                                    let mut last_index = index;
+                                    while last_index > bucket_start {
+                                        storage.set(last_index, DHashMap::LAST);
+                                        last_index -= PARAM_COUNT;
+                                    }
+                                } else {
+                                    // Removed an element in the middle of the bucket, add a sentinel
+                                    storage.set(index, DHashMap::SENTINEL);
+                                }
+
+                                FunctionResult::DHashMap(Ok(Value(found)))
+                            },
+                            _ => {
+                                FunctionResult::DHashMap(Ok(None))
+                            },
+                        }
+                    },
+                    Has => {
+                        let bucket_start = tx.addresses[0] as usize;
+                        let bucket_end = tx.addresses[1] as usize;
+                        let key = tx.params[0];
+                        println!("------------ HAS ---------------");
+                        match DHashMap::search_bucket::<PARAM_COUNT>(key, bucket_start, bucket_end, &mut storage) {
+                            SearchResult::Entry(_, _) => FunctionResult::DHashMap(Ok(HasKey(true))),
+                            _ => FunctionResult::DHashMap(Ok(HasKey(false))),
+                        }
+                    },
+                };
+
+                // DHashMap::println_ptr::<PARAM_COUNT>(storage.ptr, storage.size, 10, 10);
+                println!("\tresult: {:?}", res);
+                println!();
+                res
             },
+            _ => todo!()
         }
     }
 

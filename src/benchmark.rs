@@ -23,10 +23,11 @@ use serde::de::Visitor;
 use thincollections::thin_map::ThinMap;
 
 use crate::applications::Workload;
-use crate::auction;
+use crate::{auction, d_hash_map};
 use crate::auction::SimpleAuction;
 use crate::config::{BenchmarkConfig, BenchmarkResult, ConfigFile, RunParameter};
 use crate::contract::{AtomicFunction, FunctionParameter, SenderAddress, SharedMap, StaticAddress, Transaction};
+use crate::d_hash_map::{DHashMap, PiecedOperation};
 use crate::key_value::{Value, KeyValue, KeyValueOperation};
 use crate::parallel_vm::{ParallelVmCollect, ParallelVmImmediate};
 use crate::sequential_vm::SequentialVM;
@@ -267,6 +268,7 @@ impl Bench {
     }
 }
 
+//region vm wrapper ================================================================================
 enum VmWrapper {
     Sequential(SequentialVM),
     ParallelCollect(ParallelVmCollect),
@@ -299,7 +301,9 @@ impl VmWrapper {
         }
     }
 }
+//endregion ========================================================================================
 
+//region TestBench =================================================================================
 pub struct TestBench;
 impl TestBench {
     pub fn benchmark(path: &str) -> Result<Vec<BenchmarkResult>> {
@@ -378,6 +382,10 @@ impl TestBench {
             Ok(("", (AuctionWorkload::NAME, args))) => {
                 let workload = AuctionWorkload::new_boxed(&params, args);
                 TestBench::dispatch(params, workload)
+            },
+            Ok(("", (DHashMapWorkload::NAME, args))) => {
+                let workload = DHashMapWorkload::new_boxed(&params, args);
+                TestBench::dispatch::<2, 10>(params, workload)
             },
 
             Ok(("", (TransferTest::NAME, args))) => {
@@ -535,7 +543,9 @@ impl TestBench {
         return BenchmarkResult::from_latency_with_breakdown(params, latency_reps, scheduling_latency, execution_latency);
     }
 }
+//endregion ========================================================================================
 
+//region Workloads =================================================================================
 trait ApplicationWorkload<const ADDRESS: usize, const PARAMS: usize> {
     fn next_batch(&mut self, params: &RunParameter, rng: &mut StdRng) -> Vec<Transaction<ADDRESS, PARAMS>>;
     fn initialisation(&self, params: &RunParameter, rng: &mut StdRng) -> Box<dyn Fn(&mut Vec<Word>)>;
@@ -574,7 +584,7 @@ impl ApplicationWorkload<0, 1> for Fib {
         }).collect()
     }
 
-    fn initialisation(&self, params: &RunParameter, rng: &mut StdRng) -> Box<dyn Fn(&mut Vec<Word>)> {
+    fn initialisation(&self, _params: &RunParameter, _rng: &mut StdRng) -> Box<dyn Fn(&mut Vec<Word>)> {
         // Nothing to do
         Box::new(|storage: &mut Vec<Word>| {  })
     }
@@ -612,7 +622,7 @@ impl ApplicationWorkload<2, 1> for Transfer {
             }).collect()
     }
 
-    fn initialisation(&self, params: &RunParameter, rng: &mut StdRng) -> Box<dyn Fn(&mut Vec<Word>)> {
+    fn initialisation(&self, params: &RunParameter, _rng: &mut StdRng) -> Box<dyn Fn(&mut Vec<Word>)> {
 
         let nb_repetitions = params.repetitions;
         Box::new(move |storage: &mut Vec<Word>| {
@@ -713,6 +723,183 @@ impl ApplicationWorkload<1, 2> for TransferPieces {
     fn initialisation(&self, params: &RunParameter, rng: &mut StdRng) -> Box<dyn Fn(&mut Vec<Word>)> {
         let nb_repetitions = params.repetitions;
         Box::new(move |storage: &mut Vec<Word>| { storage.fill(20 * nb_repetitions as Word) })
+    }
+}
+//endregion
+
+//region DHashMap workload -------------------------------------------------------------------------
+struct DHashMapWorkload {
+    get_proportion: f64,
+    insert_proportion: f64,
+    remove_proportion: f64,
+    contains_proportion: f64,
+    // key_distribution: ??? uniform, or zipfian
+}
+impl DHashMapWorkload {
+    const NAME: &'static str = "DHashMap";
+
+    fn parser(input: &str) -> IResult<&str, (f64, f64, f64, f64)> {
+        // TODO use numbers from 0-100 instead of floats to ensure we have exact proportions?
+        (
+            terminated(double, is_a(" ,)")), // get
+            terminated(double, is_a(" ,)")), // insert
+            terminated(double, is_a(" ,)")), // remove
+            double, // contains
+        ).parse(input)
+    }
+
+    fn new_boxed(params: &RunParameter, args: &str) -> Box<Self> {
+        // todo!("Need to parse input");
+        match DHashMapWorkload::parser(args) {
+            Ok((_, (get, insert, remove, contains))) => {
+                let sum = get + insert + remove + contains;
+                assert!(0.0 <= sum);
+                assert!(sum <= 1.0);
+
+                Box::new(DHashMapWorkload {
+                    get_proportion: get,
+                    insert_proportion: insert,
+                    contains_proportion: remove,
+                    remove_proportion: contains,
+                })
+            }
+            other => panic!("Unable to parse argument to KeyValue workload: {:?}", other)
+        }
+    }
+}
+
+impl<const ENTRY_SIZE: usize> ApplicationWorkload<2, ENTRY_SIZE> for DHashMapWorkload {
+    fn next_batch(&mut self, params: &RunParameter, rng: &mut StdRng) -> Vec<Transaction<2, ENTRY_SIZE>> {
+        use d_hash_map::PiecedOperation::*;
+        use AtomicFunction::PieceDHashMap;
+        let items = [
+            (self.get_proportion, PieceDHashMap(GetRequest)),
+            (self.insert_proportion, PieceDHashMap(InsertRequest)),
+            (self.remove_proportion, PieceDHashMap(RemoveRequest)),
+            (self.contains_proportion, PieceDHashMap(HasRequest)),
+        ];
+        let dist2 = WeightedIndex::new(
+            items.iter().map(|item| item.0)
+        ).unwrap();
+
+        let batch_size = 10;
+        // let mut batch = (0..batch_size).map(|tx_index| {
+        //     let op = items[dist2.sample(rng)].1;
+        //     match op {
+        //         PieceDHashMap(GetRequest) => { },
+        //         PieceDHashMap(InsertRequest) => { },
+        //         PieceDHashMap(RemoveRequest) => { },
+        //         PieceDHashMap(HasRequest) => { },
+        //         _ => panic!("Only request can be first pieces")
+        //     }
+        //
+        // }).collect();
+
+        let mut batch: Vec<_> = (0..batch_size)
+            .map(|tx_index| {
+                let mut params = [0 as FunctionParameter; ENTRY_SIZE];
+                for i in 0..ENTRY_SIZE { params[i] = i as FunctionParameter; }
+                let key = tx_index;
+                params[0] = key as FunctionParameter;
+                Transaction {
+                    sender: tx_index as SenderAddress,
+                    function: PieceDHashMap(InsertRequest),
+                    tx_index,
+                    addresses: [0, 0],
+                    params,
+                }
+            }).collect();
+
+        let mut gets: Vec<_> = (0..batch_size)
+            .map(|tx_index| {
+                let mut params = [0 as FunctionParameter; ENTRY_SIZE];
+                for i in 0..ENTRY_SIZE { params[i] = i as FunctionParameter; }
+                let key = tx_index;
+                params[0] = key as FunctionParameter;
+                Transaction {
+                    sender: tx_index as SenderAddress,
+                    function: PieceDHashMap(GetRequest),
+                    tx_index,
+                    addresses: [0, 0],
+                    params,
+                }
+            }).collect();
+
+        batch.append(&mut gets);
+        println!("batch: {:?}", batch);
+
+        // TODO only for testing with sequential vm
+        batch.reverse();
+
+        batch
+    }
+
+    fn initialisation(&self, params: &RunParameter, rng: &mut StdRng) -> Box<dyn Fn(&mut Vec<Word>)> {
+        let nb_repetitions = params.repetitions;
+        let nb_buckets = 10;
+        let bucket_capacity = 10;
+        let bucket_size = bucket_capacity * ENTRY_SIZE;
+        Box::new(move |storage: &mut Vec<Word>| {
+            storage.fill(0);
+            // storage[0] = nb_buckets as Word;
+            //
+            let hash_table_start = 1;
+            //
+            // for bucket_index in 0..nb_buckets {
+            //     let bucket_start = hash_table_start + 2 * nb_buckets + bucket_index * bucket_size;
+            //     let bucket_end = bucket_start + bucket_size;
+            //     let bucket_info = (hash_table_start + 2 * bucket_index) as usize;
+            //     storage[bucket_info] = bucket_start as Word;
+            //     storage[bucket_info + 1] = bucket_capacity as Word;
+            //
+            //     let mut current_index = bucket_start;
+            //     while current_index < bucket_end {
+            //         storage[current_index] = DHashMap::LAST;
+            //         current_index += ENTRY_SIZE;
+            //     }
+            // }
+
+            storage[0] = nb_buckets as Word;
+
+            let mut index = 1;
+            for bucket_index in 0..nb_buckets {
+                let bucket_start = hash_table_start + 2 * nb_buckets + bucket_index * bucket_size;
+                storage[index] = bucket_start as Word;
+                storage[index + 1] = bucket_capacity as Word;
+                index += 2;
+            }
+            for _bucket in 0..nb_buckets {
+                for _bucket_entry in 0..bucket_capacity {
+                    storage[index] = DHashMap::LAST;
+                    index += ENTRY_SIZE;
+                }
+            }
+
+            // let start = &storage[0..(1 + nb_buckets * bucket_size)];
+            // println!("Start of storage: {:?}", start);
+
+            // let mut index = 0;
+            // println!("<addr {}> {},", index, storage[index]);
+            // index += 1;
+            //
+            // for _ in 0..nb_buckets {
+            //     println!("<addr {}> {}, {}", index, storage[index], storage[index + 1]);
+            //     index += 2;
+            // }
+            // for _bucket in 0..nb_buckets {
+            //     println!("Bucket {}:", _bucket);
+            //     for _bucket_entry in 0..bucket_capacity {
+            //         print!("<addr {}> ", index);
+            //         for _ in 0..ENTRY_SIZE {
+            //             print!("{}, ", storage[index]);
+            //             index += 1;
+            //         }
+            //         println!();
+            //     }
+            // }
+            // DHashMap::println::<ENTRY_SIZE>(storage, nb_buckets, bucket_capacity);
+            // panic!();
+        })
     }
 }
 //endregion
@@ -925,94 +1112,6 @@ impl ApplicationWorkload<2, 1> for KeyValueWorkload {
 }
 //endregion
 
-//region BestFit workload --------------------------------------------------------------------------
-struct BestFitWorkload {
-    nb_best_fit_problems: usize,
-    nb_options_per_problem: usize,
-}
-impl BestFitWorkload {
-    const NAME: &'static str = "BestFit";
-
-    fn new_boxed(params: &RunParameter, args: &str) -> Box<Self> {
-        // todo!("Need to parse input");
-        match f64::from_str(args) {
-            Ok(_) => Box::new(BestFitWorkload {
-                nb_best_fit_problems: 1,
-                nb_options_per_problem: 100,
-            }),
-            _ => panic!("Unable to parse argument to Votation workload")
-        }
-    }
-}
-
-impl ApplicationWorkload<2, 1> for BestFitWorkload {
-    fn next_batch(&mut self, params: &RunParameter, rng: &mut StdRng) -> Vec<Transaction<2, 1>> {
-        /*
-            TODO Write assumptions
-            TODO Create batch (all on the same address to force conflict? (the address of the subject))
-            TODO Implement AtomicFunction (monolithic version)
-            TODO Create batch (pieced version) -> /!\ addresses Transaction<?, ?>
-            TODO Implement AtomicFunction (pieced version)
-            TODO Add params
-         */
-        todo!()
-    }
-
-    fn initialisation(&self, params: &RunParameter, rng: &mut StdRng) -> Box<dyn Fn(&mut Vec<Word>)> {
-        let nb_repetitions = params.repetitions;
-        todo!();
-        Box::new(move |storage: &mut Vec<Word>| { storage.fill(20 * nb_repetitions as Word) })
-    }
-}
-//endregion
-
-//region Votation workload -------------------------------------------------------------------------
-struct Voting {
-    nb_subjects: usize,
-    nb_proposals_per_subject: usize,
-    nb_voters_per_subject: usize,
-}
-impl Voting {
-    const NAME: &'static str = "Vote";
-
-    fn new_boxed(params: &RunParameter, args: &str) -> Box<Self> {
-        // todo!("Need to parse input");
-        match f64::from_str(args) {
-            Ok(_) => Box::new(Voting {
-                nb_subjects: 1,
-                nb_proposals_per_subject: 2,
-                nb_voters_per_subject: 10,
-            }),
-            _ => panic!("Unable to parse argument to Votation workload")
-        }
-    }
-}
-
-impl ApplicationWorkload<2, 1> for Voting {
-    fn next_batch(&mut self, params: &RunParameter, rng: &mut StdRng) -> Vec<Transaction<2, 1>> {
-        /* For now assume that:
-            - the subjects are initialized and stored in the vm beforehand
-            - the voters are initialized are initialized and stored in the vm beforehand
-            => batch consists of vote and delegate calls
-            TODO Create batch (all on the same address to force conflict? (the address of the subject))
-            TODO Implement AtomicFunction (monolithic version)
-            TODO Create batch (pieced version) -> /!\ addresses Transaction<?, ?>
-            TODO Implement AtomicFunction (pieced version)
-            TODO Add delegation rate param
-            TODO Add proposal distribution param
-         */
-        todo!()
-    }
-
-    fn initialisation(&self, params: &RunParameter, rng: &mut StdRng) -> Box<dyn Fn(&mut Vec<Word>)> {
-        let nb_repetitions = params.repetitions;
-        todo!();
-        // Create subjects, proposals and voters
-        Box::new(move |storage: &mut Vec<Word>| { storage.fill(20 * nb_repetitions as Word) })
-    }
-}
-//endregion
-
 //region Auction workload --------------------------------------------------------------------------
 struct AuctionWorkload {
     nb_auctions: usize,
@@ -1144,6 +1243,89 @@ impl ApplicationWorkload<2, 2> for AuctionWorkload {
 }
 //endregion
 
+//region Votation workload -------------------------------------------------------------------------
+struct Voting {
+    nb_subjects: usize,
+    nb_proposals_per_subject: usize,
+    nb_voters_per_subject: usize,
+}
+impl Voting {
+    const NAME: &'static str = "Vote";
+
+    fn new_boxed(params: &RunParameter, args: &str) -> Box<Self> {
+        // todo!("Need to parse input");
+        match f64::from_str(args) {
+            Ok(_) => Box::new(Voting {
+                nb_subjects: 1,
+                nb_proposals_per_subject: 2,
+                nb_voters_per_subject: 10,
+            }),
+            _ => panic!("Unable to parse argument to Votation workload")
+        }
+    }
+}
+
+impl ApplicationWorkload<2, 1> for Voting {
+    fn next_batch(&mut self, params: &RunParameter, rng: &mut StdRng) -> Vec<Transaction<2, 1>> {
+        /* For now assume that:
+            - the subjects are initialized and stored in the vm beforehand
+            - the voters are initialized are initialized and stored in the vm beforehand
+            => batch consists of vote and delegate calls
+            TODO Create batch (all on the same address to force conflict? (the address of the subject))
+            TODO Implement AtomicFunction (monolithic version)
+            TODO Create batch (pieced version) -> /!\ addresses Transaction<?, ?>
+            TODO Implement AtomicFunction (pieced version)
+            TODO Add delegation rate param
+            TODO Add proposal distribution param
+         */
+        todo!()
+    }
+
+    fn initialisation(&self, params: &RunParameter, rng: &mut StdRng) -> Box<dyn Fn(&mut Vec<Word>)> {
+        let nb_repetitions = params.repetitions;
+        todo!();
+        // Create subjects, proposals and voters
+        Box::new(move |storage: &mut Vec<Word>| { storage.fill(20 * nb_repetitions as Word) })
+    }
+}
+//endregion
+
+//region BestFit workload --------------------------------------------------------------------------
+struct BestFitWorkload {
+    nb_best_fit_problems: usize,
+    nb_options_per_problem: usize,
+}
+impl BestFitWorkload {
+    const NAME: &'static str = "BestFit";
+
+    fn new_boxed(params: &RunParameter, args: &str) -> Box<Self> {
+        // todo!("Need to parse input");
+        match f64::from_str(args) {
+            Ok(_) => Box::new(BestFitWorkload {
+                nb_best_fit_problems: 1,
+                nb_options_per_problem: 100,
+            }),
+            _ => panic!("Unable to parse argument to Votation workload")
+        }
+    }
+}
+
+impl ApplicationWorkload<2, 1> for BestFitWorkload {
+    fn next_batch(&mut self, params: &RunParameter, rng: &mut StdRng) -> Vec<Transaction<2, 1>> {
+        todo!()
+    }
+
+    fn initialisation(&self, params: &RunParameter, rng: &mut StdRng) -> Box<dyn Fn(&mut Vec<Word>)> {
+        let nb_repetitions = params.repetitions;
+        todo!();
+        Box::new(move |storage: &mut Vec<Word>| {  })
+    }
+}
+//endregion
+
+//endregion ========================================================================================
+
+//region workload utils ============================================================================
 struct WorkloadUtils;
 impl WorkloadUtils {
     pub fn transfer_pairs(memory_size: usize, batch_size: usize, conflict_rate: f64, mut rng: &mut StdRng) -> Vec<(StaticAddress, StaticAddress)> {
@@ -1269,363 +1451,4 @@ impl WorkloadUtils {
         println!();
     }
 }
-
-//region draft of correct attempt
-struct TestingAgain<const SIZE: usize>;
-
-struct BenchmarkDispatch;
-
-impl BenchmarkDispatch {
-    pub fn benchmark(run: RunParameter) -> BenchmarkResult {
-        let s = "str";
-        // match s {
-        //     "Fibonacci(10)" => BenchmarkDispatch::inner_bench_with_parameter_and_details(run, Box::new(FibWorkload{n : 10})),
-        //     "Fibonacci(5)" => FibWorkload{n : 5}.bench_with_parameter_and_details(run),
-        //     "Transfer(0.0)" => TransferWorkload{ conflict_rate: 0.0 }.bench_with_parameter_and_details(run),
-        //     _ => todo!()
-        // };
-        let workload = match s {
-            "Fibonacci(5)" => Box::new(FibWorkload{n : 5}),
-            "Fibonacci(10)" => Box::new(FibWorkload{n : 5}),
-            // "Transfer(0.0)" => Box::new(TransferWorkload{conflict_rate : 0.0}),
-            _ => todo!()
-        };
-
-        BenchmarkDispatch::inner_bench_with_parameter_and_details(run, workload)
-        // todo!()
-    }
-
-    fn inner_bench_with_parameter_and_details<const A: usize, const P: usize>(run: RunParameter, workload: Box<dyn Win<A, P>>) -> BenchmarkResult {
-
-        // VM Wrapper
-        let mut vm = Bench::from(&run);
-        // let workload = FibWorkload{n : 5};
-
-        let mut latency_reps = Vec::with_capacity(run.repetitions as usize);
-        let mut scheduling_latency = Vec::with_capacity(run.repetitions as usize);
-        let mut execution_latency = Vec::with_capacity(run.repetitions as usize);
-
-        let mut rng = match run.seed {
-            Some(seed) => StdRng::seed_from_u64(seed),
-            None => StdRng::seed_from_u64(rand::random())
-        };
-
-        let batch = workload.new_batch(/*&run, replaced by &self*/&mut rng);
-        for _ in 0..run.warmup {
-            let batch = batch.clone();
-            vm.init_vm_storage(&run);
-            let _vm_output = vm.execute(batch);
-        }
-
-        for _ in 0..run.repetitions {
-            // let batch = run.workload.new_batch(&run, &mut rng);
-            let batch = batch.clone();
-
-            vm.init_vm_storage(&run);
-            let start = Instant::now();
-            let (scheduling, execution) = vm.execute(batch).unwrap();
-            let duration = start.elapsed();
-
-            latency_reps.push(duration);
-            scheduling_latency.push(scheduling);
-            execution_latency.push(execution);
-        }
-
-        return BenchmarkResult::from_latency_with_breakdown(run, latency_reps, scheduling_latency, execution_latency);
-    }
-}
-
-struct FibWorkload{
-    n: usize,
-}
-impl Win<0, 1> for FibWorkload {
-    fn new_batch(&self, rng: &mut StdRng) -> Vec<Transaction<0, 1>> {
-        todo!()
-    }
-
-    fn init_storage(&self, rng: &mut StdRng, storage: &mut Vec<Word>) {
-        todo!()
-    }
-}
-
-struct TransferWorkload {
-    conflict_rate: f64,
-}
-
-impl Win<2, 2> for TransferWorkload {
-    fn new_batch(&self, rng: &mut StdRng) -> Vec<Transaction<2, 2>> {
-        todo!()
-    }
-
-    fn init_storage(&self, rng: &mut StdRng, storage: &mut Vec<Word>) {
-        todo!()
-    }
-}
-
-trait Win<const SIZE: usize, const PARAMS: usize> {
-    fn new_batch(&self, rng: &mut StdRng) -> Vec<Transaction<SIZE, PARAMS>>;
-    fn init_storage(&self, rng: &mut StdRng, storage: &mut Vec<Word>);
-}
-//endregion
-
-//region attempts
-// trait Win<const ADDRESS: usize, const PARAMS: usize>: Debug {
-//     // const SIZE: usize;
-//     fn new_batch(&self) -> Vec<Transaction<ADDRESS, PARAMS>>;
-// }
-
-trait W<const SIZE: usize>: Debug {
-    // const SIZE: usize;
-    fn new_batch(&self) -> Vec<Transaction<SIZE, SIZE>>;
-}
-
-impl<const SIZE: usize> FromStr for Box<dyn W<SIZE>> {
-    type Err = ();
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        // TODO Implement proper parsing
-        let res = match s {
-            _ => todo!()
-        };
-
-        Ok(res)
-    }
-}
-
-impl<const SIZE: usize> Serialize for dyn W<SIZE> {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error> where S: Serializer, {
-        serializer.serialize_str(format!("{:?}", self).as_str())
-    }
-}
-
-struct WVisitor<const SIZE: usize>;
-impl<'de, const SIZE: usize> Visitor<'de> for WVisitor<SIZE> {
-    type Value = Box<dyn W<SIZE>>;
-
-    fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
-        formatter.write_str("A workload used to benchmark a smart contract VM")
-    }
-
-    fn visit_str<E>(self, v: &str) -> Result<Self::Value, E> where E: Error {
-        let res = Box::<dyn W<SIZE>>::from_str(v).unwrap();
-        Ok(res)
-    }
-
-    fn visit_string<E>(self, v: String) -> Result<Self::Value, E> where E: Error {
-        let res = Box::<dyn W<SIZE>>::from_str(v.as_str()).unwrap();
-        Ok(res)
-    }
-}
-
-impl<'de, const SIZE: usize> Deserialize<'de> for Box<dyn W<SIZE>> {
-    fn deserialize<D>(deserializer: D) -> Result<Box<dyn W<SIZE>>, D::Error> where D: Deserializer<'de>, {
-        deserializer.deserialize_string(WVisitor)
-    }
-}
-
-// #[derive(Debug)]
-// struct Voting;
-// impl W<2> for Voting {
-//     fn new_batch(&self) -> [u32; 2] {
-//         todo!()
-//     }
-// }
-
-// trait WorkloadBench<const A: usize, const P: usize> {
-//     fn from(p: &RunParameter) -> Self;
-//
-//     fn init_vm_storage(&mut self, run: &RunParameter);
-//
-//     fn execute(&mut self, batch: Vec<Transaction<A, P>>) -> Result<(Duration, Duration)>;
-// }
-//
-// struct TestBench;
-// impl<const A: usize, const P: usize> WorkloadBench<A, P> for TestBench {
-//     fn from(p: &RunParameter) -> Self {
-//         todo!()
-//     }
-//
-//     fn init_vm_storage(&mut self, run: &RunParameter) {
-//         todo!()
-//     }
-//
-//     fn execute(&mut self, batch: Vec<Transaction<A, P>>) -> Result<(Duration, Duration)> {
-//         todo!()
-//     }
-// }
-//
-// struct VM{
-//     functions: Vec<Atomics>,
-//     dynamic: Vec<Box<dyn Application<_, _>>>
-// }
-// impl VM {
-//
-//     fn execute<const SIZE: usize>(&self, tx: Tx<SIZE>) {
-//         // for f in self.functions.iter() {
-//         //     let mut tx = Tx{ content: [0; SIZE]};
-//         //     let res = f.execute(tx);
-//         // }
-//
-//         let mut two = vec!();
-//         let mut four = vec!();
-//         let mut ten = vec!();
-//         let f = self.functions.get(tx.function_index).unwrap();
-//         // let res = f.execute(tx);
-//         match f.output_size() {
-//             2 => two.push(f.execute::<SIZE, 2>(tx)),
-//             4 => four.push(f.execute::<SIZE, 4>(tx)),
-//             10 => ten.push(f.execute::<SIZE, 10>(tx)),
-//             _ => todo!()
-//         }
-//     }
-//
-//     fn process<const SIZE: usize>(&self, batch: Vec<Tx<SIZE>>) {
-//         /* Transactions of any size are ok but all transactions in a batch must have the same size
-//             Code can be adapted to batches that have multiple sizes of transactions: we simply need
-//             to sort the tx by size and execute each group as a sub batch (out of scope)
-//
-//             In the meantime, tx of a given applications will have the largest size that can accommodate
-//             the application (i.e. if one piece needs 2 addresses but another needs 10, the tx size will be 10)
-//          */
-//         for tx in batch {
-//             self.execute(tx);
-//         }
-//     }
-//
-//     fn schedule<const SIZE: usize>(&self, chunk: Vec<Tx<SIZE>>) {
-//         /* TODO schedule should use knowledge of the tx type to decide how many addresses inside
-//             tx.addresses should be added to the working set
-//          */
-//     }
-// }
-//
-// struct Tx<const SIZE: usize> {
-//     // SIZE must match the function stored at that function_index
-//     pub content: [u32; SIZE],
-//     pub function_index: usize,
-//     // pub tx_index: usize,
-// }
-//
-// impl<const SIZE: usize> Tx<SIZE> {
-//     fn test(&self) -> u32 {
-//         self.content[SIZE + 1]
-//     }
-// }
-//
-// enum Atomics {
-//     A(InstructionA),
-//     B(InstructionB)
-// }
-// impl Atomics {
-//     fn execute<const SIZE_IN: usize, const SIZE_OUT: usize>(&self, tx: Tx<SIZE_IN>) -> Tx<SIZE_OUT> {
-//         match self {
-//             Atomics::A(instr) => instr.execute(tx),
-//             Atomics::B(instr) => instr.execute(tx)
-//         }
-//     }
-//
-//     fn input_size(&self) -> usize {
-//         match self {
-//             Atomics::A(instr) => instr.input_size(),
-//             Atomics::B(instr) => instr.input_size()
-//         }
-//     }
-//
-//     fn output_size(&self) -> usize {
-//         match self {
-//             Atomics::A(instr) => instr.output_size(),
-//             Atomics::B(instr) => instr.output_size()
-//         }
-//     }
-// }
-//
-// enum InstructionA {
-//     First,
-//     Second,
-// }
-//
-// impl InstructionA {
-//     fn execute<const SIZE_IN: usize, const SIZE_OUT: usize>(&self, mut tx: Tx<SIZE_IN>) -> Tx<SIZE_OUT> {
-//         match self {
-//             InstructionA::First => {
-//                 assert_eq!(SIZE_IN, 10);
-//                 assert_eq!(SIZE_OUT, 4);
-//                 Tx{ content: [0; SIZE_OUT], function_index: 0}
-//             },
-//             InstructionA::Second => todo!()
-//         }
-//     }
-//
-//     fn input_size(&self) -> usize {
-//         match self {
-//             InstructionA::First => 10,
-//             InstructionA::Second => 4
-//         }
-//     }
-//
-//     fn output_size(&self) -> usize {
-//         match self {
-//             InstructionA::First => 4,
-//             InstructionA::Second => 4
-//         }
-//     }
-// }
-//
-// enum InstructionB {
-//     Foo,
-//     Bar,
-// }
-//
-// impl InstructionB {
-//     fn execute<const SIZE_IN: usize, const SIZE_OUT: usize>(&self, tx: Tx<SIZE_IN>) -> Tx<SIZE_OUT> {
-//         assert_eq!(SIZE_IN, 2);
-//         match self {
-//             InstructionB::Foo => todo!(),
-//             InstructionB::Bar => todo!()
-//         }
-//     }
-//
-//     fn input_size(&self) -> usize {
-//         match self {
-//             InstructionB::Foo => 2,
-//             InstructionB::Bar => 4
-//         }
-//     }
-//
-//     fn output_size(&self) -> usize {
-//         match self {
-//             InstructionB::Foo => 2,
-//             InstructionB::Bar => 4
-//         }
-//     }
-// }
-// ====
-//
-// trait Application {
-//     fn execute<const SIZE_IN: usize, const SIZE_OUT: usize>(&self, tx: Tx<SIZE_IN>) -> Tx<SIZE_OUT>;
-// }
-//
-// trait AppC<const SIZE_IN: usize, const SIZE_OUT: usize>: Sized + Application {
-//     // fn execute(&self, tx: Tx<SIZE_IN>) -> Tx<SIZE_OUT>;
-// }
-// struct FirstInstructionC;
-// impl Application for FirstInstructionC {
-//     fn execute(&self, tx: Tx<2>) -> Tx<4> {
-//         todo!()
-//     }
-// }
-// // impl AppC<2, 4> for FirstInstructionC {}
-// impl<const SIZE_IN: usize, const SIZE_OUT: usize> Application<SIZE_IN, SIZE_OUT> for FirstInstructionC {
-//     fn execute(&self, tx: Tx<SIZE_IN>) -> Tx<SIZE_OUT> {
-//         todo!()
-//     }
-// }
-//
-// struct SecondInstructionC;
-// impl Application<10, 20> for SecondInstructionC {
-//     fn execute(&self, tx: Tx<10>) -> Tx<20> {
-//         todo!()
-//     }
-// }
-// impl AppC<10, 20> for SecondInstructionC {}
-//endregion
+//endregion ========================================================================================
