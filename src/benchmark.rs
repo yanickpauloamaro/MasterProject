@@ -825,7 +825,24 @@ impl<const ENTRY_SIZE: usize> ApplicationWorkload<2, ENTRY_SIZE> for DHashMapWor
                 }
             }).collect();
 
-        batch.append(&mut gets);
+        let mut removes: Vec<_> = [3, 4, 8, 9].into_iter()
+            .map(|tx_index| {
+                let mut params = [0 as FunctionParameter; ENTRY_SIZE];
+                for i in 0..ENTRY_SIZE { params[i] = i as FunctionParameter; }
+                let key = tx_index;
+                params[0] = key as FunctionParameter;
+                Transaction {
+                    sender: tx_index as SenderAddress,
+                    function: PieceDHashMap(RemoveRequest),
+                    tx_index,
+                    addresses: [0, 0],
+                    params,
+                }
+            }).collect();
+
+        batch.append(&mut gets.clone());
+        batch.append(&mut removes);
+        batch.append(&mut gets.clone());
         println!("batch: {:?}", batch);
 
         // TODO only for testing with sequential vm
@@ -838,65 +855,45 @@ impl<const ENTRY_SIZE: usize> ApplicationWorkload<2, ENTRY_SIZE> for DHashMapWor
         let nb_repetitions = params.repetitions;
         let nb_buckets = 10;
         let bucket_capacity = 10;
-        let bucket_size = bucket_capacity * ENTRY_SIZE;
+        let bucket_size = 0;
+        let bucket_capacity_bytes = 1 + bucket_capacity * ENTRY_SIZE;
         Box::new(move |storage: &mut Vec<Word>| {
-            storage.fill(0);
-            // storage[0] = nb_buckets as Word;
-            //
-            let hash_table_start = 1;
             //
             // for bucket_index in 0..nb_buckets {
-            //     let bucket_start = hash_table_start + 2 * nb_buckets + bucket_index * bucket_size;
-            //     let bucket_end = bucket_start + bucket_size;
-            //     let bucket_info = (hash_table_start + 2 * bucket_index) as usize;
-            //     storage[bucket_info] = bucket_start as Word;
-            //     storage[bucket_info + 1] = bucket_capacity as Word;
+            //     let bucket_location = hash_table_start + nb_buckets + bucket_index * bucket_capacity_bytes;
+            //     let bucket_end = bucket_location + bucket_size;
+            //     let bucket_info = (hash_table_start + bucket_index) as usize;
+            //     storage[bucket_info] = bucket_location as Word;
             //
-            //     let mut current_index = bucket_start;
+            //     let mut current_index = bucket_location;
+            //     storage[current_index] = bucket_size;
+            //     current_index += 1;
             //     while current_index < bucket_end {
             //         storage[current_index] = DHashMap::LAST;
             //         current_index += ENTRY_SIZE;
             //     }
             // }
 
+            storage.fill(0);
+            let hash_table_start = 2;
             storage[0] = nb_buckets as Word;
+            storage[1] = bucket_capacity as Word;
 
-            let mut index = 1;
+            let mut index = hash_table_start;
             for bucket_index in 0..nb_buckets {
-                let bucket_start = hash_table_start + 2 * nb_buckets + bucket_index * bucket_size;
-                storage[index] = bucket_start as Word;
-                storage[index + 1] = bucket_capacity as Word;
-                index += 2;
+                let bucket_location = hash_table_start + nb_buckets + bucket_index * bucket_capacity_bytes;
+                storage[index] = bucket_location as Word;
+                index += 1;
             }
             for _bucket in 0..nb_buckets {
+                storage[index] = bucket_size;
+                index += 1;
                 for _bucket_entry in 0..bucket_capacity {
                     storage[index] = DHashMap::LAST;
                     index += ENTRY_SIZE;
                 }
             }
 
-            // let start = &storage[0..(1 + nb_buckets * bucket_size)];
-            // println!("Start of storage: {:?}", start);
-
-            // let mut index = 0;
-            // println!("<addr {}> {},", index, storage[index]);
-            // index += 1;
-            //
-            // for _ in 0..nb_buckets {
-            //     println!("<addr {}> {}, {}", index, storage[index], storage[index + 1]);
-            //     index += 2;
-            // }
-            // for _bucket in 0..nb_buckets {
-            //     println!("Bucket {}:", _bucket);
-            //     for _bucket_entry in 0..bucket_capacity {
-            //         print!("<addr {}> ", index);
-            //         for _ in 0..ENTRY_SIZE {
-            //             print!("{}, ", storage[index]);
-            //             index += 1;
-            //         }
-            //         println!();
-            //     }
-            // }
             // DHashMap::println::<ENTRY_SIZE>(storage, nb_buckets, bucket_capacity);
             // panic!();
         })

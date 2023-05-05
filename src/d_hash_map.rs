@@ -59,19 +59,32 @@ impl DHashMap {
 
     pub fn println<const ENTRY_SIZE: usize>(storage: &Vec<Word>, nb_buckets: usize, bucket_capacity: usize) {
         let mut index = 0;
-        println!("<addr {}> {},", index, storage[index]);
-        index += 1;
+        // nb_buckets and bucket_capacity
+        println!("<addr {}> {}, {},", index, storage[index], storage[index + 1]);
+        index += 2;
 
         for _ in 0..nb_buckets {
-            println!("<addr {}> {}, {}", index, storage[index], storage[index + 1]);
-            index += 2;
+            // bucket location
+            println!("<addr {}> {},", index, storage[index]);
+            index += 1;
         }
         for _bucket in 0..nb_buckets {
             println!("Bucket {}:", _bucket);
+            // bucket size
+            println!("<addr {}> {}", index, storage[index]);
+            index += 1;
             for _bucket_entry in 0..bucket_capacity {
+                // entry
                 print!("<addr {}> ", index);
-                for _ in 0..ENTRY_SIZE {
-                    print!("{}, ", storage[index]);
+                for field_index in 0..ENTRY_SIZE {
+                    let field = storage[index];
+                    if field_index == 0 && field == Self::LAST {
+                        print!("LAST, ");
+                    } else if field_index == 0 && field == Self::SENTINEL {
+                        print!("SENTINEL, ");
+                    } else {
+                        print!("{}, ", storage[index]);
+                    }
                     index += 1;
                 }
                 println!();

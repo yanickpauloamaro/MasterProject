@@ -317,9 +317,6 @@ impl AtomicFunction {
                 use d_hash_map::PiecedOperation::*;
                 use d_hash_map::Success::*;
 
-                // Since a tx must be able to store one key + one value
-                // let VALUE_SIZE: usize = tx.params.len() - 1;
-
                 let res = match op {
                     InsertRequest | RemoveRequest | GetRequest | HasRequest => {
                         println!("------------ Compute Hash ---------------");
@@ -327,33 +324,30 @@ impl AtomicFunction {
                         let hash = d_hash_map::DHashMap::compute_hash(key);
 
                         let nb_buckets = storage.get(0);
+                        let bucket_capacity = storage.get(1) as usize;
                         let bucket_index = (hash % (nb_buckets as u64)) as usize;
 
-                        // TODO move bucket capacity to storage(1) since they all have the same capacity
-                        let hash_table_start = 1;
-                        let bucket_info = hash_table_start + 2 * bucket_index;
-
-                        let bucket_start = storage.get(bucket_info) as usize;
-                        // TODO could store bucket size instead of bucket capacity
-                        let bucket_capacity = storage.get(bucket_info + 1) as usize;
+                        let hash_table_start = 2;
+                        let bucket_location = storage.get(hash_table_start + bucket_index) as usize;
 
                         // Range of addresses that need to be locked
                         // TODO StaticAddress should be u64 or usize?
                         // TODO Should specify whether its read or write -> signed integers?
-                        tx.addresses[0] = bucket_start as StaticAddress;
-                        tx.addresses[1] = (bucket_start + PARAM_COUNT * bucket_capacity) as StaticAddress;
+                        tx.addresses[0] = bucket_location as StaticAddress;
+                        tx.addresses[1] = (1 + bucket_location + PARAM_COUNT * bucket_capacity) as StaticAddress;
 
                         tx.function = AtomicFunction::PieceDHashMap(op.next_operation());
                         FunctionResult::Another(tx)
                     }
                     TryInsert => {
 
-                        let bucket_start = tx.addresses[0];
-                        let bucket_end = tx.addresses[1];
+                        let bucket_location = tx.addresses[0] as usize;
+                        let bucket_end = tx.addresses[1] as usize;
                         let key = tx.params[0];
                         println!("------------ INSERT ---------------");
-
-                        match DHashMap::search_bucket::<PARAM_COUNT>(key, bucket_start as usize, bucket_end as usize, &mut storage) {
+                        let bucket_size_mut = storage.get_mut(bucket_location as usize);
+                        let bucket_content_start = bucket_location + 1;
+                        match DHashMap::search_bucket::<PARAM_COUNT>(key, bucket_content_start, bucket_end, &mut storage) {
                             SearchResult::Entry(_entry, index) => {
                                 let mut previous = [0; PARAM_COUNT];
                                 for offset in 0..PARAM_COUNT {
@@ -365,10 +359,7 @@ impl AtomicFunction {
                                 FunctionResult::DHashMap(Ok(Replaced(previous)))
                             },
                             SearchResult::EmptySpot(_entry, index) => {
-                                // Remove is responsible for updating adjacent keys and sentinels
-                                // let current_key = storage.get_mut(index);
-                                // *current_key = key as Word;
-                                // println!("\tFound an empty spot at index {}", index);
+                                *bucket_size_mut += 1;
                                 for offset in 0..PARAM_COUNT {
                                     // println!("\t\twriting value to storage {}")
                                     let current = storage.get_mut(index + offset);
@@ -400,11 +391,12 @@ impl AtomicFunction {
                         todo!()
                     },
                     Get => {
-                        let bucket_start = tx.addresses[0] as usize;
+                        let bucket_location = tx.addresses[0] as usize;
                         let bucket_end = tx.addresses[1] as usize;
                         let key = tx.params[0];
+                        let bucket_content_start = bucket_location + 1;
                         println!("------------ GET ---------------");
-                        match DHashMap::search_bucket::<PARAM_COUNT>(key, bucket_start, bucket_end, &mut storage) {
+                        match DHashMap::search_bucket::<PARAM_COUNT>(key, bucket_content_start, bucket_end, &mut storage) {
                             SearchResult::Entry(_entry, index) => {
                                 let mut found = [0; PARAM_COUNT];
                                 for offset in 0..PARAM_COUNT {
@@ -418,31 +410,34 @@ impl AtomicFunction {
                         }
                     },
                     Remove => {
-                        let bucket_start = tx.addresses[0] as usize;
+                        let bucket_location = tx.addresses[0] as usize;
                         let bucket_end = tx.addresses[1] as usize;
                         let key = tx.params[0];
+                        let bucket_size_mut = storage.get_mut(bucket_location);
+                        let bucket_content_start = bucket_location + 1;
                         println!("------------ REMOVE ---------------");
-                        match DHashMap::search_bucket::<PARAM_COUNT>(key, bucket_start, bucket_end, &mut storage) {
+                        match DHashMap::search_bucket::<PARAM_COUNT>(key, bucket_content_start, bucket_end, &mut storage) {
                             SearchResult::Entry(_entry, index) => {
+                                *bucket_size_mut -= 1;
                                 let mut found = [0; PARAM_COUNT];
                                 for offset in 0..PARAM_COUNT {
                                     found[offset] = storage.get(index + offset);
                                 }
+                                // // Lazy version: only mark the current entry as "last" => search will take longer
+                                storage.set(index, DHashMap::SENTINEL);
 
                                 let next_index = index + PARAM_COUNT;
                                 if next_index >= bucket_end || storage.get(next_index) == DHashMap::LAST {
-                                    // // Lazy version: only mark the current entry as "last" => search will take longer
-                                    // storage.set(index, DHashMap::LAST);
-
                                     // Make sure to mark the end of the bucket to speed up future search operations
-                                    let mut last_index = index;
-                                    while last_index > bucket_start {
-                                        storage.set(last_index, DHashMap::LAST);
-                                        last_index -= PARAM_COUNT;
+                                    let mut new_last_index = index;
+                                    while storage.get(new_last_index) == DHashMap::SENTINEL {
+                                        storage.set(new_last_index, DHashMap::LAST);
+                                        if new_last_index > bucket_content_start {
+                                            new_last_index -= PARAM_COUNT;
+                                        } else {
+                                            break;
+                                        }
                                     }
-                                } else {
-                                    // Removed an element in the middle of the bucket, add a sentinel
-                                    storage.set(index, DHashMap::SENTINEL);
                                 }
 
                                 FunctionResult::DHashMap(Ok(Value(found)))
