@@ -803,7 +803,8 @@ impl<const ENTRY_SIZE: usize> ApplicationWorkload<2, ENTRY_SIZE> for DHashMapWor
                 params[0] = key as FunctionParameter;
                 Transaction {
                     sender: tx_index as SenderAddress,
-                    function: PieceDHashMap(InsertRequest),
+                    // function: PieceDHashMap(InsertRequest),
+                    function: AtomicFunction::DHashMap(d_hash_map::Operation::Insert),
                     tx_index,
                     addresses: [0, 0],
                     params,
@@ -818,7 +819,8 @@ impl<const ENTRY_SIZE: usize> ApplicationWorkload<2, ENTRY_SIZE> for DHashMapWor
                 params[0] = key as FunctionParameter;
                 Transaction {
                     sender: tx_index as SenderAddress,
-                    function: PieceDHashMap(GetRequest),
+                    // function: PieceDHashMap(GetRequest),
+                    function: AtomicFunction::DHashMap(d_hash_map::Operation::Get),
                     tx_index,
                     addresses: [0, 0],
                     params,
@@ -833,7 +835,8 @@ impl<const ENTRY_SIZE: usize> ApplicationWorkload<2, ENTRY_SIZE> for DHashMapWor
                 params[0] = key as FunctionParameter;
                 Transaction {
                     sender: tx_index as SenderAddress,
-                    function: PieceDHashMap(RemoveRequest),
+                    // function: PieceDHashMap(RemoveRequest),
+                    function: AtomicFunction::DHashMap(d_hash_map::Operation::Remove),
                     tx_index,
                     addresses: [0, 0],
                     params,
@@ -843,7 +846,7 @@ impl<const ENTRY_SIZE: usize> ApplicationWorkload<2, ENTRY_SIZE> for DHashMapWor
         batch.append(&mut gets.clone());
         batch.append(&mut removes);
         batch.append(&mut gets.clone());
-        println!("batch: {:?}", batch);
+        // println!("batch: {:?}", batch);
 
         // TODO only for testing with sequential vm
         batch.reverse();
@@ -852,50 +855,13 @@ impl<const ENTRY_SIZE: usize> ApplicationWorkload<2, ENTRY_SIZE> for DHashMapWor
     }
 
     fn initialisation(&self, params: &RunParameter, rng: &mut StdRng) -> Box<dyn Fn(&mut Vec<Word>)> {
-        let nb_repetitions = params.repetitions;
+
         let nb_buckets = 10;
-        let bucket_capacity = 10;
-        let bucket_size = 0;
-        let bucket_capacity_bytes = 1 + bucket_capacity * ENTRY_SIZE;
+        let bucket_capacity_elems = 10;
         Box::new(move |storage: &mut Vec<Word>| {
-            //
-            // for bucket_index in 0..nb_buckets {
-            //     let bucket_location = hash_table_start + nb_buckets + bucket_index * bucket_capacity_bytes;
-            //     let bucket_end = bucket_location + bucket_size;
-            //     let bucket_info = (hash_table_start + bucket_index) as usize;
-            //     storage[bucket_info] = bucket_location as Word;
-            //
-            //     let mut current_index = bucket_location;
-            //     storage[current_index] = bucket_size;
-            //     current_index += 1;
-            //     while current_index < bucket_end {
-            //         storage[current_index] = DHashMap::LAST;
-            //         current_index += ENTRY_SIZE;
-            //     }
-            // }
 
             storage.fill(0);
-            let hash_table_start = 2;
-            storage[0] = nb_buckets as Word;
-            storage[1] = bucket_capacity as Word;
-
-            let mut index = hash_table_start;
-            for bucket_index in 0..nb_buckets {
-                let bucket_location = hash_table_start + nb_buckets + bucket_index * bucket_capacity_bytes;
-                storage[index] = bucket_location as Word;
-                index += 1;
-            }
-            for _bucket in 0..nb_buckets {
-                storage[index] = bucket_size;
-                index += 1;
-                for _bucket_entry in 0..bucket_capacity {
-                    storage[index] = DHashMap::LAST;
-                    index += ENTRY_SIZE;
-                }
-            }
-
-            // DHashMap::println::<ENTRY_SIZE>(storage, nb_buckets, bucket_capacity);
-            // panic!();
+            DHashMap::init::<ENTRY_SIZE>(storage, nb_buckets, bucket_capacity_elems);
         })
     }
 }

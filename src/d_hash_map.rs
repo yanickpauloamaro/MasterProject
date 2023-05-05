@@ -35,10 +35,10 @@ impl DHashMap {
         assert_ne!(key as Word, Self::LAST);
         assert_ne!(key as Word, Self::SENTINEL);
 
-        println!("Searching key {} (bucket start = {}, bucket end = {})", key, bucket_start, bucket_end);
+        // println!("Searching key {} (bucket start = {}, bucket end = {})", key, bucket_start, bucket_end);
         while current_index < bucket_end {
             let entry_ptr = storage.get_mut(current_index);
-            println!("\tSearching at index {}", current_index);
+            // println!("\tSearching at index {}", current_index);
             match storage.get(current_index) {
                 same if same == key as Word => {
                     return SearchResult::Entry(entry_ptr, current_index);
@@ -57,10 +57,40 @@ impl DHashMap {
         return result;
     }
 
-    pub fn println<const ENTRY_SIZE: usize>(storage: &Vec<Word>, nb_buckets: usize, bucket_capacity: usize) {
+    pub fn init<const ENTRY_SIZE: usize>(
+        storage: &mut Vec<Word>,
+        nb_buckets: usize,
+        bucket_capacity_elems: usize,
+    ) {
+
+        let hash_table_start = 2;
+        let bucket_capacity = 1 + bucket_capacity_elems * ENTRY_SIZE;
+
+        storage[0] = nb_buckets as Word;
+        storage[1] = bucket_capacity_elems as Word;
+
+        let mut index = hash_table_start;
+        for bucket_index in 0..nb_buckets {
+            let bucket_location = hash_table_start + nb_buckets + bucket_index * bucket_capacity;
+            storage[index] = bucket_location as Word;
+            index += 1;
+        }
+        for _bucket in 0..nb_buckets {
+            storage[index] = 0; // bucket size
+            index += 1;
+            for _bucket_entry in 0..bucket_capacity_elems {
+                storage[index] = DHashMap::LAST;
+                index += ENTRY_SIZE;
+            }
+        }
+    }
+
+    pub fn println<const ENTRY_SIZE: usize>(storage: &Vec<Word>) {
         let mut index = 0;
-        // nb_buckets and bucket_capacity
-        println!("<addr {}> {}, {},", index, storage[index], storage[index + 1]);
+
+        let nb_buckets = storage[index];
+        let bucket_capacity_elems = storage[index + 1];
+        println!("<addr {}> {}, {},", index, nb_buckets, bucket_capacity_elems);
         index += 2;
 
         for _ in 0..nb_buckets {
@@ -73,7 +103,7 @@ impl DHashMap {
             // bucket size
             println!("<addr {}> {}", index, storage[index]);
             index += 1;
-            for _bucket_entry in 0..bucket_capacity {
+            for _bucket_entry in 0..bucket_capacity_elems {
                 // entry
                 print!("<addr {}> ", index);
                 for field_index in 0..ENTRY_SIZE {
@@ -92,9 +122,41 @@ impl DHashMap {
         }
     }
 
-    pub unsafe fn println_ptr<const ENTRY_SIZE: usize>(storage: *mut Word, storage_size: usize, nb_buckets: usize, bucket_capacity: usize) {
+    pub fn print_bucket_sizes<const ENTRY_SIZE: usize>(storage: &Vec<Word>) {
+        let nb_buckets = storage[0] as usize;
+        let bucket_capacity_elems = storage[1] as usize;
+        let mut index = 2 + nb_buckets;
+
+        println!("Bucket sizes (occupancy)");
+
+        let mut total = 0;
+        for _bucket in 0..nb_buckets {
+            let bucket_size = storage[index];
+            total += bucket_size;
+            println!("Bucket {}: {}", _bucket, bucket_size);
+            index += 1 + bucket_capacity_elems * ENTRY_SIZE;
+        }
+        println!("Total: {}", total);
+    }
+
+    pub fn print_total_size<const ENTRY_SIZE: usize>(storage: &Vec<Word>) {
+        let nb_buckets = storage[0] as usize;
+        let bucket_capacity_elems = storage[1] as usize;
+        let mut index = 2 + nb_buckets;
+
+
+        let mut total = 0;
+        for _bucket in 0..nb_buckets {
+            let bucket_size = storage[index];
+            total += bucket_size;
+            index += 1 + bucket_capacity_elems * ENTRY_SIZE;
+        }
+        println!("Total size: {}", total);
+    }
+
+    pub unsafe fn println_ptr<const ENTRY_SIZE: usize>(storage: *mut Word, storage_size: usize) {
         let v = Vec::from_raw_parts(storage, storage_size, storage_size);
-        Self::println::<ENTRY_SIZE>(&v, nb_buckets, bucket_capacity);
+        Self::println::<ENTRY_SIZE>(&v);
         mem::forget(v);
     }
 }
@@ -126,6 +188,18 @@ pub enum Operation {
     Remove, // key
     ContainsKey,    // key
     // Clear    // TODO replace contains by clear since get is enough?
+}
+
+impl Operation {
+    pub fn corresponding_piece(&self) -> PiecedOperation {
+        use Operation::*;
+        match self {
+            Get => PiecedOperation::GetRequest,
+            Insert => PiecedOperation::InsertRequest,
+            Remove => PiecedOperation::RemoveRequest,
+            ContainsKey => PiecedOperation::HasRequest,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]

@@ -3,6 +3,7 @@ use strum::IntoEnumIterator;
 use tokio::time::Instant;
 use crate::contract::{AtomicFunction, FunctionResult, Transaction};
 use crate::contract::FunctionResult::Another;
+use crate::d_hash_map::DHashMap;
 use crate::vm::Executor;
 use crate::vm_utils::{SharedStorage};
 use crate::wip::Word;
@@ -56,6 +57,10 @@ impl SequentialVM {
         //         tx = generated_tx;
         //     }
         // }
+
+        // DHashMap::println::<P>(&self.storage);
+        // DHashMap::print_bucket_sizes::<P>(&self.storage);
+        // DHashMap::print_total_size::<P>(&self.storage);
 
         return Ok((Duration::from_micros(0), execution_start.elapsed()));
     }
