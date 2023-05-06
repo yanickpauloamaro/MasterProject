@@ -1,16 +1,30 @@
+use ahash::{AHasher, RandomState};
+use ahash::AHashMap;
+use std::collections::HashMap;
+// use hashbrown::HashMap;
 use std::fmt::{Debug, Formatter};
+use std::hash::BuildHasherDefault;
 use std::mem;
 use std::sync::Arc;
 use anyhow::anyhow;
 use core_affinity::CoreId;
 use itertools::Itertools;
-use rand::prelude::StdRng;
+use nohash_hasher::{BuildNoHashHasher, NoHashHasher};
+use rand::prelude::{SliceRandom, StdRng};
 use rand::{RngCore, SeedableRng};
 use tokio::time::{Instant, Duration};
 use tabled::{Table, Tabled};
-use crate::contract::{AtomicFunction, Transaction};
+use thincollections::thin_map::ThinMap;
+use crate::benchmark::WorkloadUtils;
+use crate::contract::{AtomicFunction, SenderAddress, StaticAddress, Transaction};
+use crate::key_value::KeyValueOperation;
+use crate::parallel_vm::ParallelVmImmediate;
+use crate::sequential_vm::SequentialVM;
 use crate::utils::{mean_ci, mean_ci_str};
+use crate::vm_utils::AddressSet;
+use crate::wip::Word;
 
+//region NUMA latency ------------------------------------------------------------------------------
 const KILO_OFFSET: usize = 10;
 const MEGA_OFFSET: usize = 20;
 const GIGA_OFFSET: usize = 30;
@@ -264,7 +278,9 @@ pub async fn all_numa_latencies(nb_cores: usize, from_power: usize, to_power: us
 
     Ok(())
 }
+//endregion
 
+//region Transaction sizes -------------------------------------------------------------------------
 pub fn transaction_sizes(nb_schedulers: usize, nb_workers: usize) {
     println!("Reference:");
     // println!("\tu32 ~ {}B", mem::size_of::<u32>());
@@ -305,3 +321,413 @@ pub fn transaction_sizes(nb_schedulers: usize, nb_workers: usize) {
     // Worker share seems to always be able to fit in L1
     // => most of L2 cache of worker will serve to keep storage hot
 }
+//endregion
+
+//region scheduling --------------------------------------------------------------------------------
+#[derive(Eq, PartialEq)]
+pub enum AccessType {
+    Read,
+    Write,
+    TryWrite
+}
+
+#[derive(Eq, PartialEq)]
+pub enum AccessPattern {
+    Address(StaticAddress),
+    Range(StaticAddress, StaticAddress),
+    All,
+    Done
+}
+
+pub fn profile_schedule_chunk(batch_size: usize, iter: usize, chunk_fraction: usize, nb_executors: usize, conflict_rate: f64) {
+
+    let storage_size = 100 * batch_size;
+    let mut rng = StdRng::seed_from_u64(10);
+    let mut batch = WorkloadUtils::transfer_pairs(storage_size, batch_size, conflict_rate, &mut rng)
+        .iter()
+        .enumerate()
+        .map(|(tx_index, pair)| {
+            Transaction {
+                sender: pair.0 as SenderAddress,
+                function: AtomicFunction::Transfer,
+                tx_index,
+                addresses: [pair.0, pair.1],
+                params: [2],
+            }
+        }).collect_vec();
+
+    let mut sequential = SequentialVM::new(100 * batch.len()).unwrap();
+    sequential.storage.fill(20 * iter as Word);
+
+    let mut parallel = ParallelVmImmediate::new(storage_size, 1, nb_executors).unwrap();
+    parallel.set_storage(20 * iter as Word);
+
+    let mut schedule_duration = Duration::from_nanos(0);
+    let mut sequential_duration = Duration::from_nanos(0);
+    let mut parallel_duration = Duration::from_nanos(0);
+    let mut experiment_duration = Duration::from_nanos(0);
+
+    let computation = |(scheduler_index, chunk): (usize, Vec<Transaction<2, 1>>)| {
+        let mut scheduled = Vec::with_capacity(chunk.len());
+        let mut postponed = Vec::with_capacity(chunk.len());
+        let mut working_set = AddressSet::with_capacity(
+            2 * batch_size / chunk_fraction
+        );
+
+        'outer: for tx in chunk {
+            if tx.function != AtomicFunction::KeyValue(KeyValueOperation::Scan) {
+                for addr in tx.addresses.iter() {
+                    if !working_set.insert(*addr) {
+                        // Can't add tx to schedule
+                        postponed.push(tx);
+                        continue 'outer;
+                    }
+                }
+            } else {
+                // eprintln!("Processing a scan operation");
+                for addr in tx.addresses[0]..tx.addresses[1] {
+                    if !working_set.insert(addr) {
+                        // Can't add tx to schedule
+                        postponed.push(tx);
+                        continue 'outer;
+                    }
+                }
+            }
+            scheduled.push(tx);
+        }
+        (scheduled, postponed)
+    };
+
+    let experiment = |(scheduler_index, chunk): (usize, Vec<Transaction<2, 1>>)| {
+        let mut scheduled = Vec::with_capacity(chunk.len());
+        let mut postponed = Vec::with_capacity(chunk.len());
+
+        let mut some_reads = false;
+        let mut some_writes = false;
+
+        let mut read_locked = false;
+        let mut write_locked = false;
+
+        // let mut address_map_capacity = 2 * batch_size / chunk_fraction;
+        let mut address_map_capacity = 10 * batch_size / chunk_fraction;
+
+        // type Map = HashMap<StaticAddress, AccessType>;
+        // let mut address_map: HashMap<StaticAddress, AccessType> = HashMap::with_capacity(address_map_capacity);
+
+        // type Map = HashMap<StaticAddress, AccessType, BuildHasherDefault<NoHashHasher<StaticAddress>>>;
+        // let mut address_map: Map = HashMap::with_capacity_and_hasher(
+        //     address_map_capacity, BuildNoHashHasher::default());
+
+        // type Map = ThinMap<StaticAddress, AccessType>;
+        // let mut address_map: ThinMap<StaticAddress, AccessType> = ThinMap::with_capacity(address_map_capacity);
+
+        type Map = ThinMap<StaticAddress, AccessType, BuildHasherDefault<NoHashHasher<StaticAddress>>>;
+        let mut address_map: Map = ThinMap::with_capacity_and_hasher(
+            address_map_capacity, BuildNoHashHasher::default());
+
+        let mut can_read = |addr: StaticAddress, address_map: &mut Map| {
+            let entry = address_map.entry(addr).or_insert(AccessType::Read);
+            *entry == AccessType::Read
+        };
+        let mut can_write = |addr: StaticAddress, address_map: &mut Map| {
+            let entry = address_map.entry(addr).or_insert(AccessType::TryWrite);
+            if *entry == AccessType::TryWrite {
+                *entry = AccessType::Write;
+                true
+            } else {
+                false
+            }
+        };
+
+        let mut nb_scheduled = 0;
+        'backlog: for tx in chunk {
+            // // Positive = read
+            // // i32::MAX -> read all
+            // // Negative = write
+            // // i32::MIN -> write all (i.e. exclusive)
+            //
+            // TODO let transactions implement this
+            // let tmp_writes = Some(tx.addresses
+            //     .map(|addr| AccessPattern::Address(addr)));
+            // let tmp_reads: Option<[AccessPattern; 2]> = None;
+
+            // let tmp_writes = Some([
+            //     AccessPattern::Address(tx.addresses[0]),
+            //     AccessPattern::Address(tx.addresses[1]),
+            //     AccessPattern::Done,
+            //     AccessPattern::Done,
+            // ]);
+            // let tmp_reads: Option<[AccessPattern; 4]> = None;
+
+            // eprintln!("Scheduling tx {}", nb_scheduled);
+            // eprintln!("Scheduling tx {}, address_map.size() = {}, address_map_capacity = {}", nb_scheduled, address_map.len(), address_map.capacity());
+            nb_scheduled +=1;
+
+            // println!("tx: {} -> {}", tx.addresses[0], tx.addresses[0] + 10);
+            let tmp_writes = Some([
+                AccessPattern::Range(tx.addresses[0], tx.addresses[0] + 10),
+                AccessPattern::Done,
+            ]);
+            let tmp_reads: Option<[AccessPattern; 2]> = None;
+
+            // println!("Size of tx.reads(): {}", mem::size_of_val(&tmp_reads));
+            // println!("Size of tx.writes(): {}", mem::size_of_val(&tmp_writes));
+            let reads = tmp_reads.as_ref().map_or([].as_slice(), |inside| inside.as_slice());
+            let writes = tmp_writes.as_ref().map_or([].as_slice(), |inside| inside.as_slice());
+
+            // let reads: &[AccessPattern] = &tmp_reads[0..];
+            // let writes: &[AccessPattern] = &tmp_writes[0..];
+
+            // Tx without any memory accesses
+            if reads.is_empty() && writes.is_empty() {
+                scheduled.push(tx);
+                continue 'backlog;
+            }
+
+            if read_locked {
+                // Only reads are allowed
+                if writes.is_empty() { scheduled.push(tx); }
+                else { postponed.push(tx); }
+                continue 'backlog;
+            }
+
+            if write_locked {
+                postponed.push(tx);
+                continue 'backlog;
+            }
+
+            // NB: A tx might be postponed after having some of its addresses added to the address set
+            // It is probably too expensive to rollback those changes. TODO Check
+            // Start with reads because they are less problematic if the tx is postponed
+            'reads: for read in reads {
+                // println!("\tchecking reads");
+                match read {
+                    AccessPattern::Address(addr) => {
+                        if !can_read(*addr, &mut address_map) {
+                            postponed.push(tx);
+                            continue 'backlog;
+                        }
+                    },
+                    AccessPattern::Range(from, to) => {
+                        assert!(from < to);
+                        'range: for addr in (*from)..(*to) {
+                            if !can_read(addr, &mut address_map) {
+                                postponed.push(tx);
+                                continue 'backlog;
+                            }
+                        }
+                    },
+                    AccessPattern::All => {
+                        if some_writes {
+                            postponed.push(tx);
+                        } else {
+                            scheduled.push(tx);
+                            read_locked = true;
+                        }
+                        // Read-all transactions can't have any other accesses, can proceed with the next tx
+                        continue 'backlog;
+                    },
+                    AccessPattern::Done => {
+                        break 'reads;
+                    }
+                }
+            }
+
+            'writes: for write in writes {
+                // println!("\tchecking writes");
+                match write {
+                    AccessPattern::Address(addr) => {
+                        // println!("\t\twrite single address");
+                        if !can_write(*addr, &mut address_map) {
+                            postponed.push(tx);
+                            continue 'backlog;
+                        }
+                    },
+                    AccessPattern::Range(from, to) => {
+                        assert!(from < to);
+                        // println!("\t\twrite from {} to {}", from, to);
+                        'range: for addr in (*from)..(*to) {
+                            if !can_write(addr, &mut address_map) {
+                                postponed.push(tx);
+                                continue 'backlog;
+                            }
+                        }
+                    },
+                    AccessPattern::All => {
+                        if some_reads || some_writes {
+                            postponed.push(tx);
+                        } else {
+                            scheduled.push(tx);
+                            write_locked = true;
+                        }
+                        // Write-all transactions can't have any other accesses, can proceed with the next tx
+                        continue 'backlog;
+                    },
+                    AccessPattern::Done => {
+                        break 'writes;
+                    }
+                }
+            }
+
+            // Transaction can be executed in parallel
+            scheduled.push(tx);
+        }
+
+        println!("Scheduled: {}, postponed: {}", scheduled.len(), postponed.len());
+        (scheduled, postponed)
+    };
+
+    batch.truncate(batch_size/chunk_fraction);
+
+    for _ in 0..iter {
+        let mut b = batch.clone();
+        let a = Instant::now();
+        computation((0, b));
+        schedule_duration += a.elapsed();
+
+        let mut b = batch.clone();
+        let a = Instant::now();
+        let _ = sequential.execute(b);
+        sequential_duration += a.elapsed();
+
+        let mut b = batch.clone();
+        let a = Instant::now();
+        let _ = parallel.vm.execute_round(b);
+        parallel_duration += a.elapsed();
+
+        let mut b = batch.clone();
+        let a = Instant::now();
+        experiment((0, b));
+        experiment_duration += a.elapsed();
+    }
+
+    println!("For a chunk of {} tx", batch.len());
+    println!("\tschedule_chunk latency = {:?}", schedule_duration / (iter as u32));
+    let avg_sequential = sequential_duration / (iter as u32);
+    println!("\tsequential exec latency = {:?} -> full batch should take {:?}", avg_sequential, avg_sequential * (chunk_fraction as u32));
+    let avg_parallel = parallel_duration / (iter as u32);
+    println!("\tparallel exec latency = {:?} -> full batch should take {:?}", avg_parallel, avg_parallel * (chunk_fraction as u32));
+
+
+    println!();
+    println!("\texperimental scheduling latency = {:?}", experiment_duration / (iter as u32));
+}
+//endregion
+
+//region HashMaps
+pub fn bench_hashmaps(nb_iter: usize, addr_per_tx: usize, batch_size: usize) {
+    println!("Benchmarking hashmaps:");
+    println!("Batch of {} tx with {} addr per tx -------------------------", batch_size, addr_per_tx);
+    let mut rng = StdRng::seed_from_u64(10);
+    let storage_size = 100 * batch_size;
+    let mut addresses: Vec<StaticAddress> = (0..storage_size).map(|el| el as StaticAddress).collect();
+    addresses.shuffle(&mut rng);
+    addresses.truncate(addr_per_tx * batch_size);
+    let map_capacity = 2 * addresses.len();
+
+    println!("HashMap:");
+    {
+        let mut durations = Vec::with_capacity(nb_iter);
+        for _ in 0..nb_iter {
+            let mut map = HashMap::with_capacity(map_capacity);
+
+            let start = Instant::now();
+            for addr in addresses.iter() {
+                map.insert(*addr, *addr);
+            }
+            durations.push(start.elapsed());
+        }
+        let (mean, ci) = mean_ci(&durations);
+        println!("    {:?} ± {:?} -> {:.3?} per inserts", mean, ci, mean/(batch_size as u32));
+        // println!();
+    }
+
+    println!("HashMap with NoHashHasher:");
+    {
+        let mut durations = Vec::with_capacity(nb_iter);
+        for _ in 0..nb_iter {
+            let mut map: HashMap<u32, u32, BuildHasherDefault<NoHashHasher<StaticAddress>>> = HashMap::with_capacity_and_hasher(
+                map_capacity, BuildNoHashHasher::default());
+
+            let start = Instant::now();
+            for addr in addresses.iter() {
+                map.insert(*addr, *addr);
+            }
+            durations.push(start.elapsed());
+        }
+        let (mean, ci) = mean_ci(&durations);
+        println!("    {:?} ± {:?} -> {:.3?} per inserts", mean, ci, mean/(batch_size as u32));
+        // println!();
+    }
+
+    println!("HashMap with AHash:");
+    {
+        let mut durations = Vec::with_capacity(nb_iter);
+        for _ in 0..nb_iter {
+            let mut map = AHashMap::with_capacity(map_capacity);
+
+            let start = Instant::now();
+            for addr in addresses.iter() {
+                map.insert(*addr, *addr);
+            }
+            durations.push(start.elapsed());
+        }
+        let (mean, ci) = mean_ci(&durations);
+        println!("    {:?} ± {:?} -> {:.3?} per inserts", mean, ci, mean/(batch_size as u32));
+        // println!();
+    }
+
+    println!("ThinMap:");
+    {
+        let mut durations = Vec::with_capacity(nb_iter);
+        for _ in 0..nb_iter {
+            let mut map = ThinMap::with_capacity(map_capacity);
+
+            let start = Instant::now();
+            for addr in addresses.iter() {
+                map.insert(*addr, *addr);
+            }
+            durations.push(start.elapsed());
+        }
+        let (mean, ci) = mean_ci(&durations);
+        println!("    {:?} ± {:?} -> {:.3?} per inserts", mean, ci, mean/(batch_size as u32));
+        // println!();
+    }
+
+    println!("ThinMap with NoHashHasher:");
+    {
+        let mut durations = Vec::with_capacity(nb_iter);
+        for _ in 0..nb_iter {
+            let mut map: ThinMap<u32, u32, BuildHasherDefault<NoHashHasher<StaticAddress>>> = ThinMap::with_capacity_and_hasher(
+                map_capacity, BuildNoHashHasher::default());
+
+            let start = Instant::now();
+            for addr in addresses.iter() {
+                map.insert(*addr, *addr);
+            }
+            durations.push(start.elapsed());
+        }
+        let (mean, ci) = mean_ci(&durations);
+        println!("    {:?} ± {:?} -> {:.3?} per inserts", mean, ci, mean/(batch_size as u32));
+        // println!();
+    }
+
+    println!("ThinMap with AHash:");
+    {
+        let mut durations = Vec::with_capacity(nb_iter);
+        for _ in 0..nb_iter {
+            let mut map: ThinMap<u32, u32, BuildHasherDefault<AHasher>> = ThinMap::with_capacity_and_hasher(
+                map_capacity, BuildHasherDefault::default());
+
+            let start = Instant::now();
+            for addr in addresses.iter() {
+                map.insert(*addr, *addr);
+            }
+            durations.push(start.elapsed());
+        }
+        let (mean, ci) = mean_ci(&durations);
+        println!("    {:?} ± {:?} -> {:.3?} per inserts", mean, ci, mean/(batch_size as u32));
+        println!();
+    }
+}
+//endregion
