@@ -6,11 +6,12 @@ use std::str::FromStr;
 use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result};
+use itertools::Itertools;
 use nom::branch::alt;
 use nom::IResult;
 use nom::bytes::complete::{is_a, take_till, take_until};
-use nom::character::complete::{alpha1, char, one_of};
-use nom::combinator::rest;
+use nom::character::complete::{alpha1, char, digit1, one_of};
+use nom::combinator::{map_res, rest};
 use nom::number::complete::double;
 use nom::sequence::{delimited, terminated};
 use nom::sequence::Tuple;
@@ -29,6 +30,7 @@ use crate::config::{BenchmarkConfig, BenchmarkResult, ConfigFile, RunParameter};
 use crate::contract::{AtomicFunction, FunctionParameter, SenderAddress, SharedMap, StaticAddress, Transaction};
 use crate::d_hash_map::{DHashMap, PiecedOperation};
 use crate::key_value::{Value, KeyValue, KeyValueOperation};
+use crate::micro_benchmark::adapt_unit;
 use crate::parallel_vm::{ParallelVmCollect, ParallelVmImmediate};
 use crate::sequential_vm::SequentialVM;
 use crate::utils::batch_with_conflicts_new_impl;
@@ -383,9 +385,20 @@ impl TestBench {
                 let workload = AuctionWorkload::new_boxed(&params, args);
                 TestBench::dispatch(params, workload)
             },
-            Ok(("", (DHashMapWorkload::NAME, args))) => {
-                let workload = DHashMapWorkload::new_boxed(&params, args);
-                TestBench::dispatch::<2, 10>(params, workload)
+            Ok(("", (name, args))) if name == DHashMapWorkload::NAME || name == DHashMapWorkload::PIECED => {
+                let parse_result = DHashMapWorkload::initial_parser(args);
+                if let Ok((other_args, value_size)) = parse_result {
+                    let workload = DHashMapWorkload::new_boxed(&params, other_args, value_size, name);
+                    match value_size {
+                        1 => TestBench::dispatch::<2, 2>(params, workload),
+                        7 => TestBench::dispatch::<2, 8>(params, workload),   // 1 cache line
+                        15 => TestBench::dispatch::<2, 16>(params, workload), // 2 cache lines
+                        23 => TestBench::dispatch::<2, 24>(params, workload), // 3 cache lines
+                        other => panic!("DHashMapWorkload not implemented for values of size {}", other)
+                    }
+                } else {
+                    panic!("Unable to parse argument to DHashMapWorkload workload. Parse result: {:?}", parse_result)
+                }
             },
 
             Ok(("", (TransferTest::NAME, args))) => {
@@ -729,6 +742,10 @@ impl ApplicationWorkload<1, 2> for TransferPieces {
 
 //region DHashMap workload -------------------------------------------------------------------------
 struct DHashMapWorkload {
+    bucket_capacity_elems: u32,
+    nb_buckets: u32,
+    key_space: Vec<FunctionParameter>,
+    pieced: bool,
     get_proportion: f64,
     insert_proportion: f64,
     remove_proportion: f64,
@@ -737,63 +754,66 @@ struct DHashMapWorkload {
 }
 impl DHashMapWorkload {
     const NAME: &'static str = "DHashMap";
+    const PIECED: &'static str = "PieceDHashMap";
 
-    fn parser(input: &str) -> IResult<&str, (f64, f64, f64, f64)> {
+    pub fn initial_parser(input: &str) -> IResult<&str, u32> {
+        terminated(map_res(digit1, str::parse), is_a(" ,"))(input)
+    }
+
+    fn parser(input: &str) -> IResult<&str, (u32, u32, f64, f64, f64, f64)> {
         // TODO use numbers from 0-100 instead of floats to ensure we have exact proportions?
         (
-            terminated(double, is_a(" ,)")), // get
-            terminated(double, is_a(" ,)")), // insert
-            terminated(double, is_a(" ,)")), // remove
+            terminated(map_res(digit1, str::parse), is_a(" ,")),    // bucket_capacity_elems
+            terminated(map_res(digit1, str::parse), is_a(" ;")),    // nb_buckets
+            terminated(double, is_a(" ,")), // get
+            terminated(double, is_a(" ,")), // insert
+            terminated(double, is_a(" ,")), // remove
             double, // contains
         ).parse(input)
     }
 
-    fn new_boxed(params: &RunParameter, args: &str) -> Box<Self> {
+    fn new_boxed(params: &RunParameter, args: &str, value_size: u32, name: &str) -> Box<Self> {
         // todo!("Need to parse input");
         match DHashMapWorkload::parser(args) {
-            Ok((_, (get, insert, remove, contains))) => {
+            Ok((_, (bucket_capacity_elems, nb_buckets, get, insert, remove, contains))) => {
                 let sum = get + insert + remove + contains;
                 assert!(0.0 <= sum);
                 assert!(sum <= 1.0);
 
+                let map_size = |nb_buckets: usize| {
+                    (2 + nb_buckets + nb_buckets * (1 + (bucket_capacity_elems as usize) * (value_size as usize + 1)))
+                };
+                let mut max_nb_buckets = nb_buckets as usize;
+                while map_size(2 * max_nb_buckets) < params.storage_size {
+                    max_nb_buckets *= 2;
+                }
+
+                let max_nb_keys = max_nb_buckets * bucket_capacity_elems as usize;
+                // eprintln!("Can store at most {} buckets => {} unique keys", max_nb_buckets, max_nb_keys);
+                // eprintln!("\ttakes {}", adapt_unit(mem::size_of::<Word>() * map_size(max_nb_keys)));
+                let nb_keys = (2 * max_nb_keys) / 3;
+                // eprintln!("-> using {} keys to avoid last resize", nb_keys);
+                // eprintln!("\ttakes {}", adapt_unit(mem::size_of::<Word>() * map_size(nb_keys)));
+
+                let key_space = (0..nb_keys).map(|key| key as FunctionParameter).collect_vec();
+
                 Box::new(DHashMapWorkload {
+                    bucket_capacity_elems,
+                    nb_buckets,
+                    key_space,
+                    pieced: name == Self::PIECED,
                     get_proportion: get,
                     insert_proportion: insert,
                     contains_proportion: remove,
                     remove_proportion: contains,
                 })
             }
-            other => panic!("Unable to parse argument to KeyValue workload: {:?}", other)
+            other => panic!("Unable to parse argument to DHashMapWorkload workload: {:?}", other)
         }
     }
-}
 
-impl<const ENTRY_SIZE: usize> ApplicationWorkload<2, ENTRY_SIZE> for DHashMapWorkload {
-    fn next_batch(&mut self, params: &RunParameter, rng: &mut StdRng) -> Vec<Transaction<2, ENTRY_SIZE>> {
-        use d_hash_map::PiecedOperation::*;
-        use AtomicFunction::PieceDHashMap;
-        let items = [
-            (self.get_proportion, PieceDHashMap(GetRequest)),
-            (self.insert_proportion, PieceDHashMap(InsertRequest)),
-            (self.remove_proportion, PieceDHashMap(RemoveRequest)),
-            (self.contains_proportion, PieceDHashMap(HasRequest)),
-        ];
-        let dist2 = WeightedIndex::new(
-            items.iter().map(|item| item.0)
-        ).unwrap();
-
+    pub fn test_batch<const ENTRY_SIZE: usize>(&mut self, params: &RunParameter, rng: &mut StdRng) -> Vec<Transaction<2, ENTRY_SIZE>> {
         let batch_size = 10;
-        // let mut batch = (0..batch_size).map(|tx_index| {
-        //     let op = items[dist2.sample(rng)].1;
-        //     match op {
-        //         PieceDHashMap(GetRequest) => { },
-        //         PieceDHashMap(InsertRequest) => { },
-        //         PieceDHashMap(RemoveRequest) => { },
-        //         PieceDHashMap(HasRequest) => { },
-        //         _ => panic!("Only request can be first pieces")
-        //     }
-        //
-        // }).collect();
 
         let mut batch: Vec<_> = (0..batch_size)
             .map(|tx_index| {
@@ -848,16 +868,76 @@ impl<const ENTRY_SIZE: usize> ApplicationWorkload<2, ENTRY_SIZE> for DHashMapWor
         batch.append(&mut gets.clone());
         // println!("batch: {:?}", batch);
 
-        // TODO only for testing with sequential vm
         batch.reverse();
+
+        batch
+    }
+}
+
+impl<const ENTRY_SIZE: usize> ApplicationWorkload<2, ENTRY_SIZE> for DHashMapWorkload {
+    fn next_batch(&mut self, params: &RunParameter, rng: &mut StdRng) -> Vec<Transaction<2, ENTRY_SIZE>> {
+
+        // return self.test_batch(prams, rng);
+
+        use d_hash_map::*;
+        use AtomicFunction::PieceDHashMap;
+        use AtomicFunction::DHashMap;
+
+        let weights = [
+            self.get_proportion,
+            self.insert_proportion,
+            self.remove_proportion,
+            self.contains_proportion,
+        ];
+
+        // TODO Use a parameter to decide between the two types?
+        let (addresses, operations) = if self.pieced {
+            let addresses = [0, 0]; // TODO proper addresses understood by the schedulers
+            let operations = [
+                PieceDHashMap(PiecedOperation::GetRequest),
+                PieceDHashMap(PiecedOperation::InsertRequest),
+                PieceDHashMap(PiecedOperation::RemoveRequest),
+                PieceDHashMap(PiecedOperation::HasRequest),
+            ];
+            (addresses, operations)
+        } else {
+            let addresses = [0, 0]; // TODO use Exclusive addresses
+            let operations = [
+                DHashMap(Operation::Get),
+                DHashMap(Operation::Insert),
+                DHashMap(Operation::Remove),
+                DHashMap(Operation::ContainsKey),
+            ];
+            (addresses, operations)
+        };
+
+        let dist2 = WeightedIndex::new(weights).unwrap();
+
+        let mut tx_params = [0 as FunctionParameter; ENTRY_SIZE];
+
+        let batch = (0..params.batch_size).map(|tx_index| {
+            let op = operations[dist2.sample(rng)];
+            let key = *self.key_space.choose(rng).unwrap_or(&0);
+
+            for i in 0..ENTRY_SIZE { tx_params[i] = (ENTRY_SIZE - i) as FunctionParameter; }
+            tx_params[0] = key;
+
+            Transaction {
+                sender: tx_index as SenderAddress,
+                function: op,
+                tx_index,
+                addresses,
+                params: tx_params,
+            }
+        }).collect();
 
         batch
     }
 
     fn initialisation(&self, params: &RunParameter, rng: &mut StdRng) -> Box<dyn Fn(&mut Vec<Word>)> {
 
-        let nb_buckets = 10;
-        let bucket_capacity_elems = 10;
+        let nb_buckets = self.nb_buckets as usize;
+        let bucket_capacity_elems = self.bucket_capacity_elems as usize;
         Box::new(move |storage: &mut Vec<Word>| {
 
             storage.fill(0);
