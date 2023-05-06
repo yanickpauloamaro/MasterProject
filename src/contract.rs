@@ -2,13 +2,10 @@ use std::cell::Cell;
 use std::fmt::Debug;
 use std::marker::PhantomData;
 use std::mem;
-use std::time::Duration;
-use thincollections::thin_map::ThinMap;
 
 use crate::{auction, d_hash_map, key_value};
 use crate::auction::SimpleAuction;
-use crate::d_hash_map::{DHashMap, DKey, PiecedOperation, SearchResult};
-use crate::d_hash_map::Success::Replaced;
+use crate::d_hash_map::DHashMap;
 use crate::key_value::{KeyValue, KeyValueOperation, Value};
 use crate::vm_utils::SharedStorage;
 use crate::wip::Word;
@@ -296,69 +293,42 @@ impl AtomicFunction {
             }
             AtomicFunction::DHashMap(op) => {
 
+                // Equivalent of *Request for pieced version
+                let key = tx.params[0];
+                let (
+                    hash,
+                    _bucket_index,
+                    bucket_location,
+                    bucket_end
+                ) = DHashMap::get_bucket::<PARAM_COUNT>(key, &storage);
+
                 use d_hash_map::Operation::*;
                 match op {
-                    Get | Remove | ContainsKey => {
-                        tx.function = AtomicFunction::PieceDHashMap(op.corresponding_piece());
-                        let request = tx;
-
-                        match request.function.execute(tx, storage) {
-                            // Request pieces always return a new tx
-                            FunctionResult::Another(actual_op) => {
-                                actual_op.function.execute(actual_op, storage)
-                            },
-                            _ => panic!("Unexpected result from a DHashMap::Operation")
-                        }
+                    Get => {
+                        let res = DHashMap::get_entry_from_bucket::<PARAM_COUNT>(key, bucket_location, bucket_end, &storage);
+                        FunctionResult::DHashMap(res)
                     },
+                    Remove => {
+                        let res = DHashMap::remove_entry_from_bucket::<PARAM_COUNT>(key, bucket_location, bucket_end, &mut storage);
+                        FunctionResult::DHashMap(res)
+                    },
+                    ContainsKey => {
+                        let res = DHashMap::check_key_in_bucket::<PARAM_COUNT>(key, bucket_location, bucket_end, &storage);
+                        FunctionResult::DHashMap(res)
+                    }
                     Insert => {
-                        tx.function = AtomicFunction::PieceDHashMap(PiecedOperation::TryInsert);
-                        let request = tx;
+                        // TODO Change FunctionParameter to u64?
+                        let new_value: [Word; PARAM_COUNT] = tx.params.map(|el| el as Word);
 
-                        let request_output = request.function.execute(tx, storage);
-                        if let FunctionResult::Another(try_insert) = request_output {
-                            let try_insert_output = try_insert.function.execute(tx, storage);
-                            if let FunctionResult::Another(resize) = try_insert_output {
-                                // TryInsert failed and wants to resize
-                                let resize_output = resize.function.execute(resize, storage);
-                                if let FunctionResult::Another(actual_insert) = resize_output {
-                                    let actual_insert_output = actual_insert.function.execute(actual_insert, storage);
-                                    if let FunctionResult::Another(_) = actual_insert_output {
-                                        // TryInsert after Resize should always be successful
-                                        panic!("Unexpected result from a DHashMap::Operation")
-                                    } else {
-                                        actual_insert_output
-                                    }
-                                } else {
-                                    // Resize should always return a new TryInsert
-                                    panic!("Unexpected result from a DHashMap::Operation")
-                                }
-                            } else {
-                                // Successful insert
-                                try_insert_output
-                            }
-                        } else {
-                            // Request pieces always return a new tx
-                            panic!("Unexpected result from a DHashMap::Operation")
+                        let res = DHashMap::insert_entry_in_bucket::<PARAM_COUNT>(key, bucket_location, bucket_end, &new_value, &mut storage);
+                        match res {
+                            Ok(success) => FunctionResult::DHashMap(Ok(success)),
+                            Err(d_hash_map::Error::BucketFull) => {
+                                let resize_and_retry = DHashMap::resize_and_insert::<PARAM_COUNT>(key, hash, &new_value, &mut storage);
+                                FunctionResult::DHashMap(resize_and_retry)
+                            },
+                            Err(_) => FunctionResult::DHashMap(Err(d_hash_map::Error::IllegalState))
                         }
-
-                        // match request_piece.execute(tx, storage) {
-                        //     // Request pieces always return a new tx
-                        //     FunctionResult::Another(next_tx) => {
-                        //         match next_tx.function.execute(next_tx, storage) {
-                        //             FunctionResult::Another(next_tx) => {
-                        //                 // TryInsert failed and wants to resize
-                        //                 match next_tx.function.execute(next_tx, storage) {
-                        //                     FunctionResult::Another(next_tx) => {
-                        //
-                        //                     },
-                        //                     result => result
-                        //                 }
-                        //             },
-                        //             result => result
-                        //         }
-                        //     },
-                        //     _ => panic!("Unexpected result from a DHashMap::Operation")
-                        // }
                     },
                 }
             },
@@ -372,24 +342,19 @@ impl AtomicFunction {
                     InsertRequest | RemoveRequest | GetRequest | HasRequest => {
                         // println!("------------ Compute Hash ---------------");
                         let key = tx.params[0];
-                        let hash = d_hash_map::DHashMap::compute_hash(key);
-
-                        let nb_buckets = storage.get(0);
-                        let bucket_capacity = storage.get(1) as usize;
-                        let bucket_index = (hash % (nb_buckets as u64)) as usize;
-
-                        let hash_table_start = 2;
-                        let bucket_location = storage.get(hash_table_start + bucket_index) as usize;
-                        let bucket_content_start = bucket_location + 1;
-
-                        // println!("key {}: Inserting in bucket {}/{}", key, bucket_index, nb_buckets);
+                        let (
+                            _hash,
+                            _bucket_index,
+                            bucket_location,
+                            bucket_end
+                        ) = DHashMap::get_bucket::<PARAM_COUNT>(key, &storage);
 
                         // Range of addresses that need to be locked
                         // TODO StaticAddress should be u64 or usize?
                         // TODO Should specify whether its read or write -> signed integers?
                         // TODO Adapt scheduling
                         tx.addresses[0] = bucket_location as StaticAddress;
-                        tx.addresses[1] = (bucket_content_start + bucket_capacity * PARAM_COUNT) as StaticAddress;
+                        tx.addresses[1] = bucket_end as StaticAddress;
 
                         tx.function = AtomicFunction::PieceDHashMap(op.next_operation());
                         FunctionResult::Another(tx)
@@ -399,206 +364,65 @@ impl AtomicFunction {
                         let bucket_location = tx.addresses[0] as usize;
                         let bucket_end = tx.addresses[1] as usize;
                         let key = tx.params[0];
-                        // println!("------------ INSERT ---------------");
-                        let bucket_size_mut = storage.get_mut(bucket_location as usize);
-                        let bucket_content_start = bucket_location + 1;
-                        match DHashMap::search_bucket::<PARAM_COUNT>(key, bucket_content_start, bucket_end, &mut storage) {
-                            SearchResult::Entry(_entry, index) => {
-                                let mut previous = [0; PARAM_COUNT];
-                                for offset in 0..PARAM_COUNT {
-                                    let current = storage.get_mut(index + offset);
-                                    previous[offset] = *current;
-                                    *current = tx.params[offset] as Word;
-                                }
 
-                                FunctionResult::DHashMap(Ok(Replaced(previous)))
-                            },
-                            SearchResult::EmptySpot(_entry, index) => {
-                                *bucket_size_mut += 1;
-                                for offset in 0..PARAM_COUNT {
-                                    let current = storage.get_mut(index + offset);
-                                    *current = tx.params[offset] as Word;
-                                }
+                        // TODO Change FunctionParameter to u64?
+                        let new_value: [Word; PARAM_COUNT] = tx.params.map(|el| el as Word);
 
-                                FunctionResult::DHashMap(Ok(Inserted))
-                            },
-                            SearchResult::BucketFull => {
-
-                                // Trigger a full resize
+                        let res = DHashMap::insert_entry_in_bucket::<PARAM_COUNT>(key, bucket_location, bucket_end, &new_value, &mut storage);
+                        match res {
+                            Ok(success) => FunctionResult::DHashMap(Ok(success)),
+                            Err(d_hash_map::Error::BucketFull) => {
                                 tx.function = AtomicFunction::PieceDHashMap(ResizeInsert);
                                 // TODO set Exclusive address (write all) and adapt scheduling
                                 FunctionResult::Another(tx)
-                            }
+                            },
+                            Err(_) => FunctionResult::DHashMap(Err(d_hash_map::Error::IllegalState))
                         }
                     },
                     ResizeInsert => {
-                        // println!("============= RESIZE =============");
-                        let key_to_insert = tx.params[0];
-                        let hash = d_hash_map::DHashMap::compute_hash(key_to_insert);
+                        // TODO Change FunctionParameter to u64?
+                        let new_value: [Word; PARAM_COUNT] = tx.params.map(|el| el as Word);
+                        let key = tx.params[0];
 
-                        let nb_buckets = storage.get(0) as usize;
-                        let bucket_capacity_elems = storage.get(1) as usize;
-                        let bucket_capacity = 1 + bucket_capacity_elems * PARAM_COUNT;
-                        let hash_table_start = 2;
+                        let (
+                            hash,
+                            _bucket_index,
+                            bucket_location,
+                            bucket_end
+                        ) = DHashMap::get_bucket::<PARAM_COUNT>(key, &storage);
 
-                        // Check if bucket is still full (otherwise just insert)
-                        let bucket_index = (hash % (nb_buckets as u64)) as usize;
-                        let bucket_location = storage.get(hash_table_start + bucket_index) as usize;
-                        let bucket_size = storage.get(bucket_location) as usize;
-
-                        if bucket_size < bucket_capacity_elems {
-                            let bucket_content_start = bucket_location + 1;
-                            let bucket_end = bucket_content_start + bucket_capacity * PARAM_COUNT;
-
-                            tx.addresses[0] = bucket_location as StaticAddress;
-                            tx.addresses[1] = bucket_end as StaticAddress;
-
-                            // Try inserting again
-                            return AtomicFunction::PieceDHashMap(TryInsert).execute(tx, storage);
+                        // Try to insert again, maybe a concurrent operation changed the hashmap
+                        let retried = DHashMap::insert_entry_in_bucket::<PARAM_COUNT>(key, bucket_location, bucket_end, &new_value, &mut storage);
+                        if retried.is_ok() {
+                            return FunctionResult::DHashMap(retried);
                         }
 
-                        let old_hash_table_size = hash_table_start + nb_buckets;
-                        let old_capacity = old_hash_table_size + nb_buckets * bucket_capacity;
-
-                        // Double the number of buckets
-                        let more_buckets = 2 * nb_buckets;
-                        let new_hash_table_size = hash_table_start + more_buckets;
-                        let new_capacity = new_hash_table_size + more_buckets * bucket_capacity;
-
-                        // If the new size is too large for vm storage return error
-                        if new_capacity > storage.len() {
-                            // TODO return an error
-                            panic!("Can't resize hash map, not enough space")
-                        }
-
-                        // Prepare the bigger DHashMap
-                        let mut new_map = vec![0; new_capacity];
-                        // TODO no need to add sentinels during init since many of them will be overwritten, add them after the buckets have been filled
-                        DHashMap::init::<PARAM_COUNT>(&mut new_map, more_buckets, bucket_capacity_elems);
-
-                        // Insert all entries in the new map:
-                        // for each bucket of the old map
-                        for old_bucket_index in 0..nb_buckets {
-                            // TODO Make a function for that?
-                            let old_bucket_location = storage.get(hash_table_start + old_bucket_index) as usize;
-                            let old_bucket_size = storage.get(old_bucket_location) as usize;
-
-                            let mut current_index = (old_bucket_location + 1) as usize;
-                            let mut moved = 0;
-                            while moved < old_bucket_size {
-                                let old_entry_start = current_index;
-                                let key = storage.get(old_entry_start);
-                                current_index += PARAM_COUNT;
-
-                                if key != DHashMap::SENTINEL {
-                                    assert_ne!(key, DHashMap::LAST);    // We still have entries to move, how could we have reached the end?
-
-                                    // TODO Store hash with the entry so that we don't need to compute it again?
-                                    let hash = d_hash_map::DHashMap::compute_hash(key as FunctionParameter);
-                                    let new_bucket_index = (hash % (more_buckets as u64)) as usize;
-
-                                    let new_bucket_location = new_map[hash_table_start + new_bucket_index] as usize;
-                                    let new_bucket_size = new_map[new_bucket_location] as usize;    // == next_entry_index
-                                    if new_bucket_size >= bucket_capacity {
-                                        panic!("A bucket is full during resize!!!");
-                                    }
-
-                                    // We can add it directly at the end of the new bucket
-                                    let entry_start = (new_bucket_location + 1) + new_bucket_size * PARAM_COUNT;
-                                    for offset in 0..PARAM_COUNT {
-                                        new_map[entry_start + offset] = storage.get(old_entry_start + offset);
-                                    }
-
-                                    new_map[new_bucket_location] += 1;
-                                    moved += 1;
-                                }
-                            }
-                        }
-
-                        // put the new map in place of the previous hashmap
-                        storage.ptr.copy_from_nonoverlapping(new_map.as_ptr(), new_capacity);
-
-                        // TODO Just for debug
-                        // DHashMap::println_ptr::<PARAM_COUNT>(storage.ptr, storage.len());
-
-                        // Actually insert the new value
-                        let bucket_index = (hash % (more_buckets as u64)) as usize;
-
-                        let bucket_location = storage.get(hash_table_start + bucket_index) as usize;
-                        let bucket_content_start = bucket_location + 1;
-                        let bucket_end = bucket_content_start + bucket_capacity * PARAM_COUNT;
-                        tx.addresses[0] = bucket_location as StaticAddress;
-                        tx.addresses[1] = bucket_end as StaticAddress;
-
-                        // Try inserting again
-                        AtomicFunction::PieceDHashMap(TryInsert).execute(tx, storage)
+                        let resize_and_retry = DHashMap::resize_and_insert::<PARAM_COUNT>(key, hash, &new_value, &mut storage);
+                        FunctionResult::DHashMap(resize_and_retry)
                     },
                     Get => {
                         let bucket_location = tx.addresses[0] as usize;
                         let bucket_end = tx.addresses[1] as usize;
                         let key = tx.params[0];
-                        let bucket_content_start = bucket_location + 1;
-                        // println!("------------ GET ---------------");
-                        match DHashMap::search_bucket::<PARAM_COUNT>(key, bucket_content_start, bucket_end, &mut storage) {
-                            SearchResult::Entry(_entry, index) => {
-                                let mut found = [0; PARAM_COUNT];
-                                for offset in 0..PARAM_COUNT {
-                                    found[offset] = storage.get(index + offset);
-                                }
-                                FunctionResult::DHashMap(Ok(Value(found)))
-                            },
-                            _ => {
-                                FunctionResult::DHashMap(Ok(None))
-                            },
-                        }
+
+                        let res = DHashMap::get_entry_from_bucket::<PARAM_COUNT>(key, bucket_location, bucket_end, &storage);
+                        FunctionResult::DHashMap(res)
                     },
                     Remove => {
                         let bucket_location = tx.addresses[0] as usize;
                         let bucket_end = tx.addresses[1] as usize;
                         let key = tx.params[0];
-                        let bucket_size_mut = storage.get_mut(bucket_location);
-                        let bucket_content_start = bucket_location + 1;
-                        // println!("------------ REMOVE ---------------");
-                        match DHashMap::search_bucket::<PARAM_COUNT>(key, bucket_content_start, bucket_end, &mut storage) {
-                            SearchResult::Entry(_entry, index) => {
-                                *bucket_size_mut -= 1;
-                                let mut found = [0; PARAM_COUNT];
-                                for offset in 0..PARAM_COUNT {
-                                    found[offset] = storage.get(index + offset);
-                                }
-                                // // Lazy version: only mark the current entry as "last" => search will take longer
-                                storage.set(index, DHashMap::SENTINEL);
 
-                                let next_index = index + PARAM_COUNT;
-                                if next_index >= bucket_end || storage.get(next_index) == DHashMap::LAST {
-                                    // Make sure to mark the end of the bucket to speed up future search operations
-                                    let mut new_last_index = index;
-                                    while storage.get(new_last_index) == DHashMap::SENTINEL {
-                                        storage.set(new_last_index, DHashMap::LAST);
-                                        if new_last_index > bucket_content_start {
-                                            new_last_index -= PARAM_COUNT;
-                                        } else {
-                                            break;
-                                        }
-                                    }
-                                }
-
-                                FunctionResult::DHashMap(Ok(Value(found)))
-                            },
-                            _ => {
-                                FunctionResult::DHashMap(Ok(None))
-                            },
-                        }
+                        let res = DHashMap::remove_entry_from_bucket::<PARAM_COUNT>(key, bucket_location, bucket_end, &mut storage);
+                        FunctionResult::DHashMap(res)
                     },
                     Has => {
-                        let bucket_start = tx.addresses[0] as usize;
+                        let bucket_location = tx.addresses[0] as usize;
                         let bucket_end = tx.addresses[1] as usize;
                         let key = tx.params[0];
-                        // println!("------------ HAS ---------------");
-                        match DHashMap::search_bucket::<PARAM_COUNT>(key, bucket_start, bucket_end, &mut storage) {
-                            SearchResult::Entry(_, _) => FunctionResult::DHashMap(Ok(HasKey(true))),
-                            _ => FunctionResult::DHashMap(Ok(HasKey(false))),
-                        }
+
+                        let res = DHashMap::check_key_in_bucket::<PARAM_COUNT>(key, bucket_location, bucket_end, &storage);
+                        FunctionResult::DHashMap(res)
                     },
                 };
 

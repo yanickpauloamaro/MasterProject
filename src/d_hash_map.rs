@@ -1,8 +1,7 @@
+use std::{mem, slice};
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
-use std::mem;
-use either::Either;
-use thincollections::thin_map::ThinMap;
+
 use crate::d_hash_map::PiecedOperation::TryInsert;
 use crate::vm_utils::SharedStorage;
 use crate::wip::Word;
@@ -20,33 +19,319 @@ impl DHashMap {
         hasher.finish()
     }
 
+    const HASH_TABLE_OFFSET: usize = 2;
+    const BUCKET_CONTENT_OFFSET: usize = 1;
     pub const LAST: Word = Word::MAX;
     pub const SENTINEL: Word = Self::LAST - 1;
 
-    pub fn search_bucket<const ENTRY_SIZE: usize>(
+    #[inline]
+    pub fn get_nb_buckets(storage: &SharedStorage) -> usize {
+        storage.get(0) as usize
+    }
+
+    #[inline]
+    pub fn get_bucket_capacity_elems(storage: &SharedStorage) -> usize {
+        storage.get(1) as usize
+    }
+
+    pub fn get_bucket<const ENTRY_SIZE: usize>(key: DKey, storage: &SharedStorage) -> (DHash, usize, usize, usize) {
+        let hash = Self::compute_hash(key);
+        Self::get_bucket_from_hash::<ENTRY_SIZE>(hash, storage)
+    }
+
+    pub fn get_bucket_from_hash<const ENTRY_SIZE: usize>(hash: DHash, storage: &SharedStorage) -> (DHash, usize, usize, usize) {
+
+        let nb_buckets = Self::get_nb_buckets(storage);
+        let bucket_capacity_elems = Self::get_bucket_capacity_elems(storage);
+        let bucket_index = (hash % (nb_buckets as u64)) as usize;
+
+        let bucket_location = storage.get(Self::HASH_TABLE_OFFSET + bucket_index) as usize;
+        let bucket_end = bucket_location + 1 + bucket_capacity_elems * ENTRY_SIZE;
+
+        (hash, bucket_index, bucket_location, bucket_end)
+    }
+
+    //region Get
+    pub fn get_entry_from_bucket<const ENTRY_SIZE: usize>(
         key: DKey,
-        bucket_start: usize,
+        bucket_location: usize,
+        bucket_end: usize,
+        storage: &SharedStorage
+    ) -> Result<ENTRY_SIZE>
+    {
+        // println!("------------ GET ---------------");
+        match Self::search::<ENTRY_SIZE>(key, bucket_location, bucket_end, storage) {
+            SearchResult::Entry(index) => {
+                let mut found = [0; ENTRY_SIZE];
+                for offset in 0..ENTRY_SIZE {
+                    found[offset] = storage.get(index + offset);
+                }
+                Ok(Success::Value(found))
+            },
+            _ => Ok(Success::None),
+        }
+    }
+    //endregion
+
+    //region Has/ContainsKey
+    pub fn check_key_in_bucket<const ENTRY_SIZE: usize>(
+        key: DKey,
+        bucket_location: usize,
+        bucket_end: usize,
+        storage: &SharedStorage
+    ) -> Result<ENTRY_SIZE> {
+        // println!("------------ HAS/CONTAINS_kEY ---------------");
+        match Self::search::<ENTRY_SIZE>(key, bucket_location, bucket_end, storage) {
+            SearchResult::Entry(_) => Ok(Success::HasKey(true)),
+            _ => Ok(Success::HasKey(false)),
+        }
+    }
+    //endregion
+
+    //region Insert
+    pub fn insert_entry_in_bucket<const ENTRY_SIZE: usize>(
+        key: DKey,
+        bucket_location: usize,
+        bucket_end: usize,
+        new_value: &[Word; ENTRY_SIZE],
+        storage: &mut SharedStorage
+    ) -> Result<ENTRY_SIZE>
+    {
+        // println!("------------ INSERT ---------------");
+        match Self::search::<ENTRY_SIZE>(key, bucket_location, bucket_end, storage) {
+            SearchResult::Entry(index) => {
+                unsafe {
+                    let mut previous = [0; ENTRY_SIZE];
+                    let current = slice::from_raw_parts_mut(storage.ptr.add(index), ENTRY_SIZE);
+
+                    // Copy the previous value
+                    previous.copy_from_slice(current);
+
+                    // Write the new value
+                    current.copy_from_slice(new_value);
+
+                    Ok(Success::Replaced(previous))
+                }
+            },
+            SearchResult::EmptySpot(index) => {
+                unsafe {
+                    let current = slice::from_raw_parts_mut(storage.ptr.add(index), ENTRY_SIZE);
+
+                    // Increment the size of the bucket
+                    *storage.get_mut(bucket_location) += 1;
+
+                    // Write the new value
+                    current.copy_from_slice(new_value);
+
+                    Ok(Success::Inserted)
+                }
+            },
+            SearchResult::BucketFull => Err(Error::BucketFull)
+        }
+    }
+    //endregion
+
+    //region Remove
+    pub fn remove_entry_from_bucket<const ENTRY_SIZE: usize>(
+        key: DKey,
+        bucket_location: usize,
         bucket_end: usize,
         storage: &mut SharedStorage
+    ) -> Result<ENTRY_SIZE>
+    {
+        // println!("------------ REMOVE ---------------");
+        match Self::search::<ENTRY_SIZE>(key, bucket_location, bucket_end, storage) {
+            SearchResult::Entry(index) => {
+
+                // Decrement the size of the bucket
+                unsafe {
+                    *storage.get_mut(bucket_location) -= 1;
+                }
+
+                // Copy the removed value
+                let mut removed = [0; ENTRY_SIZE];
+                for offset in 0..ENTRY_SIZE {
+                    removed[offset] = storage.get(index + offset);
+                }
+
+                // Book keeping
+                // Lazy version: only mark the current entry as "last" => future searches will take longer
+                storage.set(index, DHashMap::SENTINEL);
+
+                // Check if this is the last entry in the bucket
+                let next_index = index + ENTRY_SIZE;
+                if next_index >= bucket_end || storage.get(next_index) == DHashMap::LAST {
+                    // Make sure to propagate the "end of bucket" sentinel to the previous entries
+                    let mut new_last_index = index;
+                    while storage.get(new_last_index) == DHashMap::SENTINEL {
+                        storage.set(new_last_index, DHashMap::LAST);
+
+                        // Stop when you reach the start of the bucket
+                        if new_last_index <= bucket_location + Self::BUCKET_CONTENT_OFFSET {
+                            break;
+                        }
+                        new_last_index -= ENTRY_SIZE;
+                        // if new_last_index > bucket_location + Self::BUCKET_CONTENT_OFFSET {
+                        //     new_last_index -= PARAM_COUNT;
+                        // } else {
+                        //     break;
+                        // }
+                    }
+                }
+
+                Ok(Success::Value(removed))
+            },
+            _ => Ok(Success::None),
+        }
+    }
+    //endregion
+
+    //region Resize
+    pub fn resize<const ENTRY_SIZE: usize>(storage: &mut SharedStorage) -> Result<ENTRY_SIZE> {
+        // println!("------------ RESIZE ------------");
+        let nb_buckets = Self::get_nb_buckets(storage);
+        let bucket_capacity_elems = Self::get_bucket_capacity_elems(storage);
+
+        let old_hash_table_size = Self::HASH_TABLE_OFFSET + nb_buckets;
+        let _old_capacity = old_hash_table_size + nb_buckets * (1 + bucket_capacity_elems * ENTRY_SIZE);
+
+        // Double the number of buckets
+        let more_buckets = 2 * nb_buckets;
+        let new_hash_table_size = Self::HASH_TABLE_OFFSET + more_buckets;
+        let new_capacity = new_hash_table_size + more_buckets * (1 + bucket_capacity_elems * ENTRY_SIZE);
+
+        // If the new size is too large for vm storage return error
+        if new_capacity > storage.len() {
+            return Err(Error::StorageFull);
+        }
+
+        // Prepare the bigger DHashMap
+        let mut new_map = vec![0; new_capacity];
+        let mut shared_new_map = SharedStorage {
+            ptr: new_map.as_mut_ptr(),
+            size: new_capacity,
+        };
+
+        // TODO no need to add sentinels during init since many of them will be overwritten, add them after the buckets have been filled
+        DHashMap::init::<ENTRY_SIZE>(&mut new_map, more_buckets, bucket_capacity_elems);
+
+        // Insert all entries in the new map: ------------------------------------------------------
+        // Probe each bucket and append the entries to the new bucket
+        for old_bucket_index in 0..nb_buckets {
+            let old_bucket_location = storage.get(Self::HASH_TABLE_OFFSET + old_bucket_index) as usize;
+            let old_bucket_size = storage.get(old_bucket_location) as usize;
+
+            let mut current_index = (old_bucket_location + 1) as usize;
+            let mut moved = 0;
+
+            while moved < old_bucket_size {
+                let old_entry_index = current_index;
+                let old_entry_end = old_entry_index + ENTRY_SIZE;
+                let old_entry = unsafe {
+                    slice::from_raw_parts(storage.ptr.add(current_index), ENTRY_SIZE)
+                };
+
+                current_index = old_entry_end;
+
+                let entry_key = old_entry[0];
+                if entry_key != Self::SENTINEL {
+                    // We still have entries to move, we shouldn't reach the end of the bucket
+                    assert_ne!(entry_key, DHashMap::LAST);
+
+                    // TODO Store hash with the entry so that we don't need to compute it again?
+                    let (
+                        _hash,
+                        _new_bucket_index,
+                        new_bucket_location,
+                        _new_bucket_end
+                    ) = Self::get_bucket::<ENTRY_SIZE>(entry_key as DKey, &shared_new_map);
+
+                    let new_bucket_size = new_map[new_bucket_location] as usize;
+                    if new_bucket_size >= bucket_capacity_elems {
+                        return Err(Error::ResizedBucketFull);
+                    }
+
+                    // We can add it directly at the end of the new bucket
+                    let new_entry_index = (new_bucket_location + 1) + new_bucket_size * ENTRY_SIZE;
+                    let new_entry_end = new_entry_index + ENTRY_SIZE;
+                    // for offset in 0..PARAM_COUNT {
+                    //     new_map[entry_start + offset] = storage.get(old_entry_start + offset);
+                    // }
+
+                    let new_entry = &mut new_map[new_entry_index..new_entry_end];
+                    new_entry.copy_from_slice(old_entry);
+
+                    new_map[new_bucket_location] += 1;
+                    moved += 1;
+                }
+            }
+        }
+
+        unsafe {
+            // Put the new map in place of the previous hashmap
+            storage.ptr.copy_from_nonoverlapping(new_map.as_ptr(), new_capacity);
+        }
+
+        // TODO Just for debug
+        // DHashMap::println_ptr::<PARAM_COUNT>(storage.ptr, storage.len());
+
+        Ok(Success::Resized)
+    }
+    //endregion
+
+    //region Resize and Insert
+    pub fn resize_and_insert<const ENTRY_SIZE: usize>(
+        key: DKey,
+        hash: DHash,
+        new_value: &[Word; ENTRY_SIZE],
+        storage: &mut SharedStorage
+    ) -> Result<ENTRY_SIZE> {
+        // println!("------------ RESIZE AND INSERT ---------------");
+        let res = DHashMap::resize::<ENTRY_SIZE>(storage);
+        match res {
+            Ok(Success::Resized) => { /* All good, can proceed */ },
+            Err(Error::ResizedBucketFull) | Err(Error::StorageFull) => { return res; },
+            _ => { return Err(Error::IllegalState); }
+        }
+
+        // Actually insert the new value
+        let (
+            _hash,
+            _bucket_index,
+            bucket_location,
+            bucket_end
+        ) = DHashMap::get_bucket_from_hash::<ENTRY_SIZE>(hash, &storage);
+
+        let retried = DHashMap::insert_entry_in_bucket::<ENTRY_SIZE>(key, bucket_location, bucket_end, &new_value, storage);
+        match retried {
+            Ok(_) => retried,
+            Err(Error::BucketFull) => Err(Error::ResizedBucketFull),
+            Err(_) => Err(Error::IllegalState),
+        }
+    }
+    //endregion
+
+    pub fn search<const ENTRY_SIZE: usize>(
+        key: DKey,
+        bucket_location: usize,
+        bucket_end: usize,
+        storage: &SharedStorage
     ) -> SearchResult {
         let mut result = SearchResult::BucketFull;
-        let mut current_index = bucket_start;
+        let mut current_index = bucket_location + Self::BUCKET_CONTENT_OFFSET;
 
         assert_ne!(key as Word, Self::LAST);
         assert_ne!(key as Word, Self::SENTINEL);
 
-        // println!("Searching key {} (bucket start = {}, bucket end = {})", key, bucket_start, bucket_end);
         while current_index < bucket_end {
-            let entry_ptr = storage.get_mut(current_index);
-            // println!("\tSearching at index {}", current_index);
             match storage.get(current_index) {
                 same if same == key as Word => {
-                    return SearchResult::Entry(entry_ptr, current_index);
+                    return SearchResult::Entry(current_index);
                 },
-                Self::LAST => { return SearchResult::EmptySpot(entry_ptr, current_index); },
+                Self::LAST => { return SearchResult::EmptySpot(current_index); },
                 Self::SENTINEL => {
                     current_index += ENTRY_SIZE;
-                    result = SearchResult::EmptySpot(entry_ptr, current_index)
+                    result = SearchResult::EmptySpot(current_index)
                 },
                 _other => {
                     current_index += ENTRY_SIZE;
@@ -63,15 +348,14 @@ impl DHashMap {
         bucket_capacity_elems: usize,
     ) {
 
-        let hash_table_start = 2;
         let bucket_capacity = 1 + bucket_capacity_elems * ENTRY_SIZE;
 
         storage[0] = nb_buckets as Word;
         storage[1] = bucket_capacity_elems as Word;
 
-        let mut index = hash_table_start;
+        let mut index = Self::HASH_TABLE_OFFSET;
         for bucket_index in 0..nb_buckets {
-            let bucket_location = hash_table_start + nb_buckets + bucket_index * bucket_capacity;
+            let bucket_location = Self::HASH_TABLE_OFFSET + nb_buckets + bucket_index * bucket_capacity;
             storage[index] = bucket_location as Word;
             index += 1;
         }
@@ -85,6 +369,7 @@ impl DHashMap {
         }
     }
 
+    //region printing
     pub fn println<const ENTRY_SIZE: usize>(storage: &Vec<Word>) {
         let mut index = 0;
 
@@ -159,6 +444,7 @@ impl DHashMap {
         Self::println::<ENTRY_SIZE>(&v);
         mem::forget(v);
     }
+    //endregion
 }
 /*
 let mut map = ThinMap::<u64, u64>::new();
@@ -176,8 +462,8 @@ let h = map.values();
  */
 
 pub enum SearchResult {
-    Entry(*mut Word, usize),
-    EmptySpot(*mut Word, usize),
+    Entry(usize),
+    EmptySpot(usize),
     BucketFull
 }
 
@@ -236,7 +522,6 @@ impl PiecedOperation {
 
 pub type Result<const ENTRY_SIZE: usize> = core::result::Result<Success<ENTRY_SIZE>, Error>;
 
-// TODO Choose content type (u32 or u64)
 #[derive(Debug, Clone, Copy)]
 pub enum Success<const ENTRY_SIZE: usize> {
     None,
@@ -244,10 +529,15 @@ pub enum Success<const ENTRY_SIZE: usize> {
     Inserted,
     Replaced([Word; ENTRY_SIZE]),
     Removed([Word; ENTRY_SIZE]),
-    HasKey(bool)
+    HasKey(bool),
+    Resized
 }
 
 #[derive(Debug, Clone, Copy)]
 pub enum Error {
-    KeyNotFound
+    KeyNotFound,
+    BucketFull,
+    StorageFull,
+    ResizedBucketFull,
+    IllegalState
 }
