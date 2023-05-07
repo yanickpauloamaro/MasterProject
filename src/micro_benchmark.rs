@@ -1,26 +1,24 @@
-use ahash::{AHasher, RandomState};
-use ahash::AHashMap;
+use ahash::AHasher;
 use std::collections::HashMap;
-use hashbrown::{HashMap as BrownMap};
-use std::fmt::{Debug, Formatter};
+use hashbrown::HashMap as BrownMap;
+use std::fmt::Debug;
 use std::hash::BuildHasherDefault;
 use std::mem;
-use std::sync::Arc;
 use anyhow::anyhow;
 use core_affinity::CoreId;
 use itertools::Itertools;
 use nohash_hasher::{BuildNoHashHasher, NoHashHasher};
 use rand::prelude::{SliceRandom, StdRng};
 use rand::{RngCore, SeedableRng};
-use tokio::time::{Instant, Duration};
+use tokio::time::{Duration, Instant};
 use tabled::{Table, Tabled};
 use thincollections::thin_map::ThinMap;
 use crate::benchmark::WorkloadUtils;
-use crate::contract::{AtomicFunction, SenderAddress, StaticAddress, Transaction};
+use crate::contract::{AccessPattern, AccessType, AtomicFunction, SenderAddress, StaticAddress, Transaction};
 use crate::key_value::KeyValueOperation;
 use crate::parallel_vm::ParallelVmImmediate;
 use crate::sequential_vm::SequentialVM;
-use crate::utils::{mean_ci, mean_ci_str};
+use crate::utils::mean_ci;
 use crate::vm_utils::AddressSet;
 use crate::wip::Word;
 
@@ -292,6 +290,12 @@ pub fn transaction_sizes(nb_schedulers: usize, nb_workers: usize) {
     // println!("\tOption<usize> ~ {}B", mem::size_of::<Option<usize>>());
     // println!();
 
+    // let size = mem::size_of::<[AccessPattern; 2]>();
+    // println!("Size of [_; 2]: {}", size);
+    //
+    // let size_option = mem::size_of::<Option<[AccessPattern; 2]>>();
+    // println!("Size of Option<[_; 2]>: {}", size_option);
+
     fn sizes<const NB_ADDRESSES: usize, const NB_PARAMS: usize>(nb_schedulers: usize, nb_workers: usize) {
         let tx_size_bytes = mem::size_of::<Transaction<NB_ADDRESSES, NB_PARAMS>>();
         let batch_size = 65536;
@@ -324,24 +328,13 @@ pub fn transaction_sizes(nb_schedulers: usize, nb_workers: usize) {
 //endregion
 
 //region scheduling --------------------------------------------------------------------------------
-#[derive(Eq, PartialEq)]
-pub enum AccessType {
-    Read,
-    Write,
-    TryWrite
-}
-
-#[derive(Eq, PartialEq)]
-pub enum AccessPattern {
-    Address(StaticAddress),
-    Range(StaticAddress, StaticAddress),
-    All,
-    Done
-}
-
 pub fn profile_schedule_chunk(batch_size: usize, iter: usize, chunk_fraction: usize, nb_executors: usize, conflict_rate: f64) {
 
     let storage_size = 100 * batch_size;
+
+    let addresses_per_tx = 2;
+    // let addresses_per_tx = 10;
+
     let mut rng = StdRng::seed_from_u64(10);
     let mut batch = WorkloadUtils::transfer_pairs(storage_size, batch_size, conflict_rate, &mut rng)
         .iter()
@@ -354,6 +347,13 @@ pub fn profile_schedule_chunk(batch_size: usize, iter: usize, chunk_fraction: us
                 addresses: [pair.0, pair.1],
                 params: [2],
             }
+            // Transaction {
+            //     sender: pair.0 as SenderAddress,
+            //     function: AtomicFunction::Fibonacci,
+            //     tx_index,
+            //     addresses: [],
+            //     params: [10],
+            // }
         }).collect_vec();
 
     let mut sequential = SequentialVM::new(100 * batch.len()).unwrap();
@@ -363,17 +363,26 @@ pub fn profile_schedule_chunk(batch_size: usize, iter: usize, chunk_fraction: us
     parallel.set_storage(20 * iter as Word);
 
     let mut schedule_duration = Duration::from_nanos(0);
+    let mut schedule_init_duration = Duration::from_nanos(0);
+    let mut schedule_main_loop_duration = Duration::from_nanos(0);
+
     let mut sequential_duration = Duration::from_nanos(0);
     let mut parallel_duration = Duration::from_nanos(0);
+
     let mut experiment_duration = Duration::from_nanos(0);
+    let mut experiment_init_duration = Duration::from_nanos(0);
+    let mut experiment_scheduling_duration = Duration::from_nanos(0);
 
     let computation = |(scheduler_index, chunk): (usize, Vec<Transaction<2, 1>>)| {
+        let a = Instant::now();
         let mut scheduled = Vec::with_capacity(chunk.len());
         let mut postponed = Vec::with_capacity(chunk.len());
         let mut working_set = AddressSet::with_capacity(
-            2 * batch_size / chunk_fraction
+            2 * addresses_per_tx * batch_size / chunk_fraction
         );
 
+        let init = a.elapsed();
+        let main_loop = Instant::now();
         'outer: for tx in chunk {
             if tx.function != AtomicFunction::KeyValue(KeyValueOperation::Scan) {
                 for addr in tx.addresses.iter() {
@@ -383,8 +392,8 @@ pub fn profile_schedule_chunk(batch_size: usize, iter: usize, chunk_fraction: us
                         continue 'outer;
                     }
                 }
-            } else {
-                // eprintln!("Processing a scan operation");
+            } else if !tx.addresses.is_empty() {
+                eprintln!("Processing a scan operation");
                 for addr in tx.addresses[0]..tx.addresses[1] {
                     if !working_set.insert(addr) {
                         // Can't add tx to schedule
@@ -395,10 +404,11 @@ pub fn profile_schedule_chunk(batch_size: usize, iter: usize, chunk_fraction: us
             }
             scheduled.push(tx);
         }
-        (scheduled, postponed)
+        (scheduled, postponed, init, main_loop.elapsed())
     };
 
     let experiment = |(scheduler_index, chunk): (usize, Vec<Transaction<2, 1>>)| {
+        let init_start = Instant::now();
         let mut scheduled = Vec::with_capacity(chunk.len());
         let mut postponed = Vec::with_capacity(chunk.len());
 
@@ -408,8 +418,6 @@ pub fn profile_schedule_chunk(batch_size: usize, iter: usize, chunk_fraction: us
         let mut read_locked = false;
         let mut write_locked = false;
 
-        // let addresses_per_tx = 2;
-        let addresses_per_tx = 10;
         let mut address_map_capacity = addresses_per_tx * batch_size / chunk_fraction;
         address_map_capacity *= 2;
 
@@ -440,44 +448,32 @@ pub fn profile_schedule_chunk(batch_size: usize, iter: usize, chunk_fraction: us
             }
         };
 
-        let mut nb_scheduled = 0;
+        let init_duration = init_start.elapsed();
+        let scheduling = Instant::now();
         'backlog: for tx in chunk {
             // // Positive = read
             // // i32::MAX -> read all
             // // Negative = write
             // // i32::MIN -> write all (i.e. exclusive)
-            //
-            // TODO let transactions implement this
-            // let tmp_writes = Some(tx.addresses
-            //     .map(|addr| AccessPattern::Address(addr)));
-            // let tmp_reads: Option<[AccessPattern; 2]> = None;
 
             // let tmp_writes = Some([
             //     AccessPattern::Address(tx.addresses[0]),
             //     AccessPattern::Address(tx.addresses[1]),
-            //     AccessPattern::Done,
-            //     AccessPattern::Done,
             // ]);
-            // let tmp_reads: Option<[AccessPattern; 4]> = None;
+            // // let tmp_writes = Some([
+            // //     AccessPattern::Address(tx.addresses[0]),
+            // //     AccessPattern::Address(tx.addresses[1]),
+            // //     AccessPattern::Range(tx.addresses[0], tx.addresses[0] + 10),
+            // //     AccessPattern::Done,
+            // // ]);
+            // let tmp_reads: Option<[AccessPattern; 2]> = None;
+            //
+            // let reads = tmp_reads.as_ref().map_or([].as_slice(), |inside| inside.as_slice());
+            // let writes = tmp_writes.as_ref().map_or([].as_slice(), |inside| inside.as_slice());
 
-            // eprintln!("Scheduling tx {}", nb_scheduled);
-            // eprintln!("Scheduling tx {}, address_map.size() = {}, address_map_capacity = {}", nb_scheduled, address_map.len(), address_map.capacity());
-            nb_scheduled +=1;
-
-            // println!("tx: {} -> {}", tx.addresses[0], tx.addresses[0] + 10);
-            let tmp_writes = Some([
-                AccessPattern::Range(tx.addresses[0], tx.addresses[0] + 10),
-                AccessPattern::Done,
-            ]);
-            let tmp_reads: Option<[AccessPattern; 2]> = None;
-
-            // println!("Size of tx.reads(): {}", mem::size_of_val(&tmp_reads));
-            // println!("Size of tx.writes(): {}", mem::size_of_val(&tmp_writes));
-            let reads = tmp_reads.as_ref().map_or([].as_slice(), |inside| inside.as_slice());
-            let writes = tmp_writes.as_ref().map_or([].as_slice(), |inside| inside.as_slice());
-
-            // let reads: &[AccessPattern] = &tmp_reads[0..];
-            // let writes: &[AccessPattern] = &tmp_writes[0..];
+            let (possible_reads, possible_writes) = tx.accesses();
+            let reads = possible_reads.as_ref().map_or([].as_slice(), |inside| inside.as_slice());
+            let writes = possible_writes.as_ref().map_or([].as_slice(), |inside| inside.as_slice());
 
             // Tx without any memory accesses
             if reads.is_empty() && writes.is_empty() {
@@ -575,7 +571,7 @@ pub fn profile_schedule_chunk(batch_size: usize, iter: usize, chunk_fraction: us
         }
 
         // println!("Scheduled: {}, postponed: {}", scheduled.len(), postponed.len());
-        (scheduled, postponed)
+        (scheduled, postponed, init_duration, scheduling.elapsed())
     };
 
     batch.truncate(batch_size/chunk_fraction);
@@ -583,8 +579,10 @@ pub fn profile_schedule_chunk(batch_size: usize, iter: usize, chunk_fraction: us
     for _ in 0..iter {
         let mut b = batch.clone();
         let a = Instant::now();
-        computation((0, b));
+        let (_, _, init, main_loop) = computation((0, b));
         schedule_duration += a.elapsed();
+        schedule_init_duration += init;
+        schedule_main_loop_duration += main_loop;
 
         let mut b = batch.clone();
         let a = Instant::now();
@@ -598,13 +596,20 @@ pub fn profile_schedule_chunk(batch_size: usize, iter: usize, chunk_fraction: us
 
         let mut b = batch.clone();
         let a = Instant::now();
-        experiment((0, b));
+        let (_, _, init, experiment_scheduling) = experiment((0, b));
         experiment_duration += a.elapsed();
+        experiment_init_duration += init;
+        experiment_scheduling_duration += experiment_scheduling;
     }
 
     println!("For a chunk of {} tx", batch.len());
-    println!("\tschedule_chunk latency = {:?}", schedule_duration / (iter as u32));
-    println!("\t**experimental scheduling = {:?}", experiment_duration / (iter as u32));
+    println!("\tschedule_chunk latency = {:?} (init = {:?}, rest = {:?})", schedule_duration / (iter as u32),
+             schedule_init_duration / (iter as u32),
+             schedule_main_loop_duration / (iter as u32));
+    println!("\t**experimental scheduling = {:?} (init = {:?}, rest = {:?})",
+             experiment_duration / (iter as u32),
+             experiment_init_duration / (iter as u32),
+             experiment_scheduling_duration / (iter as u32));
 
     let avg_sequential = sequential_duration / (iter as u32);
     println!("\tsequential exec latency = {:?} -> full batch should take {:?}", avg_sequential, avg_sequential * (chunk_fraction as u32));

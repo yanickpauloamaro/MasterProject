@@ -1,0 +1,199 @@
+DONE Prepare small commit for DHashMap and PieceDHashMap workload (without addresses)
+DONE Check why monolithic version resizes so much more...
+DONE	Refactor code to make debugging easier <-------
+DONE Commit
+
+// TODO better benchmark with more info about which batch is actually created
+
+Do microbenchmark of profile_schedule_chunk with read/write and exclusive tx
+	NB quite slow as soon as we need more than 2 addresses per tx
+!!!	=> Better when using ThinMap with NoHashHasher or HashMap with AHash
+!!!	NB When the number of addresses increase, performance degrades...
+!!!	NB When the map has to resize, performance degrades...
+		-> need to have an upper bound on the number of addr per tx
+Commit
+--------------------------------
+DONE Do microbenchmark of profile_schedule_chunk with read/write and exclusive tx
+DONE    Add "use hashbrown::{HashMap as HashBrown};" to the microbenchmark
+	=> Try to limit transactions to 10 addresses
+	? Would range based scheduling be faster?
+
+Add new scheduling to parallel_vm
+DONE    Add tx.reads and tx.writes
+        (could merge them into one array but then postponed tx might include writes the address_set)
+    Add scheduling
+        Too slow because of allocation?
+!!!         -> re-allocation should not be amortized over time (reallocating the same size again will probably return the
+                same memory without having to go all the way to OS)
+DONE        Try measuring time allocation time of original implementation
+------------------------------------------------------------------------------------------------------------
+DONE    Test Transfer and TransferPieced on parallel_vm
+            NEW SCHEDULING
+                **experimental scheduling   =  291.052µs (init = 31.072µs, rest = 259.64µs)
+                        10 addr/tx          => 962.624µs (init = 377.189µs, rest = 584.932µs)
+                Transfer(0.0)       { 6.617ms ± 286µs	    (scheduling: 5.001ms ± 292µs, execution: 3.132ms ± 138µs) }
+                TransferPiece(0.0)  { 13.025ms ± 1.141ms	(scheduling: 8.242ms ± 610µs, execution: 10.179ms ± 1.187ms) }
+                Transfer(0.5)       { 7.221ms ± 732µs	(scheduling: 5.297ms ± 410µs, execution: 3.374ms ± 317µs) }
+                TransferPiece(0.5)  { 12.164ms ± 397µs	(scheduling: 7.989ms ± 451µs, execution: 9.787ms ± 380µs) }
+            OLD_SCHEDULING
+                schedule_chunk latency      =  209.188µs (init = 6.582µs, rest = 202.334µs)
+                    10 addr/tx              => 299.717µs (init = 74.444µs, rest = 224.888µs)
+                Transfer(0.0)       { 4.074ms ± 363µs	    (scheduling: 1.549ms ± 126µs, execution: 3.087ms ± 326µs) }
+                TransferPiece(0.0)  { 9.487ms ± 921µs	    (scheduling: 2.38ms ± 125µs, execution: 8.699ms ± 926µs) }
+                Transfer(0.5)       { 4.065ms ± 324µs	(scheduling: 1.601ms ± 117µs, execution: 3.017ms ± 304µs) }
+                TransferPiece(0.5)  { 14.21ms ± 4.248ms	(scheduling: 3.32ms ± 815µs, execution: 11.429ms ± 2.142ms) }
+           CONCLUSION
+                its not ~too~ bad but it is noticeably slower
+                the raw scheduling is MUCH FASTER when it is not run within the VM (i.e. with rayon)
+                Using set/maps with larger capacities is quite a bit slower => need to limit the number of addresses
+------------------------------------------------------------------------------------------------------------
+    Test DHashMap and PieceDHashMap on parallel_vm
+    ParallelImmediate {
+    	8 schedulers, 1 executors {
+    		DHashMap(7, 10, 10; 0.2, 0.2, 0.2, 0.2) {
+    			0.00 ± 0.00 tx/µs
+    			35.598917s ± 0ns	(scheduling: 35.598266s ± 0ns, execution: 162.159ms ± 0ns)
+    		}
+    		PieceDHashMap(7, 10, 10; 0.2, 0.2, 0.2, 0.2) {
+    			0.60 ± 0.00 tx/µs
+    			109.255ms ± 0ns	(scheduling: 99.853ms ± 0ns, execution: 51.075ms ± 0ns)
+    		}
+    		PieceDHashMap(7, 64, 64; 0.2, 0.2, 0.2, 0.2) {
+                0.70 ± 0.00 tx/µs
+                94.227ms ± 0ns	(scheduling: 35.429ms ± 0ns, execution: 83.973ms ± 0ns)
+            }
+    	}
+    ParallelCollect {
+        	8 schedulers, 1 executors {
+        		PieceDHashMap(7, 10, 10; 0.2, 0.2, 0.2, 0.2) {
+        			0.11 ± 0.00 tx/µs
+        			589.908ms ± 0ns	(scheduling: 575.979ms ± 0ns, execution: 37.94ms ± 0ns)
+        		}
+        		PieceDHashMap(7, 64, 64; 0.2, 0.2, 0.2, 0.2) {
+                    0.47 ± 0.00 tx/µs
+                    138.975ms ± 0ns	(scheduling: 112.33ms ± 0ns, execution: 53.202ms ± 0ns)
+                }
+        	}
+        }
+
+------------------------------------------------------------------------------------------------------------
+    Find out why PieceDHashMap is slow
+        checking if access patterns are correct
+            -> they seem to be
+        possible that slowness is due to having to "locking" ranges of addresses
+            -> try only "locking" the head of the bucket
+!!!!        -> much better but still super slow (77.396ms ± 0ns	(scheduling: 66.93ms ± 0ns, execution: 41.59ms ± 0ns))
+        possible that slowness is due to RESIZE forcing many tx to be postponed one by one
+            -> try exiting the loop as soon as there is an ALL_WRITE
+            -> does not seem to help (91.504ms ± 6.104ms	(scheduling: 79.973ms ± 6.418ms, execution: 50.299ms ± 2.587ms))
+        possible that slowness is due to only NB_BUCKETS tx being able to be executed concurrently
+            -> try increasing the number of initial buckets
+            -> doesn't seem to help
+        possible slowness is due to map capacity being too small
+            -> doesn't seem to be the case
+                A
+                	took 3.156ms 	(698 µs, 280 µs, 984 µs, 228 µs)
+                	took 3.327ms 	(690 µs, 344 µs, 1018 µs, 235 µs)
+                	took 3.256ms 	(599 µs, 343 µs, 1023 µs, 236 µs)
+                	took 3.375ms 	(715 µs, 343 µs, 1029 µs, 235 µs)
+                	took 3.022ms 	(349 µs, 343 µs, 1014 µs, 234 µs)
+                	took 3.399ms 	(729 µs, 344 µs, 1029 µs, 234 µs)
+                	took 3.533ms 	(790 µs, 342 µs, 1022 µs, 235 µs)
+                	took 2.754ms 	(469 µs, 277 µs, 959 µs, 227 µs)
+
+                2 * A
+                    took 2.463ms 	(783 µs, 197 µs, 640 µs, 160 µs)
+                    took 3.764ms 	(1091 µs, 342 µs, 1042 µs, 235 µs)
+                    took 3.724ms 	(1041 µs, 349 µs, 1028 µs, 233 µs)
+                    took 3.721ms 	(1050 µs, 345 µs, 1043 µs, 235 µs)
+                    took 3.683ms 	(1004 µs, 346 µs, 1027 µs, 246 µs)
+                    took 3.766ms 	(1069 µs, 345 µs, 1024 µs, 257 µs)
+                    took 3.758ms 	(1074 µs, 350 µs, 1033 µs, 233 µs)
+                    took 1.939ms 	(159 µs, 223 µs, 734 µs, 178 µs)
+
+------------------------------------------------------------------------------------------------------------
+    Try fib
+    For a chunk of 8192 tx (Fibonacci 10)
+    	schedule_chunk latency =    95.166µs (init = 55.976µs, rest = 38.913µs)
+    	**experimental scheduling = 350.684µs (init = 266.433µs, rest = 83.855µs)
+    	sequential exec latency =   1.367537ms -> full batch should take 10.940296ms
+    	parallel exec latency =     677.504µs -> full batch should take 5.420032ms
+    Run n° 1: Fibonacci(10) { This is not ok
+            took 518.773µs 	(46 µs, 0 µs, 0 µs, 0 µs)
+            took 341.774µs 	(58 µs, 0 µs, 0 µs, 0 µs)
+            took 436.642µs 	(93 µs, 0 µs, 0 µs, 0 µs)
+            took 558.304µs 	(66 µs, 0 µs, 0 µs, 0 µs)
+            took 634.341µs 	(59 µs, 0 µs, 0 µs, 0 µs)
+            took 826.146µs 	(48 µs, 0 µs, 0 µs, 0 µs)
+            took 327.335µs 	(9 µs, 0 µs, 0 µs, 0 µs)
+            took 1.518ms 	(157 µs, 0 µs, 0 µs, 0 µs)
+                5.39 ± 0.00 tx/µs
+                12.154ms ± 0ns	(scheduling: 2.084ms ± 0ns, execution: 10.592ms ± 0ns)
+        }
+    Run n° 2: Fibonacci(10) { This is ok, though there is a 500 µs overhead in scheduling
+            took 271.364µs 	(8 µs, 0 µs, 0 µs, 0 µs)
+            took 393.407µs 	(13 µs, 0 µs, 0 µs, 0 µs)
+            took 407.090µs 	(34 µs, 0 µs, 0 µs, 0 µs)
+            took 402.927µs 	(29 µs, 0 µs, 0 µs, 0 µs)
+            took 393.208µs 	(19 µs, 0 µs, 0 µs, 0 µs)
+            took 401.972µs 	(18 µs, 0 µs, 0 µs, 0 µs)
+            took 381.866µs 	(13 µs, 0 µs, 0 µs, 0 µs)
+            took 401.185µs 	(3 µs, 0 µs, 0 µs, 0 µs)
+                5.56 ± 0.00 tx/µs
+                11.796ms ± 0ns	(scheduling: 996µs ± 0ns, execution: 10.795ms ± 0ns)
+        }
+
+    Commit <<<<<<<<<<<<<<<<<<<<<<<<<<<<
+    NUMA Latency graphs <<<<<<<<<<<<<<<
+
+    Conclusion for the week
+        - NUMA latency does impact stuff (already at L3 level)
+        - new_scheduling micro_benchmark is promising in microbenchmark
+        - once put inside the vm it becomes quite bad worse
+            -> overhead of allocation is bad
+            -> overhead of rayon is bad
+            -> a mix of both (allocation inside rayon)
+            => Need to avoid using rayon
+                -> background threads
+                -> All threads schedule?
+                    -> Easier to add NUMA awareness
+                    -> could even allocate the storage from each core?
+        - Big difference between ParallelCollect and ParallelImmediate
+            - ParallelCollect is very sensitive to the number and size of the buckets
+            - ParallelImmediate isn't sensitive at all but is generally faster
+
+        - Still need to implement PieceAuction...
+---------------------------------------------------------
+	Implement AuctionPieced
+    Adapt AuctionWorkload for both normal and pieced version
+    Test AuctionPieced on parallel_vm
+    Commit
+    Clean (clarify the benchmarks that I want to run for the report)
+
+Microbench new version (all threads are schedulers and executers) without rayon
+
+Remove collect
+Bench (AWS)
+
+(Try merging reads and writes in a single array (could save 200 µs?))
+        (If that is not enough, will have to try with more schedulers on AWS)
+
+Bench applications
+------------------------------------------------
+Split *Request into two pieced so that hash computation can be done in parallel with a resize
+    Also it makes the addresses of the transactions more consistent
+    (??this just report the problem?? currently *Request addresses can only specify the base address since they can't know the size of the
+    hash table without first reading....
+Bench PieceDHashMap
+
+(Refactor Fib into Compute?)
+(Microbench Hashmap.clear)
+(Commit)
+
+Do microbenchmark of Fibo, hash (and transfer?)
+
+-> Auction, PieceAuction   (too much contention, short tx)
+-> Transfer, PieceTransfer (configurable contention, short tx)
+-> Fib (no contention, long tx)
+-> DHashMap, PieceDHashMap  (configurable contention, medium tx, good split of pieces)
+-> ??? (???, ???, too many pieces e.g. too much indirection)

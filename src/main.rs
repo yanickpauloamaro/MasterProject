@@ -28,7 +28,7 @@ use bloomfilter::Bloom;
 use futures::SinkExt;
 use futures::task::SpawnExt;
 use rand::rngs::StdRng;
-use rand::{Rng, SeedableRng};
+use rand::{Rng, RngCore, SeedableRng};
 use serde::Serialize;
 use strum::IntoEnumIterator;
 use tinyset::SetU64;
@@ -38,9 +38,9 @@ use testbench::benchmark::{benchmarking, TestBench};
 use testbench::config::{BenchmarkConfig, ConfigFile, RunParameter};
 use testbench::{bounded_array, contract, debug, debugging, micro_benchmark, utils};
 use testbench::applications::{Currency, Workload};
-use testbench::contract::{AtomicFunction, FunctionParameter, SenderAddress, StaticAddress, TestSharedMap, Transaction};
+use testbench::contract::{AccessPattern, AtomicFunction, FunctionParameter, SenderAddress, StaticAddress, TestSharedMap, Transaction};
 use testbench::transaction::{Transaction as BasicTransaction, TransactionAddress};
-use testbench::utils::{batch_with_conflicts, batch_with_conflicts_new_impl, BoundedArray};
+use testbench::utils::{batch_with_conflicts, batch_with_conflicts_new_impl, BoundedArray, mean_ci_str};
 use testbench::vm::{ExecutionResult, Executor};
 use testbench::vm_a::VMa;
 use testbench::vm_c::VMc;
@@ -53,7 +53,8 @@ use testbench::worker_implementation::WorkerC;
 use std::str::FromStr;
 use core_affinity::CoreId;
 use futures::stream::iter;
-use testbench::micro_benchmark::{all_numa_latencies};
+use rand::prelude::SliceRandom;
+use testbench::micro_benchmark::all_numa_latencies;
 
 type A = u64;
 type Set = IntSet<u64>;
@@ -69,76 +70,48 @@ async fn main() -> Result<()> {
     let total = Instant::now();
 
     // TestSharedMap::test_all();
-    // micro_benchmark::bench_hashmaps(100, 2,65536/8);
-    // micro_benchmark::bench_hashmaps(100, 10,65536/8);
+    // transaction_sizes(8, 24);
+    // transaction_sizes(12, 20);
+    // transaction_sizes(16, 16);
+    // transaction_sizes(20, 12);
+    // transaction_sizes(24, 8);
+    // return Ok(());
+
+    // micro_benchmark::bench_hashmaps(100, 2, 65536/8);   // <<<<<<<<<<<<
+    // micro_benchmark::bench_hashmaps(100, 10, 65536/8);   // <<<<<<<<<<<
     // println!("======================================================================================");
     // println!("======================================================================================");
-    // micro_benchmark::bench_hashmaps(100, 2,65536/16);
-    // micro_benchmark::bench_hashmaps(100, 10,65536/16);
+    // micro_benchmark::bench_hashmaps(100, 2, 65536/16);
+    // micro_benchmark::bench_hashmaps(100, 10, 65536/16);
     // println!("======================================================================================");
     // println!("======================================================================================");
-    // micro_benchmark::bench_hashmaps(100, 2,65536/32);
-    // micro_benchmark::bench_hashmaps(100, 10,65536/32);
+    // micro_benchmark::bench_hashmaps(100, 2, 65536/32);
+    // micro_benchmark::bench_hashmaps(100, 10, 65536/32);
     //
     // println!("======================================================================================");
     // println!("======================================================================================");
-    micro_benchmark::profile_schedule_chunk(65536, 1, 8, 4, 0.0);
-    micro_benchmark::profile_schedule_chunk(65536, 1, 16, 4, 0.0);
-    micro_benchmark::profile_schedule_chunk(65536, 1, 32, 4, 0.0);
+    // micro_benchmark::profile_schedule_chunk(65536, 100, 8, 4, 0.0); // <<<<<<
+    // micro_benchmark::profile_schedule_chunk(65536, 1, 16, 4, 0.0);
+    // micro_benchmark::profile_schedule_chunk(65536, 1, 32, 4, 0.0);
 
-    // tokio::task::spawn_blocking(|| {
-    //     // println!("Previous version");
-    //     // benchmarking("benchmark_config.json");
-    //     //
-    //     // println!();
-    //     // println!("New version");
-    //     TestBench::benchmark("benchmark_config.json")
-    // }).await.expect("Task panicked")?;
+    tokio::task::spawn_blocking(|| {
+        // println!("Previous version");
+        // benchmarking("benchmark_config.json");
+        //
+        // println!();
+        // println!("New version");
+        TestBench::benchmark("benchmark_config.json")
+    }).await.expect("Task panicked")?;
 
-    let from_power = 2;
-    // let to_power = 18;
-    let to_power = 5;
-
-    // match numa_latency_between(0, 0, from_power, to_power).await {
+    // let from_power = 2;
+    // // let to_power = 18;
+    // let to_power = 5;
+    // let nb_cores = 4;
+    //
+    // match all_numa_latencies(nb_cores, from_power, to_power).await {
     //     Ok(_) => {},
     //     Err(e) => eprintln!("Failed to run micro benchmark: {:?}", e)
     // }
-
-    match all_numa_latencies(4, from_power, to_power).await {
-        Ok(_) => {},
-        Err(e) => eprintln!("Failed to run micro benchmark: {:?}", e)
-    }
-
-    // let param = BenchmarkConfig{
-    //     vm_types: vec![VmType::A],
-    //     nb_schedulers: vec![0],
-    //     nb_executors: vec![0],
-    //     batch_sizes: vec![0],
-    //     workloads: vec![Workload::TransferPiece(0.0), Workload::Transfer(0.0)],
-    //     repetitions: 1,
-    //     warmup: 1,
-    //     seed: Some(1),
-    // };
-    //
-    // param.save("config_test.json")?;
-
-    // let workload = Workload::from_str("Transfer(0.0)").unwrap();
-    // let workload = Workload::from_str("Transfer").unwrap();
-    // println!("{:?}", workload);
-    // println!("{:?}, {:?}", Workload::Transfer(0.0), Workload::TransferPiece(0.0));
-
-    // let param = BenchmarkConfig::new("config_test.json")?;
-    // println!("{:?}", param);
-
-    // #[derive(Serialize)]
-    // struct TupleStruct(i32, i32);
-    // let param = TupleStruct(0, 1);
-    //
-    // let str = serde_json::to_string_pretty(&param)
-    //     .context(format!("Unable to create json of {}", "config_test.json"))?;
-    //
-    // fs::write("benchmark_config.json", str)
-    //     .context(format!("Unable to write {} to file", "config_test.json"))?;
 
     // manual_test()?;
 
@@ -392,6 +365,7 @@ async fn wip_main() -> Result<()>{
         .map(|(tx_index, tx)| Transaction {
             sender: tx.from as SenderAddress,
             function: AtomicFunction::Transfer,
+            tx_index,
             // nb_addresses: 2,
             addresses: [tx.from as StaticAddress, tx.to as StaticAddress],
             params: [2, tx_index as FunctionParameter]

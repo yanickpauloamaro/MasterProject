@@ -18,6 +18,21 @@ pub type FunctionParameter = u32;
 pub const MAX_NB_ADDRESSES: usize = 2;
 pub const MAX_NB_PARAMETERS: usize = 2;
 
+#[derive(Eq, PartialEq)]
+pub enum AccessType {
+    Read,
+    Write,
+    TryWrite
+}
+
+#[derive(Eq, PartialEq, Clone, Copy)]
+pub enum AccessPattern {
+    Address(StaticAddress),
+    Range(StaticAddress, StaticAddress),
+    All,
+    Done
+}
+
 #[derive(Clone, Debug, Copy)]
 pub struct Transaction<const ADDRESS_COUNT: usize, const PARAM_COUNT: usize> {
     pub sender: SenderAddress,
@@ -25,6 +40,64 @@ pub struct Transaction<const ADDRESS_COUNT: usize, const PARAM_COUNT: usize> {
     pub tx_index: usize,    // Could use u32
     pub addresses: [StaticAddress; ADDRESS_COUNT],
     pub params: [FunctionParameter; PARAM_COUNT],
+}
+
+impl<const ADDRESS_COUNT: usize, const PARAM_COUNT: usize> Transaction<ADDRESS_COUNT, PARAM_COUNT> {
+    // TODO Add AccessType inside AccessPattern so that only 1 array need to be returned
+    pub fn accesses(&self) -> (Option<[AccessPattern; ADDRESS_COUNT]>, Option<[AccessPattern; ADDRESS_COUNT]>) {
+        let mut reads = [AccessPattern::Done; ADDRESS_COUNT];
+        let mut writes = [AccessPattern::Done; ADDRESS_COUNT];
+
+        match self.function {
+            AtomicFunction::Transfer => {
+                writes[0] = AccessPattern::Address(self.addresses[0]);
+                writes[1] = AccessPattern::Address(self.addresses[1]);
+                (None, Some(writes))
+            },
+            AtomicFunction::TransferDecrement | AtomicFunction::TransferIncrement => {
+                writes[0] = AccessPattern::Address(self.addresses[0]);
+                (None, Some(writes))
+            },
+            AtomicFunction::Fibonacci => (None, None),
+            AtomicFunction::DHashMap(_) => {
+                writes[0] = AccessPattern::All;
+                (None, Some(writes))
+            },
+            AtomicFunction::PieceDHashMap(op) => {
+                use d_hash_map::PiecedOperation::*;
+                match op {
+                    InsertRequest | RemoveRequest | GetRequest | HasRequest => {
+                        let hash_table_start = 0;
+                        reads[0] = AccessPattern::Address(hash_table_start);
+                        (Some(reads), None)
+                    },
+                    TryInsert | Remove => {
+                        // let bucket_location = self.addresses[0] as StaticAddress;
+                        // let bucket_end = self.addresses[1] as StaticAddress;
+                        // writes[0] = AccessPattern::Range(bucket_location, bucket_end);
+                        // (None, Some(writes))
+                        let bucket_location = self.addresses[0] as StaticAddress;
+                        writes[0] = AccessPattern::Address(bucket_location);
+                        (None, Some(writes))
+                    },
+                    ResizeInsert => {
+                        writes[0] = AccessPattern::All;
+                        (None, Some(writes))
+                    },
+                    Get | Has => {
+                        // let bucket_location = self.addresses[0] as StaticAddress;
+                        // let bucket_end = self.addresses[1] as StaticAddress;
+                        // reads[0] = AccessPattern::Range(bucket_location, bucket_end);
+                        // (Some(reads), None)
+                        let bucket_location = self.addresses[0] as StaticAddress;
+                        reads[0] = AccessPattern::Address(bucket_location);
+                        (Some(reads), None)
+                    }
+                }
+            },
+            _ => todo!()
+        }
+    }
 }
 
 #[repr(u8)]
@@ -291,6 +364,7 @@ impl AtomicFunction {
                     Err(failure) => FunctionResult::KeyValueError(failure)
                 }
             }
+
             AtomicFunction::DHashMap(op) => {
 
                 // Equivalent of *Request for pieced version
@@ -332,7 +406,6 @@ impl AtomicFunction {
                     },
                 }
             },
-
             AtomicFunction::PieceDHashMap(op) => {
 
                 use d_hash_map::PiecedOperation::*;
@@ -341,6 +414,7 @@ impl AtomicFunction {
                 let res = match op {
                     InsertRequest | RemoveRequest | GetRequest | HasRequest => {
                         // println!("------------ Compute Hash ---------------");
+                        // TODO Split *Request into two (it also makes the addresses accessed more explicit)
                         let key = tx.params[0];
                         let (
                             _hash,
@@ -441,6 +515,7 @@ impl AtomicFunction {
     }
 }
 
+//region SharedMap
 #[derive(Debug)]
 pub struct SharedMap<'a, V: Clone + Debug> {
     pub base_address: Cell<*mut Option<V>>,
@@ -843,4 +918,4 @@ impl TestSharedMap {
 struct Balance {
     pub amount: u64
 }
-
+//endregion

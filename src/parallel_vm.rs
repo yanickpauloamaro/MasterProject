@@ -1,3 +1,4 @@
+use std::hash::BuildHasherDefault;
 use std::ops::Add;
 use std::sync::Arc;
 use std::thread::JoinHandle;
@@ -6,10 +7,12 @@ use crossbeam::channel::{Receiver, Sender, unbounded};
 use crossbeam::select;
 use futures::SinkExt;
 use itertools::Itertools;
+use nohash_hasher::{BuildNoHashHasher, NoHashHasher};
 use rayon::prelude::*;
 use strum::IntoEnumIterator;
+use thincollections::thin_map::ThinMap;
 use tokio::time::{Instant, Duration};
-use crate::contract::{AtomicFunction, MAX_NB_ADDRESSES, StaticAddress, Transaction};
+use crate::contract::{AccessPattern, AccessType, AtomicFunction, MAX_NB_ADDRESSES, StaticAddress, Transaction};
 use crate::contract::FunctionResult::Another;
 use crate::key_value::KeyValueOperation;
 use crate::vm::Executor;
@@ -162,10 +165,10 @@ impl ParallelVM {
     fn get_address_set_capacity(&self, chunk_size: usize) -> usize {
         // max(MAX_NB_ADDRESSES * chunk_size, MAX_NB_ADDRESSES * 65536 / (self.nb_schedulers /2))
         // MAX_NB_ADDRESSES * 65536
-        MAX_NB_ADDRESSES * chunk_size
+        MAX_NB_ADDRESSES * chunk_size // TODO
     }
 
-    pub fn schedule_chunk<const A: usize, const P: usize>(&self, mut chunk: Vec<Transaction<A, P>>) -> (Vec<Transaction<A, P>>, Vec<Transaction<A, P>>) {
+    pub fn schedule_chunk_old<const A: usize, const P: usize>(&self, mut chunk: Vec<Transaction<A, P>>) -> (Vec<Transaction<A, P>>, Vec<Transaction<A, P>>) {
         let a = Instant::now();
         let mut scheduled = Vec::with_capacity(chunk.len());
         let mut postponed = Vec::with_capacity(chunk.len());
@@ -174,15 +177,20 @@ impl ParallelVM {
             self.get_address_set_capacity(chunk.len())
         );
 
+        // let init_duration = a.elapsed();
+        // let mut duration = Duration::from_secs(0);
         'outer: for tx in chunk {
             if tx.function != AtomicFunction::KeyValue(KeyValueOperation::Scan) {
+                // let start = Instant::now();
                 for addr in tx.addresses.iter() {
                     if !working_set.insert(*addr) {
                         // Can't add tx to schedule
                         postponed.push(tx);
+                        // duration += start.elapsed();
                         continue 'outer;
                     }
                 }
+                // duration += start.elapsed();
             } else {
                 // eprintln!("Processing a scan operation");
                 for addr in tx.addresses[0]..tx.addresses[1] {
@@ -196,6 +204,176 @@ impl ParallelVM {
             scheduled.push(tx);
         }
         // println!("\ttook {:?}", a.elapsed());
+        // total, init, read+writes
+        // println!("\ttook {:?} ({} µs, {} µs)", a.elapsed(), init_duration.as_micros(), duration.as_micros());
+        (scheduled, postponed)
+    }
+
+    pub fn schedule_chunk<const A: usize, const P: usize>(&self, mut chunk: Vec<Transaction<A, P>>) -> (Vec<Transaction<A, P>>, Vec<Transaction<A, P>>) {
+        let a = Instant::now();
+        let mut scheduled = Vec::with_capacity(chunk.len());
+        let mut postponed = Vec::with_capacity(chunk.len());
+        let mut remainder = 0;
+
+        let mut some_reads = false;
+        let mut some_writes = false;
+
+        let mut read_locked = false;
+        let mut write_locked = false;
+
+        let addresses_per_tx = A;
+        // let addresses_per_tx = 10;
+        let mut address_map_capacity = addresses_per_tx * chunk.len();
+        address_map_capacity *= 2;
+
+        type Map = ThinMap<StaticAddress, AccessType, BuildHasherDefault<NoHashHasher<StaticAddress>>>;
+        let mut address_map: Map = ThinMap::with_capacity_and_hasher(address_map_capacity, BuildNoHashHasher::default());
+
+        let can_read = |addr: StaticAddress, map: &mut Map| {
+            let entry = map.entry(addr).or_insert(AccessType::Read);
+            *entry == AccessType::Read
+        };
+        let can_write = |addr: StaticAddress, map: &mut Map| {
+            let entry = map.entry(addr).or_insert(AccessType::TryWrite);
+            if *entry == AccessType::TryWrite {
+                *entry = AccessType::Write;
+                true
+            } else {
+                false
+            }
+        };
+
+        let init_duration = a.elapsed();
+        let mut base_case_duration = Duration::from_secs(0);
+        let mut reads_duration = Duration::from_secs(0);
+        let mut writes_duration = Duration::from_secs(0);
+
+        'backlog: for tx in chunk.iter() {
+            let tx = *tx;
+            remainder += 1;
+            let base_case_start = Instant::now();
+            let (possible_reads, possible_writes) = tx.accesses();
+            let reads = possible_reads.as_ref().map_or([].as_slice(), |inside| inside.as_slice());
+            let writes = possible_writes.as_ref().map_or([].as_slice(), |inside| inside.as_slice());
+
+            // Tx without any memory accesses ------------------------------------------------------
+            if reads.is_empty() && writes.is_empty() {
+                scheduled.push(tx);
+                continue 'backlog;
+            }
+
+            // Only reads are allowed --------------------------------------------------------------
+            if read_locked {
+                if writes.is_empty() { scheduled.push(tx); }
+                else { postponed.push(tx); }
+                continue 'backlog;
+            }
+
+            // All transactions with accesses will be postponed ------------------------------------
+            if write_locked {
+                postponed.push(tx);
+                continue 'backlog;
+            }
+            base_case_duration += base_case_start.elapsed();
+
+            // NB: A tx might be postponed after having some of its addresses added to the address set
+            // It is probably too expensive to rollback those changes. TODO Check
+            // Start with reads because they are less problematic if the tx is postponed
+            // Process reads -----------------------------------------------------------------------
+            let read_start = Instant::now();
+            'reads: for read in reads {
+                match read {
+                    AccessPattern::Address(addr) => {
+                        some_reads = true;
+                        if !can_read(*addr, &mut address_map) {
+                            postponed.push(tx);
+                            reads_duration += read_start.elapsed();
+                            continue 'backlog;
+                        }
+                    },
+                    AccessPattern::Range(from, to) => {
+                        some_reads = true;
+                        assert!(from < to);
+                        'range: for addr in (*from)..(*to) {
+                            if !can_read(addr, &mut address_map) {
+                                postponed.push(tx);
+                                reads_duration += read_start.elapsed();
+                                continue 'backlog;
+                            }
+                        }
+                    },
+                    AccessPattern::All => {
+                        if some_writes {
+                            postponed.push(tx);
+                        } else {
+                            scheduled.push(tx);
+                            read_locked = true;
+                        }
+                        // Read-all transactions can't have any other accesses, can proceed with the next tx
+                        reads_duration += read_start.elapsed();
+                        continue 'backlog;
+                    },
+                    AccessPattern::Done => {
+                        reads_duration += read_start.elapsed();
+                        break 'reads;
+                    }
+                }
+            }
+            reads_duration += read_start.elapsed();
+
+            // Process writes ----------------------------------------------------------------------
+            let writes_start = Instant::now();
+            'writes: for write in writes {
+                match write {
+                    AccessPattern::Address(addr) => {
+                        some_writes = true;
+                        if !can_write(*addr, &mut address_map) {
+                            postponed.push(tx);
+                            writes_duration += writes_start.elapsed();
+                            continue 'backlog;
+                        }
+                    },
+                    AccessPattern::Range(from, to) => {
+                        some_writes = true;
+                        assert!(from < to);
+                        'range: for addr in (*from)..(*to) {
+                            if !can_write(addr, &mut address_map) {
+                                postponed.push(tx);
+                                writes_duration += writes_start.elapsed();
+                                continue 'backlog;
+                            }
+                        }
+                    },
+                    AccessPattern::All => {
+                        if some_reads || some_writes {
+                            postponed.push(tx);
+                        } else {
+                            scheduled.push(tx);
+                            write_locked = true;
+                            // TODO just dev
+                            // postponed.extend_from_slice(&mut chunk[remainder..]);
+                            // break 'backlog;
+                        }
+
+                        // Write-all transactions can't have any other accesses, can proceed with the next tx
+                        continue 'backlog;
+                    },
+                    AccessPattern::Done => {
+                        writes_duration += writes_start.elapsed();
+                        break 'writes;
+                    }
+                }
+            }
+            writes_duration += writes_start.elapsed();
+
+            // Transaction can be executed in parallel
+            scheduled.push(tx);
+        }
+
+        let total = a.elapsed();
+        // println!("Scheduled: {}, postponed: {}, took {:?}", scheduled.len(), postponed.len(), total);
+        // total, init, base_case, reads, writes
+        // println!("\ttook {:.3?} \t({:?} µs, {:?} µs, {:?} µs, {:?} µs)", total, init_duration.as_micros(), base_case_duration.as_micros(), reads_duration.as_micros(), writes_duration.as_micros());
         (scheduled, postponed)
     }
 
