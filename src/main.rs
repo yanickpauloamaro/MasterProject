@@ -36,7 +36,7 @@ use tokio::task::JoinHandle;
 
 use testbench::benchmark::{benchmarking, TestBench};
 use testbench::config::{BenchmarkConfig, ConfigFile, RunParameter};
-use testbench::{bounded_array, contract, debug, debugging, utils};
+use testbench::{bounded_array, contract, debug, debugging, micro_benchmark, utils};
 use testbench::applications::{Currency, Workload};
 use testbench::contract::{AtomicFunction, FunctionParameter, SenderAddress, StaticAddress, TestSharedMap, Transaction};
 use testbench::transaction::{Transaction as BasicTransaction, TransactionAddress};
@@ -69,6 +69,22 @@ async fn main() -> Result<()> {
     let total = Instant::now();
 
     // TestSharedMap::test_all();
+    // micro_benchmark::bench_hashmaps(100, 2,65536/8);
+    // micro_benchmark::bench_hashmaps(100, 10,65536/8);
+    // println!("======================================================================================");
+    // println!("======================================================================================");
+    // micro_benchmark::bench_hashmaps(100, 2,65536/16);
+    // micro_benchmark::bench_hashmaps(100, 10,65536/16);
+    // println!("======================================================================================");
+    // println!("======================================================================================");
+    // micro_benchmark::bench_hashmaps(100, 2,65536/32);
+    // micro_benchmark::bench_hashmaps(100, 10,65536/32);
+    //
+    // println!("======================================================================================");
+    // println!("======================================================================================");
+    micro_benchmark::profile_schedule_chunk(65536, 1, 8, 4, 0.0);
+    micro_benchmark::profile_schedule_chunk(65536, 1, 16, 4, 0.0);
+    micro_benchmark::profile_schedule_chunk(65536, 1, 32, 4, 0.0);
 
     // tokio::task::spawn_blocking(|| {
     //     // println!("Previous version");

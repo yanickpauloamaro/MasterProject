@@ -1,7 +1,7 @@
 use ahash::{AHasher, RandomState};
 use ahash::AHashMap;
 use std::collections::HashMap;
-// use hashbrown::HashMap;
+use hashbrown::{HashMap as BrownMap};
 use std::fmt::{Debug, Formatter};
 use std::hash::BuildHasherDefault;
 use std::mem;
@@ -408,8 +408,10 @@ pub fn profile_schedule_chunk(batch_size: usize, iter: usize, chunk_fraction: us
         let mut read_locked = false;
         let mut write_locked = false;
 
-        // let mut address_map_capacity = 2 * batch_size / chunk_fraction;
-        let mut address_map_capacity = 10 * batch_size / chunk_fraction;
+        // let addresses_per_tx = 2;
+        let addresses_per_tx = 10;
+        let mut address_map_capacity = addresses_per_tx * batch_size / chunk_fraction;
+        address_map_capacity *= 2;
 
         // type Map = HashMap<StaticAddress, AccessType>;
         // let mut address_map: HashMap<StaticAddress, AccessType> = HashMap::with_capacity(address_map_capacity);
@@ -422,8 +424,7 @@ pub fn profile_schedule_chunk(batch_size: usize, iter: usize, chunk_fraction: us
         // let mut address_map: ThinMap<StaticAddress, AccessType> = ThinMap::with_capacity(address_map_capacity);
 
         type Map = ThinMap<StaticAddress, AccessType, BuildHasherDefault<NoHashHasher<StaticAddress>>>;
-        let mut address_map: Map = ThinMap::with_capacity_and_hasher(
-            address_map_capacity, BuildNoHashHasher::default());
+        let mut address_map: Map = ThinMap::with_capacity_and_hasher(address_map_capacity, BuildNoHashHasher::default());
 
         let mut can_read = |addr: StaticAddress, address_map: &mut Map| {
             let entry = address_map.entry(addr).or_insert(AccessType::Read);
@@ -573,7 +574,7 @@ pub fn profile_schedule_chunk(batch_size: usize, iter: usize, chunk_fraction: us
             scheduled.push(tx);
         }
 
-        println!("Scheduled: {}, postponed: {}", scheduled.len(), postponed.len());
+        // println!("Scheduled: {}, postponed: {}", scheduled.len(), postponed.len());
         (scheduled, postponed)
     };
 
@@ -603,131 +604,199 @@ pub fn profile_schedule_chunk(batch_size: usize, iter: usize, chunk_fraction: us
 
     println!("For a chunk of {} tx", batch.len());
     println!("\tschedule_chunk latency = {:?}", schedule_duration / (iter as u32));
+    println!("\t**experimental scheduling = {:?}", experiment_duration / (iter as u32));
+
     let avg_sequential = sequential_duration / (iter as u32);
     println!("\tsequential exec latency = {:?} -> full batch should take {:?}", avg_sequential, avg_sequential * (chunk_fraction as u32));
+
     let avg_parallel = parallel_duration / (iter as u32);
     println!("\tparallel exec latency = {:?} -> full batch should take {:?}", avg_parallel, avg_parallel * (chunk_fraction as u32));
-
-
     println!();
-    println!("\texperimental scheduling latency = {:?}", experiment_duration / (iter as u32));
 }
 //endregion
 
-//region HashMaps
+//region Benchmarking HashMaps ---------------------------------------------------------------------
 pub fn bench_hashmaps(nb_iter: usize, addr_per_tx: usize, batch_size: usize) {
-    println!("Benchmarking hashmaps:");
-    println!("Batch of {} tx with {} addr per tx -------------------------", batch_size, addr_per_tx);
+    println!("Batch of {} tx with {} addr per tx = {} insertions ({} reps)", batch_size, addr_per_tx, batch_size * addr_per_tx, nb_iter);
     let mut rng = StdRng::seed_from_u64(10);
     let storage_size = 100 * batch_size;
     let mut addresses: Vec<StaticAddress> = (0..storage_size).map(|el| el as StaticAddress).collect();
     addresses.shuffle(&mut rng);
     addresses.truncate(addr_per_tx * batch_size);
     let map_capacity = 2 * addresses.len();
+    
+    let mut measurements = vec!();
 
-    println!("HashMap:");
-    {
+    measurements.push(HashMap::<StaticAddress, StaticAddress>::measure(nb_iter, &addresses));
+    measurements.push(HashMapNoHash::measure(nb_iter, &addresses));
+    measurements.push(HashMapAHash::measure(nb_iter, &addresses));
+
+    measurements.push(BrownMap::<StaticAddress, StaticAddress>::measure(nb_iter, &addresses));
+    measurements.push(BrownMapNoHash::measure(nb_iter, &addresses));
+
+    measurements.push(ThinMap::<StaticAddress, StaticAddress>::measure(nb_iter, &addresses));
+    measurements.push(ThinMapNoHash::measure(nb_iter, &addresses));
+    measurements.push(ThinMapAHash::measure(nb_iter, &addresses));
+
+    println!("{}", Table::new(measurements).to_string());
+    println!();
+
+    //Expected results: https://github.com/rust-lang/hashbrown
+}
+
+trait HashMapWrapper {
+    fn print_name() -> String where Self: Sized;
+    fn with_capacity(capacity: usize) -> Self where Self: Sized;
+    fn insert(&mut self, key: StaticAddress, value: StaticAddress) -> Option<StaticAddress>;
+    fn measure(nb_iter: usize, to_insert: &Vec<StaticAddress>) -> HashMapMeasurement where Self: Sized {
+        
         let mut durations = Vec::with_capacity(nb_iter);
+        let capacity = 2 * to_insert.len(); // capacity must be slightly larger than the number of value to insert
+        
         for _ in 0..nb_iter {
-            let mut map = HashMap::with_capacity(map_capacity);
+            let mut map: Box<dyn HashMapWrapper> = Box::new(Self::with_capacity(capacity));
 
             let start = Instant::now();
-            for addr in addresses.iter() {
+            for addr in to_insert.iter() {
                 map.insert(*addr, *addr);
             }
             durations.push(start.elapsed());
         }
         let (mean, ci) = mean_ci(&durations);
-        println!("    {:?} ± {:?} -> {:.3?} per inserts", mean, ci, mean/(batch_size as u32));
-        // println!();
-    }
 
-    println!("HashMap with NoHashHasher:");
-    {
-        let mut durations = Vec::with_capacity(nb_iter);
-        for _ in 0..nb_iter {
-            let mut map: HashMap<u32, u32, BuildHasherDefault<NoHashHasher<StaticAddress>>> = HashMap::with_capacity_and_hasher(
-                map_capacity, BuildNoHashHasher::default());
-
-            let start = Instant::now();
-            for addr in addresses.iter() {
-                map.insert(*addr, *addr);
-            }
-            durations.push(start.elapsed());
+        HashMapMeasurement {
+            hash_map_type: Self::print_name(),
+            mean_latency: format!("{:?}", mean),
+            ci: format!("{:?}", ci),
         }
-        let (mean, ci) = mean_ci(&durations);
-        println!("    {:?} ± {:?} -> {:.3?} per inserts", mean, ci, mean/(batch_size as u32));
-        // println!();
-    }
-
-    println!("HashMap with AHash:");
-    {
-        let mut durations = Vec::with_capacity(nb_iter);
-        for _ in 0..nb_iter {
-            let mut map = AHashMap::with_capacity(map_capacity);
-
-            let start = Instant::now();
-            for addr in addresses.iter() {
-                map.insert(*addr, *addr);
-            }
-            durations.push(start.elapsed());
-        }
-        let (mean, ci) = mean_ci(&durations);
-        println!("    {:?} ± {:?} -> {:.3?} per inserts", mean, ci, mean/(batch_size as u32));
-        // println!();
-    }
-
-    println!("ThinMap:");
-    {
-        let mut durations = Vec::with_capacity(nb_iter);
-        for _ in 0..nb_iter {
-            let mut map = ThinMap::with_capacity(map_capacity);
-
-            let start = Instant::now();
-            for addr in addresses.iter() {
-                map.insert(*addr, *addr);
-            }
-            durations.push(start.elapsed());
-        }
-        let (mean, ci) = mean_ci(&durations);
-        println!("    {:?} ± {:?} -> {:.3?} per inserts", mean, ci, mean/(batch_size as u32));
-        // println!();
-    }
-
-    println!("ThinMap with NoHashHasher:");
-    {
-        let mut durations = Vec::with_capacity(nb_iter);
-        for _ in 0..nb_iter {
-            let mut map: ThinMap<u32, u32, BuildHasherDefault<NoHashHasher<StaticAddress>>> = ThinMap::with_capacity_and_hasher(
-                map_capacity, BuildNoHashHasher::default());
-
-            let start = Instant::now();
-            for addr in addresses.iter() {
-                map.insert(*addr, *addr);
-            }
-            durations.push(start.elapsed());
-        }
-        let (mean, ci) = mean_ci(&durations);
-        println!("    {:?} ± {:?} -> {:.3?} per inserts", mean, ci, mean/(batch_size as u32));
-        // println!();
-    }
-
-    println!("ThinMap with AHash:");
-    {
-        let mut durations = Vec::with_capacity(nb_iter);
-        for _ in 0..nb_iter {
-            let mut map: ThinMap<u32, u32, BuildHasherDefault<AHasher>> = ThinMap::with_capacity_and_hasher(
-                map_capacity, BuildHasherDefault::default());
-
-            let start = Instant::now();
-            for addr in addresses.iter() {
-                map.insert(*addr, *addr);
-            }
-            durations.push(start.elapsed());
-        }
-        let (mean, ci) = mean_ci(&durations);
-        println!("    {:?} ± {:?} -> {:.3?} per inserts", mean, ci, mean/(batch_size as u32));
-        println!();
     }
 }
+
+#[derive(Tabled)]
+struct HashMapMeasurement {
+    pub hash_map_type: String,
+    pub mean_latency: String,
+    pub ci: String,
+}
+
+//region Hash map wrappers
+// HashMap
+impl HashMapWrapper for HashMap<StaticAddress, StaticAddress> {
+    fn print_name() -> String where Self: Sized {
+        format!("HashMap")
+    }
+
+    fn with_capacity(capacity: usize) -> Self where Self: Sized {
+        HashMap::with_capacity(capacity)
+    }
+
+    fn insert(&mut self, key: StaticAddress, value: StaticAddress) -> Option<StaticAddress> {
+        self.insert(key, value)
+    }
+}
+
+type HashMapNoHash = HashMap<StaticAddress, StaticAddress, BuildHasherDefault<NoHashHasher<StaticAddress>>>;
+impl HashMapWrapper for HashMapNoHash {
+    fn print_name() -> String where Self: Sized {
+        format!("HashMap (NoHash)")
+    }
+    fn with_capacity(capacity: usize) -> Self where Self: Sized {
+        HashMap::with_capacity_and_hasher(capacity, BuildNoHashHasher::default())
+    }
+
+    fn insert(&mut self, key: StaticAddress, value: StaticAddress) -> Option<StaticAddress> {
+        self.insert(key, value)
+    }
+}
+
+type HashMapAHash = HashMap<StaticAddress, StaticAddress, BuildHasherDefault<AHasher>>;
+impl HashMapWrapper for HashMapAHash {
+    fn print_name() -> String where Self: Sized {
+        format!("HashMap (AHash)")
+    }
+    fn with_capacity(capacity: usize) -> Self where Self: Sized {
+        HashMap::with_capacity_and_hasher(capacity, BuildHasherDefault::default())
+    }
+
+    fn insert(&mut self, key: StaticAddress, value: StaticAddress) -> Option<StaticAddress> {
+        self.insert(key, value)
+    }
+}
+
+// BrownMap
+impl HashMapWrapper for BrownMap<StaticAddress, StaticAddress> {
+    fn print_name() -> String where Self: Sized {
+        format!("BrownMap")
+    }
+    
+    fn with_capacity(capacity: usize) -> Self where Self: Sized {
+        BrownMap::with_capacity(capacity)
+    }
+
+    fn insert(&mut self, key: StaticAddress, value: StaticAddress) -> Option<StaticAddress> {
+        self.insert(key, value)
+    }
+}
+
+type BrownMapNoHash = BrownMap<StaticAddress, StaticAddress, BuildHasherDefault<NoHashHasher<StaticAddress>>>;
+impl HashMapWrapper for BrownMapNoHash {
+    fn print_name() -> String where Self: Sized {
+        format!("BrownMap (NoHash)")
+    }
+    
+    fn with_capacity(capacity: usize) -> Self where Self: Sized {
+        BrownMap::with_capacity_and_hasher(capacity, BuildNoHashHasher::default())
+    }
+
+    fn insert(&mut self, key: StaticAddress, value: StaticAddress) -> Option<StaticAddress> {
+        self.insert(key, value)
+    }
+}
+
+// ThinMap
+impl HashMapWrapper for ThinMap<StaticAddress, StaticAddress> {
+    fn print_name() -> String where Self: Sized {
+        format!("ThinMap")
+    }
+    
+    fn with_capacity(capacity: usize) -> Self where Self: Sized {
+        ThinMap::with_capacity(capacity)
+    }
+
+    fn insert(&mut self, key: StaticAddress, value: StaticAddress) -> Option<StaticAddress> {
+        self.insert(key, value)
+    }
+}
+
+type ThinMapNoHash = ThinMap<StaticAddress, StaticAddress, BuildHasherDefault<NoHashHasher<StaticAddress>>>;
+impl HashMapWrapper for ThinMapNoHash {
+    fn print_name() -> String where Self: Sized {
+        format!("ThinMap (NoHash)")
+    }
+    
+    fn with_capacity(capacity: usize) -> Self where Self: Sized {
+        ThinMap::with_capacity_and_hasher(capacity, BuildNoHashHasher::default())
+    }
+
+    fn insert(&mut self, key: StaticAddress, value: StaticAddress) -> Option<StaticAddress> {
+        self.insert(key, value)
+    }
+}
+
+type ThinMapAHash = ThinMap<StaticAddress, StaticAddress, BuildHasherDefault<AHasher>>;
+impl HashMapWrapper for ThinMapAHash {
+    fn print_name() -> String where Self: Sized {
+        format!("ThinMap (AHash)")
+    }
+    
+    fn with_capacity(capacity: usize) -> Self where Self: Sized {
+        ThinMap::with_capacity_and_hasher(capacity, BuildHasherDefault::default())
+    }
+
+    fn insert(&mut self, key: StaticAddress, value: StaticAddress) -> Option<StaticAddress> {
+        self.insert(key, value)
+    }
+}
+//endregion
+
 //endregion
