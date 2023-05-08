@@ -230,6 +230,10 @@ pub async fn numa_latency(
 pub async fn all_numa_latencies(nb_cores: usize, from_power: usize, to_power: usize) -> anyhow::Result<()> {
 
     let nb_sizes = to_power - from_power;
+    let sizes_bytes = (from_power..to_power)
+        .map(|power_of_two| ((1 << power_of_two) << KILO_OFFSET) as usize)
+        .collect_vec();
+
     let mut measurements = Vec::with_capacity(nb_cores * nb_sizes);
 
     let mut core_measurements = vec![vec!(); nb_cores];
@@ -240,11 +244,10 @@ pub async fn all_numa_latencies(nb_cores: usize, from_power: usize, to_power: us
         let to_size = adapt_unit((1 << to_power) << KILO_OFFSET);
         eprint!("Benchmarking latency to core {} from {} to {}", core, from_size, to_size);
 
-        for (size_index, power_of_two) in (from_power..to_power).enumerate() {
-            let array_size_bytes = (1 << power_of_two) << KILO_OFFSET;
+        for (size_index, array_size_bytes) in sizes_bytes.iter().enumerate() {
             // eprintln!("\n\tarray size = {}", adapt_unit(array_size_bytes));
             let measurement = numa_latency(0, core,
-                array_size_bytes, MILLION, 300).await?;
+                *array_size_bytes, MILLION, 300).await?;
 
             core_measurements[core].push(SizeLatencyMeasurement::from(&measurement));
             sizes_measurements[size_index].push(CoreLatencyMeasurement::from(&measurement));
@@ -269,10 +272,37 @@ pub async fn all_numa_latencies(nb_cores: usize, from_power: usize, to_power: us
     //     println!()
     // }
 
-    println!("All measurement: =====================================================================");
-    for measurement in measurements {
-        println!("{}", measurement.to_json());
+    // println!("All measurement: =====================================================================");
+    // for measurement in measurements {
+    //     println!("{}", measurement.to_json());
+    // }
+    /*
+    let sizes_str = ['4KB', '8KB', '16KB', ...];
+    let sizes = [4000, 8000, 16000, ...];
+    let all_core_values = [
+        ['Core#0', 2.282, 2.215, 2.198],
+        ['Core#1', 2.218, 2.205, 2.200],
+        ['Core#2', 2.195, 2.201, 2.194],
+        ['Core#3', 2.229, 2.179, 2.200],
+        ...
+      ];
+      // getconf -a | grep CACHE
+     */
+    let sizes_str = sizes_bytes.iter().map(|size| adapt_unit(*size)).collect_vec();
+    println!("let sizes_str = {:?};", sizes_str);
+    println!("let sizes = {:?};", sizes_bytes);
+    println!("let all_core_values = [");
+    for (core, measurements) in core_measurements.into_iter().enumerate() {
+        print!("\t['Core#{}'", core);
+        for measurement in measurements.into_iter() {
+            let mut str = measurement.mean;
+            str.retain(|c| !("nµms".contains(c)));
+            print!(", {}", str);
+        }
+        println!("],");
     }
+    println!("];");
+
 
     Ok(())
 }
