@@ -1,0 +1,62 @@
+Sequential {
+	8 schedulers, 24 executors {
+		Transfer(0.0) {
+			51.04 ± 1.43 tx/µs
+			1.284ms ± 35µs
+		}
+		Transfer(0.5) {
+			51.56 ± 1.42 tx/µs
+			1.271ms ± 34µs
+		}
+		TransferPiece(0.0) {
+			16.58 ± 0.56 tx/µs
+			3.952ms ± 128µs
+		}
+		TransferPiece(0.5) {
+			18.21 ± 0.51 tx/µs
+			3.598ms ± 98µs
+		}
+	}
+}
+ParallelCollect {
+	8 schedulers, 24 executors {
+		Transfer(0.0) {
+			22.14 ± 0.75 tx/µs
+			2.96ms ± 97µs	(scheduling: 2.232ms ± 91µs, execution: 1.049ms ± 44µs)
+		}
+		Transfer(0.5) {
+			21.57 ± 0.81 tx/µs
+			3.038ms ± 110µs	(scheduling: 2.438ms ± 99µs, execution: 1.192ms ± 87µs)
+		}
+		TransferPiece(0.0) {
+			6.51 ± 0.06 tx/µs
+			10.067ms ± 90µs	(scheduling: 4.085ms ± 108µs, execution: 6.82ms ± 56µs)
+		}
+		TransferPiece(0.5) {
+			6.23 ± 0.08 tx/µs
+			10.518ms ± 132µs	(scheduling: 4.309ms ± 108µs, execution: 7.214ms ± 95µs)
+		}
+	}
+}
+ParallelImmediate {
+	8 schedulers, 24 executors {
+		Transfer(0.0) {
+			20.11 ± 0.47 tx/µs
+			3.259ms ± 75µs	(scheduling: 2.475ms ± 58µs, execution: 1.015ms ± 45µs)
+		}
+		Transfer(0.5) {
+			19.01 ± 0.49 tx/µs
+			3.447ms ± 87µs	(scheduling: 2.739ms ± 67µs, execution: 1.304ms ± 76µs)
+		}
+		TransferPiece(0.0) {
+			7.41 ± 0.09 tx/µs
+			8.842ms ± 101µs	(scheduling: 5.146ms ± 69µs, execution: 7.355ms ± 93µs)
+		}
+		TransferPiece(0.5) {
+			6.27 ± 0.10 tx/µs
+			10.447ms ± 169µs	(scheduling: 5.961ms ± 67µs, execution: 8.958ms ± 166µs)
+		}
+	}
+}
+Done. Took 13.52s
+

@@ -167,6 +167,10 @@ impl ParallelVM {
         // MAX_NB_ADDRESSES * 65536
         MAX_NB_ADDRESSES * chunk_size // TODO
     }
+    pub fn schedule_chunk<const A: usize, const P: usize>(&self, mut chunk: Vec<Transaction<A, P>>) -> (Vec<Transaction<A, P>>, Vec<Transaction<A, P>>) {
+        self.schedule_chunk_old(chunk)
+        // self.schedule_chunk_new(chunk)
+    }
 
     pub fn schedule_chunk_old<const A: usize, const P: usize>(&self, mut chunk: Vec<Transaction<A, P>>) -> (Vec<Transaction<A, P>>, Vec<Transaction<A, P>>) {
         let a = Instant::now();
@@ -209,7 +213,7 @@ impl ParallelVM {
         (scheduled, postponed)
     }
 
-    pub fn schedule_chunk<const A: usize, const P: usize>(&self, mut chunk: Vec<Transaction<A, P>>) -> (Vec<Transaction<A, P>>, Vec<Transaction<A, P>>) {
+    pub fn schedule_chunk_new<const A: usize, const P: usize>(&self, mut chunk: Vec<Transaction<A, P>>) -> (Vec<Transaction<A, P>>, Vec<Transaction<A, P>>) {
         let a = Instant::now();
         let mut scheduled = Vec::with_capacity(chunk.len());
         let mut postponed = Vec::with_capacity(chunk.len());

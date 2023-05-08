@@ -7,9 +7,9 @@ let all_core_values = [
 let sizes_str = ['4KB', '8KB', '16KB'];
 let sizes = [4000, 8000, 16000];
 
-let l1_size = 6000;
-let l2_size = 12000;
-let l3_size = 18000;
+let l1_size = 49152;
+let l2_size = 1310720;
+let l3_size = 56623104;
 
 
 let size_serie = function() {
@@ -79,30 +79,39 @@ let make_dataset = function(sizes_str, core_values) {
 };
 
 let series = [];
+let legend_down = [];
 
 sizes.forEach(size => {
   series.push(size_serie());
 })
 // Can add _with_min_max for some sizes
-series[2] = size_serie_with_min_max();
+series[13] = size_serie_with_min_max();
+// series[14] = size_serie_with_min_max();
+series[15] = size_serie_with_min_max();
 
 series.push(cache_line('L1', l1_size));
 series.push(cache_line('L2', l2_size));
 series.push(cache_line('L3', l3_size));
 
 all_core_values.forEach(core_values => {
+  legend_down.push(core_values[0]);
   series.push(core_serie(sizes, core_values))
 })
 
 
 option = {
+  toolbox: {
+    feature: {
+      saveAsImage: {}
+    }
+  },
   legend: [
-    { data: ['4KB', '8KB', '16KB'] },
-    { data: ['Core#0', 'Core#1', 'Core#2', 'Core#3'], top: '50%'},
+    { data: sizes_str },
+    { data: legend_down, bottom: '0%'},
     ],
   tooltip: {},
   dataset: make_dataset(sizes_str, all_core_values),
-  grid: [{ bottom: '55%' }, { top: '55%' }],
+  grid: [{ bottom: '55%' }, { bottom: '10%',top: '50%' }],
   xAxis: [
     { type: 'category', gridIndex: 0 },
     { type: 'log', gridIndex: 1 }

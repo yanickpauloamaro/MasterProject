@@ -205,13 +205,13 @@ pub async fn numa_latency(
     let mut latencies = Vec::with_capacity(nb_iterations);
     // let mut results = Vec::with_capacity(nb_iterations);
 
-    for _ in 0..nb_iterations {
+    for i in 0..nb_iterations {
         let start_iteration = Instant::now();
         let _res = random_step_size_k(array_size_bytes, &mut random_array, nb_operations);
         latencies.push(start_iteration.elapsed());
         // results.push(_res);
 
-        if start.elapsed() > target_duration {
+        if start.elapsed() > target_duration && i > 100 {
             break;
         }
     }
