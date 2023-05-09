@@ -1,6 +1,7 @@
 use std::{mem, slice};
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
+use ed25519_dalek::{Digest, Sha512};
 
 use crate::d_hash_map::PiecedOperation::TryInsert;
 use crate::vm_utils::SharedStorage;
@@ -14,9 +15,38 @@ pub struct DHashMap;
 impl DHashMap {
     #[inline]
     pub fn compute_hash(key: DKey) -> DHash {
-        let mut hasher = DefaultHasher::new();
-        key.hash(&mut hasher);
-        hasher.finish()
+        Self::blake_hash(key)
+        // Self::sha256_hash(key)
+        // Self::sh512_hash(key)
+    }
+
+    #[inline]
+    fn blake_hash(key: DKey) -> DHash {
+        let hash = blake3::hash(&key.to_le_bytes());
+        let bytes = hash.as_bytes();
+        let mut trunc = [0u8; 8];
+        trunc.copy_from_slice(&bytes[0..8]);
+        u64::from_be_bytes(trunc)
+    }
+
+    #[inline]
+    fn sha256_hash(key: DKey) -> DHash {
+        let hash = sha256::digest(&key.to_le_bytes());
+
+        let bytes = hash.as_bytes();
+        let mut trunc = [0u8; 8];
+        trunc.copy_from_slice(&bytes[0..8]);
+        u64::from_be_bytes(trunc)
+    }
+
+    #[inline]
+    fn sh512_hash(key: DKey) -> DHash {
+        let hash = Sha512::digest(&key.to_le_bytes());
+
+        let bytes = hash.as_slice();
+        let mut trunc = [0u8; 8];
+        trunc.copy_from_slice(&bytes[0..8]);
+        u64::from_be_bytes(trunc)
     }
 
     const HASH_TABLE_OFFSET: usize = 2;
@@ -52,6 +82,7 @@ impl DHashMap {
     }
 
     //region Get
+    #[inline]
     pub fn get_entry_from_bucket<const ENTRY_SIZE: usize>(
         key: DKey,
         bucket_location: usize,
@@ -74,6 +105,7 @@ impl DHashMap {
     //endregion
 
     //region Has/ContainsKey
+    #[inline]
     pub fn check_key_in_bucket<const ENTRY_SIZE: usize>(
         key: DKey,
         bucket_location: usize,
@@ -89,6 +121,7 @@ impl DHashMap {
     //endregion
 
     //region Insert
+    #[inline]
     pub fn insert_entry_in_bucket<const ENTRY_SIZE: usize>(
         key: DKey,
         bucket_location: usize,
@@ -132,6 +165,7 @@ impl DHashMap {
     //endregion
 
     //region Remove
+    #[inline]
     pub fn remove_entry_from_bucket<const ENTRY_SIZE: usize>(
         key: DKey,
         bucket_location: usize,
@@ -187,6 +221,7 @@ impl DHashMap {
     //endregion
 
     //region Resize
+    #[inline]
     pub fn resize<const ENTRY_SIZE: usize>(storage: &mut SharedStorage) -> Result<ENTRY_SIZE> {
         // println!("------------ RESIZE ------------");
         let nb_buckets = Self::get_nb_buckets(storage);
@@ -280,6 +315,7 @@ impl DHashMap {
     //endregion
 
     //region Resize and Insert
+    #[inline]
     pub fn resize_and_insert<const ENTRY_SIZE: usize>(
         key: DKey,
         hash: DHash,
@@ -311,6 +347,7 @@ impl DHashMap {
     }
     //endregion
 
+    #[inline]
     pub fn search<const ENTRY_SIZE: usize>(
         key: DKey,
         bucket_location: usize,
@@ -342,6 +379,7 @@ impl DHashMap {
         return result;
     }
 
+    #[inline]
     pub fn init<const ENTRY_SIZE: usize>(
         storage: &mut Vec<Word>,
         nb_buckets: usize,
