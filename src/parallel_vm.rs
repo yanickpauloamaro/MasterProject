@@ -14,6 +14,7 @@ use thincollections::thin_map::ThinMap;
 use tokio::time::{Instant, Duration};
 use crate::contract::{AccessPattern, AccessType, AtomicFunction, MAX_NB_ADDRESSES, StaticAddress, Transaction};
 use crate::contract::FunctionResult::Another;
+use crate::d_hash_map;
 use crate::key_value::KeyValueOperation;
 use crate::vm::Executor;
 use crate::vm_utils::{AddressSet, SharedStorage, VmStorage};
@@ -168,8 +169,8 @@ impl ParallelVM {
         MAX_NB_ADDRESSES * chunk_size // TODO
     }
     pub fn schedule_chunk<const A: usize, const P: usize>(&self, mut chunk: Vec<Transaction<A, P>>) -> (Vec<Transaction<A, P>>, Vec<Transaction<A, P>>) {
-        self.schedule_chunk_old(chunk)
-        // self.schedule_chunk_new(chunk)
+        // self.schedule_chunk_old(chunk)
+        self.schedule_chunk_new(chunk)
     }
 
     pub fn schedule_chunk_old<const A: usize, const P: usize>(&self, mut chunk: Vec<Transaction<A, P>>) -> (Vec<Transaction<A, P>>, Vec<Transaction<A, P>>) {
@@ -181,20 +182,20 @@ impl ParallelVM {
             self.get_address_set_capacity(chunk.len())
         );
 
-        // let init_duration = a.elapsed();
-        // let mut duration = Duration::from_secs(0);
+        let init_duration = a.elapsed();
+        let mut duration = Duration::from_secs(0);
         'outer: for tx in chunk {
             if tx.function != AtomicFunction::KeyValue(KeyValueOperation::Scan) {
-                // let start = Instant::now();
+                let start = Instant::now();
                 for addr in tx.addresses.iter() {
                     if !working_set.insert(*addr) {
                         // Can't add tx to schedule
                         postponed.push(tx);
-                        // duration += start.elapsed();
+                        duration += start.elapsed();
                         continue 'outer;
                     }
                 }
-                // duration += start.elapsed();
+                duration += start.elapsed();
             } else {
                 // eprintln!("Processing a scan operation");
                 for addr in tx.addresses[0]..tx.addresses[1] {
@@ -230,8 +231,11 @@ impl ParallelVM {
         let mut address_map_capacity = addresses_per_tx * chunk.len();
         address_map_capacity *= 2;
 
-        type Map = ThinMap<StaticAddress, AccessType, BuildHasherDefault<NoHashHasher<StaticAddress>>>;
-        let mut address_map: Map = ThinMap::with_capacity_and_hasher(address_map_capacity, BuildNoHashHasher::default());
+        use ahash::AHasher;
+        type Map = ThinMap<StaticAddress, AccessType, BuildHasherDefault<AHasher>>;
+        let mut address_map: Map = ThinMap::with_capacity_and_hasher(address_map_capacity, BuildHasherDefault::default());
+        // type Map = ThinMap<StaticAddress, AccessType, BuildHasherDefault<NoHashHasher<StaticAddress>>>;
+        // let mut address_map: Map = ThinMap::with_capacity_and_hasher(address_map_capacity, BuildNoHashHasher::default());
 
         let can_read = |addr: StaticAddress, map: &mut Map| {
             let entry = map.entry(addr).or_insert(AccessType::Read);
@@ -404,6 +408,15 @@ impl ParallelVM {
     // TODO replace flatmap with map + for loop?
     pub fn execute_round<const A: usize, const P: usize>(&self, mut round: Vec<Transaction<A, P>>) -> Vec<Transaction<A, P>> {
         let chunk_size = self.get_executor_chunk_size(round.len());
+        // let mut result = Vec::with_capacity(round.len());
+        // result.par_extend(round
+        //     .par_chunks(chunk_size)
+        //     .enumerate()
+        //     .flat_map(
+        //         |(worker_index, worker_backlog)|
+        //             self.execute_chunk(worker_backlog)
+        //     ));
+        // result
         round
             .par_chunks(chunk_size)
             .enumerate()
@@ -441,7 +454,7 @@ impl ParallelVM {
                     let mut chunks = backlog.par_drain(..backlog.len()).chunks(chunk_size);
                     if chunks.len() > outputs.len() { panic!("Not enough output channels!"); }
 
-                    let res: Vec<_> = chunks
+                    let schedulers_postponed: Vec<_> = chunks
                         .zip(outputs.par_iter())
                         .enumerate()
                         .map(|(scheduler_index, (chunk, output))| {
@@ -452,17 +465,29 @@ impl ParallelVM {
                             }
                             postponed
                         }).collect();
+                    // let mut schedulers_postponed = Vec::with_capacity(outputs.len());
+                    // schedulers_postponed.par_extend(chunks
+                    //     .zip(outputs.par_iter())
+                    //     .enumerate()
+                    //     .map(|(scheduler_index, (chunk, output))| {
+                    //         let (scheduled, postponed) = self.schedule_chunk(chunk);
+                    //         if scheduled.is_empty() { panic!("Scheduler produced an empty schedule"); }
+                    //         if let Err(e) = output.send(scheduled) {
+                    //             panic!("Failed to send schedule: {:?}", e.into_inner());
+                    //         }
+                    //         postponed
+                    //     }));
 
                     // Notify the executor pool of the first scheduler without an output
                     // This ensures that the executor pool does not wait in schedulers that did not receive
                     // an input (and therefore will not output any result through their channel)
-                    if res.len() < self.nb_schedulers {
-                        if let Err(e) = outputs[res.len()].send(vec!()) {
-                            panic!("Failed to send empty schedule: {}", res.len());
+                    if schedulers_postponed.len() < self.nb_schedulers {
+                        if let Err(e) = outputs[schedulers_postponed.len()].send(vec!()) {
+                            panic!("Failed to send empty schedule: {}", schedulers_postponed.len());
                         }
                     }
 
-                    for mut postponed in res {
+                    for mut postponed in schedulers_postponed {
                         backlog.append(&mut postponed);
                     }
                 }

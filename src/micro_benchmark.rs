@@ -1,3 +1,4 @@
+use hwloc2::{Topology, TopologyObject, ObjectType, CpuBindFlags};
 use ahash::AHasher;
 use std::collections::HashMap;
 use hashbrown::HashMap as BrownMap;
@@ -141,6 +142,77 @@ impl CoreLatencyMeasurement {
     }
 }
 //endregion
+
+pub async fn hwloc_test() {
+    fn print_children(topo: &Topology, obj: &TopologyObject, depth: usize) {
+        let mut padding = std::iter::repeat("  ").take(depth)
+            .collect::<String>();
+        println!("{}{}: #{}", padding, obj, obj.os_index());
+
+        for i in 0..obj.arity() {
+            print_children(topo, obj.children()[i as usize], depth + 1);
+        }
+    }
+
+    fn last_core(topo: &mut Topology) -> &TopologyObject {
+        let core_depth = topo.depth_or_below_for_type(&ObjectType::Core).unwrap();
+        let all_cores = topo.objects_at_depth(core_depth);
+        all_cores.last().unwrap()
+    }
+
+    let mut topo = Topology::new().expect("This lib is really badly documented...");
+
+    // ---------------------------------------------------------------------------------------------
+    println!("*** Printing objects at different levels tree");
+    for i in 0..topo.depth() {
+        println!("*** Level {}", i);
+
+        for (idx, object) in topo.objects_at_depth(i).iter().enumerate() {
+            println!("{}: {}", idx, object);
+        }
+    }
+    println!();
+
+    // ---------------------------------------------------------------------------------------------
+    println!("*** Printing overall tree");
+    print_children(&topo, topo.object_at_root(), 0);
+
+    // ---------------------------------------------------------------------------------------------
+    println!("*** Pinning current thread of current process to a core");
+    // Grab last core and exctract its CpuSet
+    let mut cpuset = last_core(&mut topo).cpuset().unwrap();
+
+    // Get only one logical processor (in case the core is SMT/hyper-threaded).
+    cpuset.singlify();
+
+    println!("Before Bind: {:?}", topo.get_cpubind(CpuBindFlags::CPUBIND_THREAD));
+    // Last CPU Location for this PID (not implemented on all systems)
+    if let Some(l) = topo.get_cpu_location(CpuBindFlags::CPUBIND_THREAD) {
+        println!("Last Known CPU Location: {:?}", l);
+    }
+    println!();
+
+    let sleep_duration = 5;
+    println!("Sleeping {}s to see if task changes core", sleep_duration);
+    let _ = tokio::time::sleep(Duration::from_secs(sleep_duration)).await;
+    println!();
+    // let _ = std::thread::sleep(Duration::from_secs(sleep_duration));
+    println!("Before Bind: {:?}", topo.get_cpubind(CpuBindFlags::CPUBIND_THREAD));
+    // Last CPU Location for this PID (not implemented on all systems)
+    if let Some(l) = topo.get_cpu_location(CpuBindFlags::CPUBIND_THREAD) {
+        println!("Last Known CPU Location: {:?}", l);
+    }
+
+    // Bind to one core.
+    topo.set_cpubind(cpuset, CpuBindFlags::CPUBIND_THREAD);
+
+    println!("After Bind: {:?}", topo.get_cpubind(CpuBindFlags::CPUBIND_THREAD));
+
+    // Last CPU Location for this PID (not implemented on all systems)
+    if let Some(l) = topo.get_cpu_location(CpuBindFlags::CPUBIND_THREAD) {
+        println!("Last Known CPU Location: {:?}", l);
+    }
+}
 
 pub fn adapt_unit(size_b: usize) -> String {
     match size_b {
