@@ -5,7 +5,7 @@ use std::mem;
 
 use crate::{auction, d_hash_map, key_value};
 use crate::auction::SimpleAuction;
-use crate::d_hash_map::DHashMap;
+use crate::d_hash_map::{DHash, DHashMap};
 use crate::key_value::{KeyValue, KeyValueOperation, Value};
 use crate::vm_utils::SharedStorage;
 use crate::wip::Word;
@@ -66,31 +66,30 @@ impl<const ADDRESS_COUNT: usize, const PARAM_COUNT: usize> Transaction<ADDRESS_C
             AtomicFunction::PieceDHashMap(op) => {
                 use d_hash_map::PiecedOperation::*;
                 match op {
-                    InsertRequest | RemoveRequest | GetRequest | HasRequest => {
+                    InsertRequest | RemoveRequest | GetRequest | HasRequest => (None, None),
+                    InsertFindBucket | RemoveFindBucket | GetFindBucket | HasFindBucket => {
                         let hash_table_start = 0;
                         reads[0] = AccessPattern::Address(hash_table_start);
                         (Some(reads), None)
                     },
-                    TryInsert | Remove => {
-                        // let bucket_location = self.addresses[0] as StaticAddress;
-                        // let bucket_end = self.addresses[1] as StaticAddress;
-                        // writes[0] = AccessPattern::Range(bucket_location, bucket_end);
-                        // (None, Some(writes))
+                    Insert | Remove => {
+                        let hash_table_start = 0;
                         let bucket_location = self.addresses[0] as StaticAddress;
+
+                        reads[0] = AccessPattern::Address(hash_table_start);
                         writes[0] = AccessPattern::Address(bucket_location);
-                        (None, Some(writes))
+                        (Some(reads), Some(writes))
                     },
-                    ResizeInsert => {
+                    Resize => {
                         writes[0] = AccessPattern::All;
                         (None, Some(writes))
                     },
                     Get | Has => {
-                        // let bucket_location = self.addresses[0] as StaticAddress;
-                        // let bucket_end = self.addresses[1] as StaticAddress;
-                        // reads[0] = AccessPattern::Range(bucket_location, bucket_end);
-                        // (Some(reads), None)
+                        let hash_table_start = 0;
                         let bucket_location = self.addresses[0] as StaticAddress;
-                        reads[0] = AccessPattern::Address(bucket_location);
+
+                        reads[0] = AccessPattern::Address(hash_table_start);
+                        reads[1] = AccessPattern::Address(bucket_location);
                         (Some(reads), None)
                     }
                 }
@@ -414,89 +413,170 @@ impl AtomicFunction {
                 let res = match op {
                     InsertRequest | RemoveRequest | GetRequest | HasRequest => {
                         // println!("------------ Compute Hash ---------------");
-                        // TODO Split *Request into two (it also makes the addresses accessed more explicit)
+
                         let key = tx.params[0];
+
+                        let hash = DHashMap::compute_hash(key);
+                        let (hash_low, hash_high) = DHashMap::hash_to_halves(hash);
+
+                        tx.addresses[0] = StaticAddress::MAX;
+                        tx.addresses[1] = StaticAddress::MAX;
+                        tx.addresses[2] = hash_low as StaticAddress;
+                        tx.addresses[3] = hash_high as StaticAddress;
+                        tx.addresses[4] = StaticAddress::MAX;
+
+                        tx.function = AtomicFunction::PieceDHashMap(op.next_operation());
+                        FunctionResult::Another(tx)
+                    },
+                    InsertFindBucket | RemoveFindBucket | GetFindBucket | HasFindBucket => {
+                        // println!("------------ FIND BUCKET ---------------");
+                        let hash_low = tx.addresses[2];
+                        let hash_high = tx.addresses[3];
+
+                        let current_nb_buckets = storage.get(0);
+                        // TODO replace change static address into a u64 so I can store a DHash entirely?
+                        let hash = DHashMap::hash_from_halves(hash_low as DHash, hash_high as DHash);
                         let (
                             _hash,
                             _bucket_index,
                             bucket_location,
                             bucket_end
-                        ) = DHashMap::get_bucket::<PARAM_COUNT>(key, &storage);
+                        ) = DHashMap::get_bucket_from_hash::<PARAM_COUNT>(hash , &storage);
 
-                        // Range of addresses that need to be locked
-                        // TODO StaticAddress should be u64 or usize?
-                        // TODO Should specify whether its read or write -> signed integers?
-                        // TODO Adapt scheduling
                         tx.addresses[0] = bucket_location as StaticAddress;
                         tx.addresses[1] = bucket_end as StaticAddress;
+                        tx.addresses[4] = current_nb_buckets as StaticAddress;
 
                         tx.function = AtomicFunction::PieceDHashMap(op.next_operation());
                         FunctionResult::Another(tx)
                     }
-                    TryInsert => {
+                    Insert => {
 
-                        let bucket_location = tx.addresses[0] as usize;
-                        let bucket_end = tx.addresses[1] as usize;
-                        let key = tx.params[0];
+                        if DHashMap::is_outdated(&tx, &storage) {
+                            // A resize happened since this piece was generated, the bucket location need to be updated
+                            let updated_tx = DHashMap::update_tx(tx, &storage);
+                            FunctionResult::Another(updated_tx)
+                        } else {
+                            // Bucket is still correct
+                            let bucket_location = tx.addresses[0] as usize;
+                            let bucket_end = tx.addresses[1] as usize;
 
-                        // TODO Change FunctionParameter to u64?
-                        let new_value: [Word; PARAM_COUNT] = tx.params.map(|el| el as Word);
+                            let key = tx.params[0];
+                            let new_value: [Word; PARAM_COUNT] = tx.params.map(|el| el as Word);
 
-                        let res = DHashMap::insert_entry_in_bucket::<PARAM_COUNT>(key, bucket_location, bucket_end, &new_value, &mut storage);
-                        match res {
-                            Ok(success) => FunctionResult::DHashMap(Ok(success)),
-                            Err(d_hash_map::Error::BucketFull) => {
-                                tx.function = AtomicFunction::PieceDHashMap(ResizeInsert);
-                                // TODO set Exclusive address (write all) and adapt scheduling
-                                FunctionResult::Another(tx)
-                            },
-                            Err(_) => FunctionResult::DHashMap(Err(d_hash_map::Error::IllegalState))
+                            let res = DHashMap::insert_entry_in_bucket::<PARAM_COUNT>(key, bucket_location, bucket_end, &new_value, &mut storage);
+                            match res {
+                                Ok(success) => FunctionResult::DHashMap(Ok(success)),
+                                Err(d_hash_map::Error::BucketFull) => {
+                                    // println!("\t failed to insert entry {:?} in bucket {}", new_value, bucket_location);
+                                    tx.addresses[0] = StaticAddress::MAX;
+                                    tx.addresses[1] = StaticAddress::MAX;
+                                    tx.function = AtomicFunction::PieceDHashMap(Resize);
+
+                                    FunctionResult::Another(tx)
+                                },
+                                Err(_) => FunctionResult::DHashMap(Err(d_hash_map::Error::IllegalState))
+                            }
                         }
                     },
-                    ResizeInsert => {
-                        // TODO Change FunctionParameter to u64?
-                        let new_value: [Word; PARAM_COUNT] = tx.params.map(|el| el as Word);
+                    Resize => {
+
+                        let hash_low = tx.addresses[2] as DHash;
+                        let hash_high = tx.addresses[3] as DHash;
+                        let hash = DHashMap::hash_from_halves(hash_low as DHash, hash_high as DHash);
+
                         let key = tx.params[0];
+                        // TODO Change FunctionParameter to u64 to avoid having to map?
+                        let new_value: [Word; PARAM_COUNT] = tx.params.map(|el| el as Word);
 
-                        let (
-                            hash,
-                            _bucket_index,
-                            bucket_location,
-                            bucket_end
-                        ) = DHashMap::get_bucket::<PARAM_COUNT>(key, &storage);
+                        let always_retry = false;
 
-                        // Try to insert again, maybe a concurrent operation changed the hashmap
-                        let retried = DHashMap::insert_entry_in_bucket::<PARAM_COUNT>(key, bucket_location, bucket_end, &new_value, &mut storage);
-                        if retried.is_ok() {
-                            return FunctionResult::DHashMap(retried);
+                        if always_retry {
+                            let (
+                                _hash,
+                                _bucket_index,
+                                bucket_location,
+                                bucket_end
+                            ) = DHashMap::get_bucket_from_hash::<PARAM_COUNT>(hash, &storage);
+
+                            // Try to insert again, maybe a concurrent operation changed the hashmap
+                            let retried = DHashMap::insert_entry_in_bucket::<PARAM_COUNT>(key, bucket_location, bucket_end, &new_value, &mut storage);
+                            if retried.is_ok() {
+                                return FunctionResult::DHashMap(retried);
+                            }
+
+                            let resize_and_retry = DHashMap::resize_and_insert::<PARAM_COUNT>(key, hash, &new_value, &mut storage);
+                            FunctionResult::DHashMap(resize_and_retry)
+                        } else {
+                            if DHashMap::is_outdated(&tx, &storage) {
+                                // A resize happened since this piece was generated, retry to insert
+                                let (
+                                    _hash,
+                                    _bucket_index,
+                                    bucket_location,
+                                    bucket_end
+                                ) = DHashMap::get_bucket_from_hash::<PARAM_COUNT>(hash, &storage);
+
+                                let retried = DHashMap::insert_entry_in_bucket::<PARAM_COUNT>(key, bucket_location, bucket_end, &new_value, &mut storage);
+                                if retried.is_ok() {
+                                    // Successfully inserted, no need to resize
+                                    return FunctionResult::DHashMap(retried);
+                                }
+                            }
+
+                            // Bucket is still the same size or we failed to insert even though another resize happened
+                            let resize_and_retry = DHashMap::resize_and_insert::<PARAM_COUNT>(key, hash, &new_value, &mut storage);
+                            FunctionResult::DHashMap(resize_and_retry)
                         }
-
-                        let resize_and_retry = DHashMap::resize_and_insert::<PARAM_COUNT>(key, hash, &new_value, &mut storage);
-                        FunctionResult::DHashMap(resize_and_retry)
                     },
                     Get => {
-                        let bucket_location = tx.addresses[0] as usize;
-                        let bucket_end = tx.addresses[1] as usize;
-                        let key = tx.params[0];
 
-                        let res = DHashMap::get_entry_from_bucket::<PARAM_COUNT>(key, bucket_location, bucket_end, &storage);
-                        FunctionResult::DHashMap(res)
+                        if DHashMap::is_outdated(&tx, &storage) {
+                            // A resize happened since this piece was generated, the bucket location need to be updated
+                            let updated_tx = DHashMap::update_tx(tx, &storage);
+                            FunctionResult::Another(updated_tx)
+                        } else {
+                            // Bucket is still correct
+                            let bucket_location = tx.addresses[0] as usize;
+                            let bucket_end = tx.addresses[1] as usize;
+
+                            let key = tx.params[0];
+
+                            let res = DHashMap::get_entry_from_bucket::<PARAM_COUNT>(key, bucket_location, bucket_end, &storage);
+                            FunctionResult::DHashMap(res)
+                        }
                     },
                     Remove => {
-                        let bucket_location = tx.addresses[0] as usize;
-                        let bucket_end = tx.addresses[1] as usize;
-                        let key = tx.params[0];
+                        if DHashMap::is_outdated(&tx, &storage) {
+                            // A resize happened since this piece was generated, the bucket location need to be updated
+                            let updated_tx = DHashMap::update_tx(tx, &storage);
+                            FunctionResult::Another(updated_tx)
+                        } else {
+                            // Bucket is still correct
+                            let bucket_location = tx.addresses[0] as usize;
+                            let bucket_end = tx.addresses[1] as usize;
 
-                        let res = DHashMap::remove_entry_from_bucket::<PARAM_COUNT>(key, bucket_location, bucket_end, &mut storage);
-                        FunctionResult::DHashMap(res)
+                            let key = tx.params[0];
+
+                            let res = DHashMap::remove_entry_from_bucket::<PARAM_COUNT>(key, bucket_location, bucket_end, &mut storage);
+                            FunctionResult::DHashMap(res)
+                        }
                     },
                     Has => {
-                        let bucket_location = tx.addresses[0] as usize;
-                        let bucket_end = tx.addresses[1] as usize;
-                        let key = tx.params[0];
+                        if DHashMap::is_outdated(&tx, &storage) {
+                            // A resize happened since this piece was generated, the bucket location need to be updated
+                            let updated_tx = DHashMap::update_tx(tx, &storage);
+                            FunctionResult::Another(updated_tx)
+                        } else {
+                            // Bucket is still correct
+                            let bucket_location = tx.addresses[0] as usize;
+                            let bucket_end = tx.addresses[1] as usize;
 
-                        let res = DHashMap::check_key_in_bucket::<PARAM_COUNT>(key, bucket_location, bucket_end, &storage);
-                        FunctionResult::DHashMap(res)
+                            let key = tx.params[0];
+
+                            let res = DHashMap::check_key_in_bucket::<PARAM_COUNT>(key, bucket_location, bucket_end, &storage);
+                            FunctionResult::DHashMap(res)
+                        }
                     },
                 };
 

@@ -1,6 +1,6 @@
 use std::cell::{Cell, RefCell};
 use std::error::Error;
-use std::{fmt, mem};
+use std::{cmp, fmt, mem};
 use std::fmt::{Debug, Write};
 use std::str::FromStr;
 use std::time::{Duration, Instant};
@@ -390,10 +390,10 @@ impl TestBench {
                 if let Ok((other_args, value_size)) = parse_result {
                     let workload = DHashMapWorkload::new_boxed(&params, other_args, value_size, name);
                     match value_size {
-                        1 => TestBench::dispatch::<2, 2>(params, workload),
-                        7 => TestBench::dispatch::<2, 8>(params, workload),   // 1 cache line
-                        15 => TestBench::dispatch::<2, 16>(params, workload), // 2 cache lines
-                        23 => TestBench::dispatch::<2, 24>(params, workload), // 3 cache lines
+                        1 => TestBench::dispatch::<5, 2>(params, workload),
+                        7 => TestBench::dispatch::<5, 8>(params, workload),   // 1 cache line
+                        15 => TestBench::dispatch::<5, 16>(params, workload), // 2 cache lines
+                        23 => TestBench::dispatch::<5, 24>(params, workload), // 3 cache lines
                         other => panic!("DHashMapWorkload not implemented for values of size {}", other)
                     }
                 } else {
@@ -495,7 +495,7 @@ impl TestBench {
             Some(seed) => StdRng::seed_from_u64(seed),
             None => StdRng::seed_from_u64(rand::random())
         };
-
+        // TODO better benchmark with more info about which batch is actually created
         let batch = workload.next_batch(&params, &mut rng);
         for _ in 0..params.warmup {
             let batch = batch.clone();
@@ -746,15 +746,19 @@ struct DHashMapWorkload {
     nb_buckets: u32,
     key_space: Vec<FunctionParameter>,
     pieced: bool,
+    entry_size: usize,
+    map_size: fn(usize, usize, usize)->usize,
     get_proportion: f64,
     insert_proportion: f64,
     remove_proportion: f64,
     contains_proportion: f64,
     // key_distribution: ??? uniform, or zipfian
 }
+
 impl DHashMapWorkload {
     const NAME: &'static str = "DHashMap";
     const PIECED: &'static str = "PieceDHashMap";
+    // "PieceDHashMap(7, 10, 10; 0.2, 0.2, 0.2, 0.2)"
 
     pub fn initial_parser(input: &str) -> IResult<&str, u32> {
         terminated(map_res(digit1, str::parse), is_a(" ,"))(input)
@@ -780,13 +784,18 @@ impl DHashMapWorkload {
                 assert!(0.0 <= sum);
                 assert!(sum <= 1.0);
 
-                let map_size = |nb_buckets: usize| {
-                    (2 + nb_buckets + nb_buckets * (1 + (bucket_capacity_elems as usize) * (value_size as usize + 1)))
+                let entry_size = value_size as usize + 1;
+
+                let map_size = |nb_buckets: usize, bucket_capacity_elems: usize, entry_size: usize| {
+                    (2 + nb_buckets + nb_buckets * (1 + (bucket_capacity_elems as usize) * entry_size))
                 };
-                let mut max_nb_buckets = nb_buckets as usize;
-                while map_size(2 * max_nb_buckets) < params.storage_size {
-                    max_nb_buckets *= 2;
-                }
+                // let mut max_nb_buckets = nb_buckets as usize;
+                // while map_size(2 * max_nb_buckets, bucket_capacity_elems as usize, entry_size) < params.storage_size {
+                //     max_nb_buckets *= 2;
+                // }
+                // println!("max nb of buckets: {}", max_nb_buckets);
+                // println!("nb of buckets after 4 resize: {}", nb_buckets << 4);
+                let max_nb_buckets = (nb_buckets << 4) as usize;
 
                 let max_nb_keys = max_nb_buckets * bucket_capacity_elems as usize;
                 // eprintln!("Can store at most {} buckets => {} unique keys", max_nb_buckets, max_nb_keys);
@@ -795,6 +804,10 @@ impl DHashMapWorkload {
                 // eprintln!("-> using {} keys to avoid last resize", nb_keys);
                 // eprintln!("\ttakes {}", adapt_unit(mem::size_of::<Word>() * map_size(nb_keys)));
 
+                // println!("Initial map takes {} words (storage has {} words, too much? {})",
+                //          map_size(nb_buckets as usize, bucket_capacity_elems as usize, entry_size),
+                //          params.storage_size,
+                //          map_size(nb_buckets as usize, bucket_capacity_elems as usize, entry_size) > params.storage_size);
                 let key_space = (0..nb_keys).map(|key| key as FunctionParameter).collect_vec();
 
                 Box::new(DHashMapWorkload {
@@ -802,6 +815,8 @@ impl DHashMapWorkload {
                     nb_buckets,
                     key_space,
                     pieced: name == Self::PIECED,
+                    entry_size: value_size as usize + 1,
+                    map_size,
                     get_proportion: get,
                     insert_proportion: insert,
                     contains_proportion: remove,
@@ -812,7 +827,7 @@ impl DHashMapWorkload {
         }
     }
 
-    pub fn test_batch<const ENTRY_SIZE: usize>(&mut self, params: &RunParameter, rng: &mut StdRng) -> Vec<Transaction<2, ENTRY_SIZE>> {
+    pub fn test_batch<const ENTRY_SIZE: usize>(&mut self, params: &RunParameter, rng: &mut StdRng) -> Vec<Transaction<5, ENTRY_SIZE>> {
         let batch_size = 10;
 
         let mut batch: Vec<_> = (0..batch_size)
@@ -823,10 +838,10 @@ impl DHashMapWorkload {
                 params[0] = key as FunctionParameter;
                 Transaction {
                     sender: tx_index as SenderAddress,
-                    // function: PieceDHashMap(InsertRequest),
-                    function: AtomicFunction::DHashMap(d_hash_map::Operation::Insert),
+                    function: AtomicFunction::PieceDHashMap(PiecedOperation::InsertRequest),
+                    // function: AtomicFunction::DHashMap(Operation::Insert),
                     tx_index,
-                    addresses: [0, 0],
+                    addresses: [0, 0, 0, 0, 0],
                     params,
                 }
             }).collect();
@@ -839,10 +854,10 @@ impl DHashMapWorkload {
                 params[0] = key as FunctionParameter;
                 Transaction {
                     sender: tx_index as SenderAddress,
-                    // function: PieceDHashMap(GetRequest),
-                    function: AtomicFunction::DHashMap(d_hash_map::Operation::Get),
+                    function: AtomicFunction::PieceDHashMap(PiecedOperation::GetRequest),
+                    // function: AtomicFunction::DHashMap(Operation::Get),
                     tx_index,
-                    addresses: [0, 0],
+                    addresses: [0, 0, 0, 0, 0],
                     params,
                 }
             }).collect();
@@ -855,17 +870,17 @@ impl DHashMapWorkload {
                 params[0] = key as FunctionParameter;
                 Transaction {
                     sender: tx_index as SenderAddress,
-                    // function: PieceDHashMap(RemoveRequest),
-                    function: AtomicFunction::DHashMap(d_hash_map::Operation::Remove),
+                    function: AtomicFunction::PieceDHashMap(PiecedOperation::RemoveRequest),
+                    // function: AtomicFunction::DHashMap(Operation::Remove),
                     tx_index,
-                    addresses: [0, 0],
+                    addresses: [0, 0, 0, 0, 0],
                     params,
                 }
             }).collect();
 
-        batch.append(&mut gets.clone());
-        batch.append(&mut removes);
-        batch.append(&mut gets.clone());
+        // batch.append(&mut gets.clone());
+        // batch.append(&mut removes);
+        // batch.append(&mut gets.clone());
         // println!("batch: {:?}", batch);
 
         batch.reverse();
@@ -874,10 +889,10 @@ impl DHashMapWorkload {
     }
 }
 
-impl<const ENTRY_SIZE: usize> ApplicationWorkload<2, ENTRY_SIZE> for DHashMapWorkload {
-    fn next_batch(&mut self, params: &RunParameter, rng: &mut StdRng) -> Vec<Transaction<2, ENTRY_SIZE>> {
+impl<const ENTRY_SIZE: usize> ApplicationWorkload<5, ENTRY_SIZE> for DHashMapWorkload {
+    fn next_batch(&mut self, params: &RunParameter, rng: &mut StdRng) -> Vec<Transaction<5, ENTRY_SIZE>> {
 
-        // return self.test_batch(prams, rng);
+        return self.test_batch(params, rng);
 
         use d_hash_map::*;
         use AtomicFunction::PieceDHashMap;
@@ -892,7 +907,7 @@ impl<const ENTRY_SIZE: usize> ApplicationWorkload<2, ENTRY_SIZE> for DHashMapWor
 
         // TODO Use a parameter to decide between the two types?
         let (addresses, operations) = if self.pieced {
-            let addresses = [0, 0]; // TODO proper addresses understood by the schedulers
+            let addresses = [0, 0, 0, 0, 0];
             let operations = [
                 PieceDHashMap(PiecedOperation::GetRequest),
                 PieceDHashMap(PiecedOperation::InsertRequest),
@@ -901,7 +916,7 @@ impl<const ENTRY_SIZE: usize> ApplicationWorkload<2, ENTRY_SIZE> for DHashMapWor
             ];
             (addresses, operations)
         } else {
-            let addresses = [0, 0]; // TODO use Exclusive addresses
+            let addresses = [0, 0, 0, 0, 0];
             let operations = [
                 DHashMap(Operation::Get),
                 DHashMap(Operation::Insert),
@@ -943,6 +958,11 @@ impl<const ENTRY_SIZE: usize> ApplicationWorkload<2, ENTRY_SIZE> for DHashMapWor
             storage.fill(0);
             DHashMap::init::<ENTRY_SIZE>(storage, nb_buckets, bucket_capacity_elems);
         })
+    }
+
+    fn storage_size(&self, params: &RunParameter) -> usize {
+        let map_after_4_resize = (self.map_size)((self.nb_buckets << 4) as usize, self.bucket_capacity_elems as usize, self.entry_size);
+        cmp::max(map_after_4_resize, params.storage_size)
     }
 }
 //endregion
@@ -1369,7 +1389,7 @@ impl ApplicationWorkload<2, 1> for BestFitWorkload {
 //endregion ========================================================================================
 
 //region workload utils ============================================================================
-struct WorkloadUtils;
+pub struct WorkloadUtils;
 impl WorkloadUtils {
     pub fn transfer_pairs(memory_size: usize, batch_size: usize, conflict_rate: f64, mut rng: &mut StdRng) -> Vec<(StaticAddress, StaticAddress)> {
         let nb_conflict = (conflict_rate * batch_size as f64).ceil() as usize;

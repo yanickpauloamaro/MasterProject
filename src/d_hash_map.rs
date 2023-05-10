@@ -2,8 +2,9 @@ use std::{mem, slice};
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 use ed25519_dalek::{Digest, Sha512};
+use crate::contract::{AtomicFunction, FunctionResult, StaticAddress, Transaction};
 
-use crate::d_hash_map::PiecedOperation::TryInsert;
+use crate::d_hash_map::PiecedOperation::Insert;
 use crate::vm_utils::SharedStorage;
 use crate::wip::Word;
 
@@ -13,11 +14,30 @@ pub type DHash = u64;
 pub struct DHashMap;
 
 impl DHashMap {
+
+    const HASH_TABLE_OFFSET: usize = 2;
+    const BUCKET_CONTENT_OFFSET: usize = 1;
+
+    pub const LAST: Word = Word::MAX;
+    pub const SENTINEL: Word = Self::LAST - 1;
+
+    //region hashes
     #[inline]
     pub fn compute_hash(key: DKey) -> DHash {
         Self::blake_hash(key)
         // Self::sha256_hash(key)
         // Self::sh512_hash(key)
+    }
+
+    #[inline]
+    pub fn hash_to_halves(hash: DHash) -> (DHash, DHash) {
+        let low = (hash << 32) >> 32;
+        let high = hash >> 32;
+        (low, high)
+    }
+
+    pub fn hash_from_halves(low: DHash, high: DHash) -> DHash {
+        (high << 32) | low
     }
 
     #[inline]
@@ -48,11 +68,7 @@ impl DHashMap {
         trunc.copy_from_slice(&bytes[0..8]);
         u64::from_be_bytes(trunc)
     }
-
-    const HASH_TABLE_OFFSET: usize = 2;
-    const BUCKET_CONTENT_OFFSET: usize = 1;
-    pub const LAST: Word = Word::MAX;
-    pub const SENTINEL: Word = Self::LAST - 1;
+    //endregion
 
     #[inline]
     pub fn get_nb_buckets(storage: &SharedStorage) -> usize {
@@ -79,6 +95,36 @@ impl DHashMap {
         let bucket_end = bucket_location + 1 + bucket_capacity_elems * ENTRY_SIZE;
 
         (hash, bucket_index, bucket_location, bucket_end)
+    }
+
+    #[inline]
+    pub fn is_outdated<const A: usize, const ENTRY_SIZE: usize>(tx: &Transaction<A, ENTRY_SIZE>, storage: &SharedStorage) -> bool {
+        let previous_nb_buckets = tx.addresses[4] as usize;
+        let current_nb_buckets = storage.get(0) as usize;
+
+        current_nb_buckets != previous_nb_buckets
+    }
+
+    pub fn update_tx<const A: usize, const ENTRY_SIZE: usize>(mut tx: Transaction<A, ENTRY_SIZE>, storage: &SharedStorage) -> Transaction<A, ENTRY_SIZE> {
+
+        let current_nb_buckets = storage.get(0);
+
+        let hash_low = tx.addresses[2] as DHash;
+        let hash_high = tx.addresses[3] as DHash;
+        let hash = DHashMap::hash_from_halves(hash_low as DHash, hash_high as DHash);
+
+        let (
+            _hash,
+            _bucket_index,
+            bucket_location,
+            bucket_end
+        ) = Self::get_bucket_from_hash::<ENTRY_SIZE>(hash , &storage);
+
+        tx.addresses[0] = bucket_location as StaticAddress;
+        tx.addresses[1] = bucket_end as StaticAddress;
+        tx.addresses[4] = current_nb_buckets as StaticAddress;
+
+        tx
     }
 
     //region Get
@@ -162,7 +208,7 @@ impl DHashMap {
             SearchResult::BucketFull => Err(Error::BucketFull)
         }
     }
-    //endregion
+    //endregion insert
 
     //region Remove
     #[inline]
@@ -197,12 +243,12 @@ impl DHashMap {
                 if next_index >= bucket_end || storage.get(next_index) == DHashMap::LAST {
                     // Make sure to propagate the "end of bucket" sentinel to the previous entries
                     let mut new_last_index = index;
-                    while storage.get(new_last_index) == DHashMap::SENTINEL {
+                    'pad_end: while storage.get(new_last_index) == DHashMap::SENTINEL {
                         storage.set(new_last_index, DHashMap::LAST);
 
                         // Stop when you reach the start of the bucket
                         if new_last_index <= bucket_location + Self::BUCKET_CONTENT_OFFSET {
-                            break;
+                            break 'pad_end;
                         }
                         new_last_index -= ENTRY_SIZE;
                         // if new_last_index > bucket_location + Self::BUCKET_CONTENT_OFFSET {
@@ -218,7 +264,7 @@ impl DHashMap {
             _ => Ok(Success::None),
         }
     }
-    //endregion
+    //endregion remove
 
     //region Resize
     #[inline]
@@ -312,7 +358,7 @@ impl DHashMap {
 
         Ok(Success::Resized)
     }
-    //endregion
+    //endregion resize
 
     //region Resize and Insert
     #[inline]
@@ -345,7 +391,7 @@ impl DHashMap {
             Err(_) => Err(Error::IllegalState),
         }
     }
-    //endregion
+    //endregion resize and insert
 
     #[inline]
     pub fn search<const ENTRY_SIZE: usize>(
@@ -422,27 +468,39 @@ impl DHashMap {
             index += 1;
         }
         for _bucket in 0..nb_buckets {
-            println!("Bucket {}:", _bucket);
-            // bucket size
-            println!("<addr {}> {}", index, storage[index]);
-            index += 1;
-            for _bucket_entry in 0..bucket_capacity_elems {
-                // entry
-                print!("<addr {}> ", index);
-                for field_index in 0..ENTRY_SIZE {
-                    let field = storage[index];
-                    if field_index == 0 && field == Self::LAST {
-                        print!("LAST, ");
-                    } else if field_index == 0 && field == Self::SENTINEL {
-                        print!("SENTINEL, ");
-                    } else {
-                        print!("{}, ", storage[index]);
-                    }
-                    index += 1;
-                }
-                println!();
-            }
+            index = Self::print_bucket::<ENTRY_SIZE>(
+                storage,
+                index,
+                _bucket as usize,
+                bucket_capacity_elems as usize
+            );
         }
+    }
+
+    fn print_bucket<const ENTRY_SIZE: usize>(storage: &Vec<Word>, bucket_location: usize, bucket_index: usize, bucket_capacity_elems: usize) -> usize {
+        let mut index = bucket_location;
+        println!("Bucket {}:", bucket_index);
+        // bucket size and capacity
+        println!("<addr {}> {}", index, storage[index]);
+        index += 1;
+        for _bucket_entry in 0..bucket_capacity_elems {
+            // entry
+            print!("<addr {}> ", index);
+            for field_index in 0..ENTRY_SIZE {
+                let field = storage[index];
+                if field_index == 0 && field == Self::LAST {
+                    print!("LAST, ");
+                } else if field_index == 0 && field == Self::SENTINEL {
+                    print!("SENTINEL, ");
+                } else {
+                    print!("{}, ", storage[index]);
+                }
+                index += 1;
+            }
+            println!();
+        }
+
+        index
     }
 
     pub fn print_bucket_sizes<const ENTRY_SIZE: usize>(storage: &Vec<Word>) {
@@ -529,14 +587,21 @@ impl Operation {
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
 pub enum PiecedOperation {
     InsertRequest,
-    TryInsert,
-    ResizeInsert,
     GetRequest,
-    Get,
     RemoveRequest,
-    Remove,
     HasRequest,
+    InsertFindBucket,
+    GetFindBucket,
+    RemoveFindBucket,
+    HasFindBucket,
+
+    Get,
+    Remove,
     Has,
+    Insert,
+
+    // RetryInsert,
+    Resize,
 }
 
 impl PiecedOperation {
@@ -544,10 +609,19 @@ impl PiecedOperation {
     pub fn next_operation(&self) -> PiecedOperation {
         use PiecedOperation::*;
         match self {
-            InsertRequest => TryInsert,
-            GetRequest => Get,
-            RemoveRequest => Remove,
-            HasRequest => Has,
+            InsertRequest => InsertFindBucket,
+            GetRequest => GetFindBucket,
+            RemoveRequest => RemoveFindBucket,
+            HasRequest => HasFindBucket,
+
+            InsertFindBucket => Insert,
+            GetFindBucket => Get,
+            RemoveFindBucket => Remove,
+            HasFindBucket => Has,
+
+            Insert => Resize,
+            // Insert => RetryInsert,
+            // RetryInsert => Resize,
             _ => panic!("no next operation")
             // TryInsert => ResizeInsert,
             // ResizeInsert => Get,

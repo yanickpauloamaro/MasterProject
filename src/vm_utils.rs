@@ -135,6 +135,12 @@ impl SharedStorage {
     pub fn len(&self) -> usize {
         self.size
     }
+
+    pub fn to_vec(&self) -> Vec<Word> {
+        unsafe {
+            Vec::from_raw_parts(self.ptr, self.size, self.size)
+        }
+    }
 }
 //endregion
 
