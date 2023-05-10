@@ -367,8 +367,8 @@ impl DHashMap {
                 },
                 Self::LAST => { return SearchResult::EmptySpot(current_index); },
                 Self::SENTINEL => {
+                    result = SearchResult::EmptySpot(current_index);
                     current_index += ENTRY_SIZE;
-                    result = SearchResult::EmptySpot(current_index)
                 },
                 _other => {
                     current_index += ENTRY_SIZE;
