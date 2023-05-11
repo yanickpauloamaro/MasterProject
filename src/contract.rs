@@ -72,6 +72,11 @@ impl<const ADDRESS_COUNT: usize, const PARAM_COUNT: usize> Transaction<ADDRESS_C
                         reads[0] = AccessPattern::Address(hash_table_start);
                         (Some(reads), None)
                     },
+                    InsertComputeAndFind | RemoveComputeAndFind | GetComputeAndFind | HasComputeAndFind => {
+                        let hash_table_start = 0;
+                        reads[0] = AccessPattern::Address(hash_table_start);
+                        (Some(reads), None)
+                    },
                     Insert | Remove => {
                         let hash_table_start = 0;
                         let bucket_location = self.addresses[0] as StaticAddress;
@@ -449,7 +454,29 @@ impl AtomicFunction {
 
                         tx.function = AtomicFunction::PieceDHashMap(op.next_operation());
                         FunctionResult::Another(tx)
-                    }
+                    },
+                    InsertComputeAndFind | RemoveComputeAndFind | GetComputeAndFind | HasComputeAndFind => {
+                        // println!("------------ Compute Hash and Find Bucket ---------------");
+                        let key = tx.params[0];
+                        let (
+                            hash,
+                            _bucket_index,
+                            bucket_location,
+                            bucket_end
+                        ) = DHashMap::get_bucket::<PARAM_COUNT>(key, &storage);
+
+                        let current_nb_buckets = storage.get(0);
+                        let (hash_low, hash_high) = DHashMap::hash_to_halves(hash);
+
+                        tx.addresses[0] = bucket_location as StaticAddress;
+                        tx.addresses[1] = bucket_end as StaticAddress;
+                        tx.addresses[2] = hash_low as StaticAddress;
+                        tx.addresses[3] = hash_high as StaticAddress;
+                        tx.addresses[4] = current_nb_buckets as StaticAddress;
+
+                        tx.function = AtomicFunction::PieceDHashMap(op.next_operation());
+                        FunctionResult::Another(tx)
+                    },
                     Insert => {
 
                         if DHashMap::is_outdated(&tx, &storage) {

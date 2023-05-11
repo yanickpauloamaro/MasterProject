@@ -24,7 +24,8 @@ impl DHashMap {
     //region hashes
     #[inline]
     pub fn compute_hash(key: DKey) -> DHash {
-        Self::blake_hash(key)
+        Self::trivial_hash(key)
+        // Self::blake_hash(key)
         // Self::sha256_hash(key)
         // Self::sh512_hash(key)
     }
@@ -38,6 +39,13 @@ impl DHashMap {
 
     pub fn hash_from_halves(low: DHash, high: DHash) -> DHash {
         (high << 32) | low
+    }
+
+    #[inline]
+    fn trivial_hash(key: DKey) -> DHash {
+        let mut hasher = DefaultHasher::new();
+        key.hash(&mut hasher);
+        hasher.finish()
     }
 
     #[inline]
@@ -105,6 +113,7 @@ impl DHashMap {
         current_nb_buckets != previous_nb_buckets
     }
 
+    #[inline]
     pub fn update_tx<const A: usize, const ENTRY_SIZE: usize>(mut tx: Transaction<A, ENTRY_SIZE>, storage: &SharedStorage) -> Transaction<A, ENTRY_SIZE> {
 
         let current_nb_buckets = storage.get(0);
@@ -595,6 +604,11 @@ pub enum PiecedOperation {
     RemoveFindBucket,
     HasFindBucket,
 
+    InsertComputeAndFind,
+    GetComputeAndFind,
+    RemoveComputeAndFind,
+    HasComputeAndFind,
+
     Get,
     Remove,
     Has,
@@ -618,6 +632,11 @@ impl PiecedOperation {
             GetFindBucket => Get,
             RemoveFindBucket => Remove,
             HasFindBucket => Has,
+
+            InsertComputeAndFind => Insert,
+            GetComputeAndFind => Get,
+            RemoveComputeAndFind => Remove,
+            HasComputeAndFind => Has,
 
             Insert => Resize,
             // Insert => RetryInsert,

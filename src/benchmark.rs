@@ -385,7 +385,10 @@ impl TestBench {
                 let workload = AuctionWorkload::new_boxed(&params, args);
                 TestBench::dispatch(params, workload)
             },
-            Ok(("", (name, args))) if name == DHashMapWorkload::NAME || name == DHashMapWorkload::PIECED => {
+            Ok(("", (name, args))) if name == DHashMapWorkload::NAME ||
+                    name == DHashMapWorkload::PIECED ||
+                    name == DHashMapWorkload::PREVIOUS =>
+                {
                 let parse_result = DHashMapWorkload::initial_parser(args);
                 if let Ok((other_args, value_size)) = parse_result {
                     let workload = DHashMapWorkload::new_boxed(&params, other_args, value_size, name);
@@ -758,6 +761,7 @@ struct DHashMapWorkload {
 impl DHashMapWorkload {
     const NAME: &'static str = "DHashMap";
     const PIECED: &'static str = "PieceDHashMap";
+    const PREVIOUS: &'static str = "PreviousDHashMap";
     // "PieceDHashMap(7, 10, 10; 0.2, 0.2, 0.2, 0.2)"
 
     pub fn initial_parser(input: &str) -> IResult<&str, u32> {
@@ -838,7 +842,7 @@ impl DHashMapWorkload {
                 params[0] = key as FunctionParameter;
                 Transaction {
                     sender: tx_index as SenderAddress,
-                    function: AtomicFunction::PieceDHashMap(PiecedOperation::InsertRequest),
+                    function: AtomicFunction::PieceDHashMap(PiecedOperation::InsertComputeHash),
                     // function: AtomicFunction::DHashMap(Operation::Insert),
                     tx_index,
                     addresses: [0, 0, 0, 0, 0],
@@ -854,7 +858,7 @@ impl DHashMapWorkload {
                 params[0] = key as FunctionParameter;
                 Transaction {
                     sender: tx_index as SenderAddress,
-                    function: AtomicFunction::PieceDHashMap(PiecedOperation::GetRequest),
+                    function: AtomicFunction::PieceDHashMap(PiecedOperation::GetComputeHash),
                     // function: AtomicFunction::DHashMap(Operation::Get),
                     tx_index,
                     addresses: [0, 0, 0, 0, 0],
@@ -870,7 +874,7 @@ impl DHashMapWorkload {
                 params[0] = key as FunctionParameter;
                 Transaction {
                     sender: tx_index as SenderAddress,
-                    function: AtomicFunction::PieceDHashMap(PiecedOperation::RemoveRequest),
+                    function: AtomicFunction::PieceDHashMap(PiecedOperation::RemoveComputeHash),
                     // function: AtomicFunction::DHashMap(Operation::Remove),
                     tx_index,
                     addresses: [0, 0, 0, 0, 0],
@@ -906,24 +910,41 @@ impl<const ENTRY_SIZE: usize> ApplicationWorkload<5, ENTRY_SIZE> for DHashMapWor
         ];
 
         // TODO Use a parameter to decide between the two types?
-        let (addresses, operations) = if self.pieced {
+        let (addresses, operations) = match &params.workload {
+            name if name.starts_with(Self::NAME) => {
+                // println!("Using monolithic version version");
             let addresses = [0, 0, 0, 0, 0];
             let operations = [
-                PieceDHashMap(PiecedOperation::GetRequest),
-                PieceDHashMap(PiecedOperation::InsertRequest),
-                PieceDHashMap(PiecedOperation::RemoveRequest),
-                PieceDHashMap(PiecedOperation::HasRequest),
+                    DHashMap(Operation::Get),
+                    DHashMap(Operation::Insert),
+                    DHashMap(Operation::Remove),
+                    DHashMap(Operation::ContainsKey),
+                ];
+                (addresses, operations)
+            },
+            name if name.starts_with(Self::PIECED) => {
+                // println!("Using pieced version");
+                let addresses = [0, 0, 0, 0, 0];
+                let operations = [
+                    PieceDHashMap(PiecedOperation::GetComputeHash),
+                    PieceDHashMap(PiecedOperation::InsertComputeHash),
+                    PieceDHashMap(PiecedOperation::RemoveComputeHash),
+                    PieceDHashMap(PiecedOperation::HasComputeHash),
             ];
             (addresses, operations)
-        } else {
+            },
+            name if name.starts_with(Self::PREVIOUS) => {
+                // println!("Using previous pieced version");
             let addresses = [0, 0, 0, 0, 0];
             let operations = [
-                DHashMap(Operation::Get),
-                DHashMap(Operation::Insert),
-                DHashMap(Operation::Remove),
-                DHashMap(Operation::ContainsKey),
+                    PieceDHashMap(PiecedOperation::GetComputeAndFind),
+                    PieceDHashMap(PiecedOperation::InsertComputeAndFind),
+                    PieceDHashMap(PiecedOperation::RemoveComputeAndFind),
+                    PieceDHashMap(PiecedOperation::HasComputeAndFind),
             ];
             (addresses, operations)
+            },
+            other => panic!("Unknown workload: {:?}", other)
         };
 
         let dist2 = WeightedIndex::new(weights).unwrap();
