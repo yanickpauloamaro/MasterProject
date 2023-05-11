@@ -1,23 +1,25 @@
+use std::cell::RefCell;
+use std::collections::HashMap;
 use std::hash::BuildHasherDefault;
-use std::ops::Add;
+use std::mem;
+use std::ops::Range;
 use std::sync::Arc;
-use std::thread::JoinHandle;
+use std::time::{SystemTime, UNIX_EPOCH};
+
+use ahash::{AHasher};
 use crossbeam::channel::{Receiver, Sender, unbounded};
-// use std::sync::mpsc::{Receiver, Sender, channel};
-use crossbeam::select;
 use futures::SinkExt;
 use itertools::Itertools;
-use nohash_hasher::{BuildNoHashHasher, NoHashHasher};
 use rayon::prelude::*;
 use strum::IntoEnumIterator;
 use thincollections::thin_map::ThinMap;
-use tokio::time::{Instant, Duration};
-use crate::contract::{AccessPattern, AccessType, AtomicFunction, MAX_NB_ADDRESSES, StaticAddress, Transaction};
+use tokio::time::{Duration, Instant};
+
+use crate::contract::{Access, AccessPattern, AccessType, AtomicFunction, FunctionResult, MAX_NB_ADDRESSES, StaticAddress, Transaction};
 use crate::contract::FunctionResult::Another;
-use crate::d_hash_map;
 use crate::key_value::KeyValueOperation;
 use crate::vm::Executor;
-use crate::vm_utils::{AddressSet, SharedStorage, VmStorage};
+use crate::vm_utils::{AddressSet, Scheduling, VmStorage, VmUtils};
 use crate::wip::Word;
 
 #[derive(Debug)]
@@ -36,7 +38,11 @@ impl ParallelVmCollect {
 
     #[inline]
     pub fn execute<const A: usize, const P: usize>(&mut self, mut batch: Vec<Transaction<A, P>>) -> anyhow::Result<(Duration, Duration)> {
-        self.vm.execute_variant_6(batch)
+
+        let res = self.vm.execute_variant_6(batch);
+        // DHashMap::println::<P>(&self.vm.storage.content);
+        // DHashMap::print_bucket_sizes::<P>(&self.vm.storage.content);
+        res
     }
 
     pub fn set_storage(&mut self, value: Word) {
@@ -182,206 +188,24 @@ impl ParallelVM {
             self.get_address_set_capacity(chunk.len())
         );
 
-        let init_duration = a.elapsed();
-        let mut duration = Duration::from_secs(0);
-        'outer: for tx in chunk {
-            if tx.function != AtomicFunction::KeyValue(KeyValueOperation::Scan) {
-                let start = Instant::now();
-                for addr in tx.addresses.iter() {
-                    if !working_set.insert(*addr) {
-                        // Can't add tx to schedule
-                        postponed.push(tx);
-                        duration += start.elapsed();
-                        continue 'outer;
-                    }
-                }
-                duration += start.elapsed();
-            } else {
-                // eprintln!("Processing a scan operation");
-                for addr in tx.addresses[0]..tx.addresses[1] {
-                    if !working_set.insert(addr) {
-                        // Can't add tx to schedule
-                        postponed.push(tx);
-                        continue 'outer;
-                    }
-                }
-            }
-            scheduled.push(tx);
-        }
-        // println!("\ttook {:?}", a.elapsed());
-        // total, init, read+writes
-        // println!("\ttook {:?} ({} µs, {} µs)", a.elapsed(), init_duration.as_micros(), duration.as_micros());
-        (scheduled, postponed)
+        Scheduling::schedule_chunk_old(chunk, scheduled, postponed, working_set, a)
     }
+
 
     pub fn schedule_chunk_new<const A: usize, const P: usize>(&self, mut chunk: Vec<Transaction<A, P>>) -> (Vec<Transaction<A, P>>, Vec<Transaction<A, P>>) {
         let a = Instant::now();
         let mut scheduled = Vec::with_capacity(chunk.len());
         let mut postponed = Vec::with_capacity(chunk.len());
-        let mut remainder = 0;
-
-        let mut some_reads = false;
-        let mut some_writes = false;
-
-        let mut read_locked = false;
-        let mut write_locked = false;
 
         let addresses_per_tx = A;
         // let addresses_per_tx = 10;
         let mut address_map_capacity = addresses_per_tx * chunk.len();
         address_map_capacity *= 2;
+        type Map = HashMap<StaticAddress, AccessType, BuildHasherDefault<AHasher>>;
+        let mut address_map: Map = HashMap::with_capacity_and_hasher(address_map_capacity, BuildHasherDefault::default());
 
-        use ahash::AHasher;
-        type Map = ThinMap<StaticAddress, AccessType, BuildHasherDefault<AHasher>>;
-        let mut address_map: Map = ThinMap::with_capacity_and_hasher(address_map_capacity, BuildHasherDefault::default());
-        // type Map = ThinMap<StaticAddress, AccessType, BuildHasherDefault<NoHashHasher<StaticAddress>>>;
-        // let mut address_map: Map = ThinMap::with_capacity_and_hasher(address_map_capacity, BuildNoHashHasher::default());
+        Scheduling::schedule_chunk_new(&mut chunk, &mut scheduled, &mut postponed, &mut address_map, a);
 
-        let can_read = |addr: StaticAddress, map: &mut Map| {
-            let entry = map.entry(addr).or_insert(AccessType::Read);
-            *entry == AccessType::Read
-        };
-        let can_write = |addr: StaticAddress, map: &mut Map| {
-            let entry = map.entry(addr).or_insert(AccessType::TryWrite);
-            if *entry == AccessType::TryWrite {
-                *entry = AccessType::Write;
-                true
-            } else {
-                false
-            }
-        };
-
-        let init_duration = a.elapsed();
-        let mut base_case_duration = Duration::from_secs(0);
-        let mut reads_duration = Duration::from_secs(0);
-        let mut writes_duration = Duration::from_secs(0);
-
-        'backlog: for tx in chunk.iter() {
-            let tx = *tx;
-            remainder += 1;
-            let base_case_start = Instant::now();
-            let (possible_reads, possible_writes) = tx.accesses();
-            let reads = possible_reads.as_ref().map_or([].as_slice(), |inside| inside.as_slice());
-            let writes = possible_writes.as_ref().map_or([].as_slice(), |inside| inside.as_slice());
-
-            // Tx without any memory accesses ------------------------------------------------------
-            if reads.is_empty() && writes.is_empty() {
-                scheduled.push(tx);
-                continue 'backlog;
-            }
-
-            // Only reads are allowed --------------------------------------------------------------
-            if read_locked {
-                if writes.is_empty() { scheduled.push(tx); }
-                else { postponed.push(tx); }
-                continue 'backlog;
-            }
-
-            // All transactions with accesses will be postponed ------------------------------------
-            if write_locked {
-                postponed.push(tx);
-                continue 'backlog;
-            }
-            base_case_duration += base_case_start.elapsed();
-
-            // NB: A tx might be postponed after having some of its addresses added to the address set
-            // It is probably too expensive to rollback those changes. TODO Check
-            // Start with reads because they are less problematic if the tx is postponed
-            // Process reads -----------------------------------------------------------------------
-            let read_start = Instant::now();
-            'reads: for read in reads {
-                match read {
-                    AccessPattern::Address(addr) => {
-                        some_reads = true;
-                        if !can_read(*addr, &mut address_map) {
-                            postponed.push(tx);
-                            reads_duration += read_start.elapsed();
-                            continue 'backlog;
-                        }
-                    },
-                    AccessPattern::Range(from, to) => {
-                        some_reads = true;
-                        assert!(from < to);
-                        'range: for addr in (*from)..(*to) {
-                            if !can_read(addr, &mut address_map) {
-                                postponed.push(tx);
-                                reads_duration += read_start.elapsed();
-                                continue 'backlog;
-                            }
-                        }
-                    },
-                    AccessPattern::All => {
-                        if some_writes {
-                            postponed.push(tx);
-                        } else {
-                            scheduled.push(tx);
-                            read_locked = true;
-                        }
-                        // Read-all transactions can't have any other accesses, can proceed with the next tx
-                        reads_duration += read_start.elapsed();
-                        continue 'backlog;
-                    },
-                    AccessPattern::Done => {
-                        reads_duration += read_start.elapsed();
-                        break 'reads;
-                    }
-                }
-            }
-            reads_duration += read_start.elapsed();
-
-            // Process writes ----------------------------------------------------------------------
-            let writes_start = Instant::now();
-            'writes: for write in writes {
-                match write {
-                    AccessPattern::Address(addr) => {
-                        some_writes = true;
-                        if !can_write(*addr, &mut address_map) {
-                            postponed.push(tx);
-                            writes_duration += writes_start.elapsed();
-                            continue 'backlog;
-                        }
-                    },
-                    AccessPattern::Range(from, to) => {
-                        some_writes = true;
-                        assert!(from < to);
-                        'range: for addr in (*from)..(*to) {
-                            if !can_write(addr, &mut address_map) {
-                                postponed.push(tx);
-                                writes_duration += writes_start.elapsed();
-                                continue 'backlog;
-                            }
-                        }
-                    },
-                    AccessPattern::All => {
-                        if some_reads || some_writes {
-                            postponed.push(tx);
-                        } else {
-                            scheduled.push(tx);
-                            write_locked = true;
-                            // TODO just dev
-                            // postponed.extend_from_slice(&mut chunk[remainder..]);
-                            // break 'backlog;
-                        }
-
-                        // Write-all transactions can't have any other accesses, can proceed with the next tx
-                        continue 'backlog;
-                    },
-                    AccessPattern::Done => {
-                        writes_duration += writes_start.elapsed();
-                        break 'writes;
-                    }
-                }
-            }
-            writes_duration += writes_start.elapsed();
-
-            // Transaction can be executed in parallel
-            scheduled.push(tx);
-        }
-
-        let total = a.elapsed();
-        // println!("Scheduled: {}, postponed: {}, took {:?}", scheduled.len(), postponed.len(), total);
-        // total, init, base_case, reads, writes
-        // println!("\ttook {:.3?} \t({:?} µs, {:?} µs, {:?} µs, {:?} µs)", total, init_duration.as_micros(), base_case_duration.as_micros(), reads_duration.as_micros(), writes_duration.as_micros());
         (scheduled, postponed)
     }
 
@@ -421,8 +245,12 @@ impl ParallelVM {
             .par_chunks(chunk_size)
             .enumerate()
             .flat_map(
-                |(worker_index, worker_backlog)|
-                    self.execute_chunk(worker_backlog)
+                |(worker_index, worker_backlog)| {
+                    VmUtils::timestamp(format!("Executor {} starts executing", worker_index).as_str());
+                    let res = self.execute_chunk(worker_backlog);
+                    VmUtils::timestamp(format!("Executor {} finished executing", worker_index).as_str());
+                    res
+                }
             ).collect()
 
         // TODO Try to let rayon optimise execution
@@ -445,11 +273,18 @@ impl ParallelVM {
 
         // TODO duplicated code 1
         let scheduling = |new_backlog: Receiver<Vec<Transaction<A, P>>>, mut outputs: Vec<Sender<Vec<Transaction<A, P>>>>| {
+            VmUtils::timestamp("Scheduling closure starts");
+            let a = Instant::now();
+            let mut waited = Duration::from_secs(0);
             let mut duration = Duration::from_secs(0);
+            let mut b = Instant::now();
+            VmUtils::timestamp("Scheduling waits for first backlog");
             while let Ok(mut backlog) = new_backlog.recv() {
+                VmUtils::timestamp("Scheduling receives backlog");
                 let scheduling_start = Instant::now();
-
+                waited += b.elapsed();
                 while !backlog.is_empty() {
+                    VmUtils::timestamp("Start scheduling backlog");
                     let chunk_size = self.get_scheduler_chunk_size(backlog.len());
                     let mut chunks = backlog.par_drain(..backlog.len()).chunks(chunk_size);
                     if chunks.len() > outputs.len() { panic!("Not enough output channels!"); }
@@ -458,8 +293,10 @@ impl ParallelVM {
                         .zip(outputs.par_iter())
                         .enumerate()
                         .map(|(scheduler_index, (chunk, output))| {
+                            VmUtils::timestamp(format!("Scheduler {} starts scheduling", scheduler_index).as_str());
                             let (scheduled, postponed) = self.schedule_chunk(chunk);
                             if scheduled.is_empty() { panic!("Scheduler produced an empty schedule"); }
+                            VmUtils::timestamp(format!("Scheduler {} sends schedule", scheduler_index).as_str());
                             if let Err(e) = output.send(scheduled) {
                                 panic!("Failed to send schedule: {:?}", e.into_inner());
                             }
@@ -477,7 +314,7 @@ impl ParallelVM {
                     //         }
                     //         postponed
                     //     }));
-
+                    VmUtils::timestamp("Done scheduling, marking end of output");
                     // Notify the executor pool of the first scheduler without an output
                     // This ensures that the executor pool does not wait in schedulers that did not receive
                     // an input (and therefore will not output any result through their channel)
@@ -486,39 +323,66 @@ impl ParallelVM {
                             panic!("Failed to send empty schedule: {}", schedulers_postponed.len());
                         }
                     }
-
+                    VmUtils::timestamp("Done scheduling, extending backlog");
                     for mut postponed in schedulers_postponed {
                         backlog.append(&mut postponed);
                     }
+                    VmUtils::timestamp(format!("Done scheduling, backlog size: {}", backlog.len()).as_str());
                 }
 
+                VmUtils::timestamp("Scheduling waits for next backlog");
                 duration += scheduling_start.elapsed();
+                b = Instant::now();
             }
+            VmUtils::timestamp("End of scheduling closure");
+            // eprintln!("scheduling closure took {:?}", a.elapsed());
+            // eprintln!("\tincl. {:?} waiting for input from executor", waited);
+            VmUtils::took("scheduling closure", a.elapsed());
+            VmUtils::took("\t waiting for input from executor", waited);
             anyhow::Ok(duration)
         };
 
         let execution = |inputs: Vec<Receiver<Vec<Transaction<A, P>>>>, mut scheduling_pool: Sender<Vec<Transaction<A, P>>>| {
+                VmUtils::timestamp("Execution closure starts");
+                let a = Instant::now();
+                let mut waited = Duration::from_secs(0);
                 // TODO return results of transactions
                 let mut duration = Duration::from_secs(0);
                 let mut executed = 0;
+                let mut execution_rounds = 0;
+                VmUtils::timestamp("Executor pool start outer loop");
                 'outer_loop: loop {
                     let mut generated_tx = vec!();
-                    'round_robin: for input in inputs.iter() {
+                    VmUtils::timestamp("Executor pool start round robin");
+                    'round_robin: for (scheduler_index, input) in inputs.iter().enumerate() {
+                        let b = Instant::now();
+                        VmUtils::timestamp(format!("Executor pool waits for input from scheduler {}", scheduler_index).as_str());
                         if let Ok(round) = input.recv() {
+                            VmUtils::timestamp(format!("Executor pool receive schedule from scheduler {}", scheduler_index).as_str());
+                            waited += b.elapsed();
                             let execution_start = Instant::now();
                             if round.is_empty() {
+                                VmUtils::timestamp("Executor pool breaks round robin");
                                 break 'round_robin;
                             }
+                            execution_rounds += 1;
 
                             executed += round.len();
+                            VmUtils::timestamp("Executor pool: execution start");
                             let mut new_tx = self.execute_round(round);
+                            VmUtils::timestamp("Executor pool: execution end");
+
                             executed -= new_tx.len();
 
                             generated_tx.append(&mut new_tx);
                             duration += execution_start.elapsed();
+                            VmUtils::timestamp("Executor pool done with this schedule");
+                        } else {
+                            VmUtils::timestamp("Executor pool failed to receive schedule");
                         }
                     }
 
+                    VmUtils::timestamp("Executor pool round robin ends, sending new tx or exiting");
                     if generated_tx.is_empty() {
                         if executed == batch_size {
                             break;
@@ -527,13 +391,29 @@ impl ParallelVM {
                         panic!("Failed to send generated tx: {:?}", e);
                     }
                 }
+                VmUtils::timestamp("End of execution closure");
+                VmUtils::took("execution closure", a.elapsed());
+                VmUtils::took("\t waiting for input from scheduler", waited);
+                VmUtils::nb_rounds(execution_rounds);
+                // eprintln!("execution closure took {:?}", a.elapsed());
+                // eprintln!("\tincl. {:?} waiting for input from scheduler", waited);
                 anyhow::Ok(duration)
             };
 
+        let a = Instant::now();
+        VmUtils::timestamp("rayon start");
         let (scheduling_res, execution_res) = rayon::join(
-            || scheduling(receive_generated_tx, scheduler_outputs),
-            || execution(worker_pool_inputs, send_generated_tx),
+            || {
+                VmUtils::timestamp("first closure starts");
+                scheduling(receive_generated_tx, scheduler_outputs)
+            },
+            || {
+                VmUtils::timestamp("second closure starts");
+                execution(worker_pool_inputs, send_generated_tx)
+            },
         );
+        VmUtils::timestamp("rayon end");
+        VmUtils::took("rayon::join", a.elapsed());
 
         let scheduling_duration = scheduling_res.unwrap();
         let execution_duration = execution_res.unwrap();
@@ -557,8 +437,12 @@ impl ParallelVM {
 
         // TODO duplicated code 1
         let scheduling = |new_backlog: Receiver<Vec<Transaction<A, P>>>, mut outputs: Vec<Sender<Vec<Transaction<A, P>>>>| {
+            let a = Instant::now();
+            let mut waited = Duration::from_secs(0);
             let mut duration = Duration::from_secs(0);
+            let mut b = Instant::now();
             while let Ok(mut backlog) = new_backlog.recv() {
+                waited += b.elapsed();
                 let scheduling_start = Instant::now();
 
                 while !backlog.is_empty() {
@@ -566,7 +450,7 @@ impl ParallelVM {
                     let mut chunks = backlog.par_drain(..backlog.len()).chunks(chunk_size);
                     if chunks.len() > outputs.len() { panic!("Not enough output channels!"); }
 
-                    let res: Vec<_> = chunks
+                    let schedulers_postponed: Vec<_> = chunks
                         .zip(outputs.par_iter())
                         .enumerate()
                         .map(|(scheduler_index, (chunk, output))| {
@@ -581,29 +465,39 @@ impl ParallelVM {
                     // Notify the executor pool of the first scheduler without an output
                     // This ensures that the executor pool does not wait in schedulers that did not receive
                     // an input (and therefore will not output any result through their channel)
-                    if res.len() < self.nb_schedulers {
-                        if let Err(e) = outputs[res.len()].send(vec!()) {
-                            panic!("Failed to send empty schedule: {}", res.len());
+                    if schedulers_postponed.len() < self.nb_schedulers {
+                        if let Err(e) = outputs[schedulers_postponed.len()].send(vec!()) {
+                            panic!("Failed to send empty schedule: {}", schedulers_postponed.len());
                         }
                     }
 
-                    for mut postponed in res {
+                    for mut postponed in schedulers_postponed {
                         backlog.append(&mut postponed);
                     }
                 }
 
                 duration += scheduling_start.elapsed();
+                b = Instant::now();
             }
+            // eprintln!("scheduling closure took {:?}", a.elapsed());
+            // eprintln!("\tincl. {:?} waiting for input from executor", waited);
+            VmUtils::took("scheduling closure", a.elapsed());
+            VmUtils::took("\t waiting for input from executor", waited);
             anyhow::Ok(duration)
         };
 
         // TODO return the channels so that they are not dropped
         let execution = |inputs: Vec<Receiver<Vec<Transaction<A, P>>>>, mut scheduling_pool: Sender<Vec<Transaction<A, P>>>| {
+                let a = Instant::now();
+                let mut waited = Duration::from_secs(0);
                 let mut duration = Duration::from_secs(0);
                 let mut executed = 0;
+            let mut execution_rounds = 0;
                 'outer_loop: loop {
                     'round_robin: for input in inputs.iter() {
+                        let b = Instant::now();
                         if let Ok(round) = input.recv() {
+                            waited += b.elapsed();
                             let execution_start = Instant::now();
                             if round.is_empty() {
                                 break 'round_robin;
@@ -612,7 +506,7 @@ impl ParallelVM {
                             executed += round.len();
                             let mut new_tx = self.execute_round(round);
                             executed -= new_tx.len();
-
+                            execution_rounds += 1;
                             if !new_tx.is_empty() {
                                 if let Err(e) = scheduling_pool.send(new_tx) {
                                     panic!("Failed to send generated tx: {:?}", e);
@@ -626,13 +520,21 @@ impl ParallelVM {
                         break;
                     }
                 }
+                // eprintln!("execution closure took {:?}", a.elapsed());
+                // eprintln!("\tincl. {:?} waiting for input from scheduler", waited);
+                VmUtils::took("execution closure", a.elapsed());
+                VmUtils::took("\t waiting for input from scheduler", waited);
+                VmUtils::nb_rounds(execution_rounds);
                 anyhow::Ok(duration)
             };
 
+        let a = Instant::now();
         let (scheduling_res, execution_res) = rayon::join(
             || scheduling(receive_generated_tx, scheduler_outputs),
             || execution(worker_pool_inputs, send_generated_tx),
         );
+        // eprintln!("rayon::join took {:?}", a.elapsed());
+        VmUtils::took("rayon::join", a.elapsed());
 
         let scheduling_duration = scheduling_res.unwrap();
         let execution_duration = execution_res.unwrap();
@@ -640,6 +542,239 @@ impl ParallelVM {
         Ok((scheduling_duration, execution_duration))
     }
 }
+
+// trait BatchChunk<const A: usize, const P: usize> {
+//     fn get(&self, index: usize) -> Option<Transaction<A, P>>;
+// }
+pub enum Job<const A: usize, const P: usize> {
+    Schedule(Vec<Transaction<A, P>>),
+    Execute(Vec<Transaction<A, P>>),
+}
+pub enum Round<const A: usize, const P: usize> {
+    ReadOnly(Vec<Transaction<A, P>>),
+    Exclusive(Vec<Transaction<A, P>>),
+    Parallel(Vec<Transaction<A, P>>),
+}
+struct Foo {
+    pub ro: Vec<usize>,
+    pub exclusive: Vec<usize>,
+    pub parallel: Vec<Range<usize>>,
+}
+impl Foo {
+    pub fn new(chunk_size: usize) -> Self {
+        Self {
+            ro: Vec::with_capacity(chunk_size),
+            exclusive: Vec::with_capacity(chunk_size),
+            parallel: Vec::with_capacity(chunk_size),
+        }
+    }
+}
+
+struct VmWorker<const A: usize, const P: usize> {
+    // // scheduling
+    // pub postponed: Vec<Transaction<A, P>>,
+    pub address_map: HashMap<StaticAddress, AccessType, BuildHasherDefault<AHasher>>,
+    // pub scheduling_job_in: Receiver<Vec<Transaction<A, P>>>,
+    //
+    // // execution
+    // pub execution_job_in: Receiver<Vec<Transaction<A, P>>>,
+    // pub signal_execution_end: Sender<()>,
+    pub input: Receiver<Job<A, P>>,
+
+    // Option 1: store indices then move the transactions in the result vector
+    //      + move tx only once (not really, you moved them to read them...)
+    //      - iterate twice
+    // Option 2: store tx then move them to result vector
+    //      - move tx twice
+    //      + iterate only once
+    //      + can drain the backlog
+    // Option 3: move tx in separate result vectors and swap them at the end
+    //      + move tx only once
+    //      - need to pass vectors around to avoid allocations
+
+    pub backlog: RefCell<Vec<usize>>,
+    pub postponed: RefCell<Vec<usize>>,
+
+    pub output: Sender<FunctionResult<A, P>>,
+}
+/*
+impl<const A: usize, const P: usize> VmWorker<A, P> {
+    pub fn run(mut self) {
+        // loop {
+            // Leader:
+            //      Wait for scheduling backlog
+            //      Send backlog to all threads
+            // Schedule
+            // If leader,
+            //      if has schedule, send schedule to other threads with identity of next leader
+            //      else we are done
+            // else wait for schedule from leader
+            // execute schedule
+            // If leader, wait for notification from other threads
+            // else notify leader
+        // }
+        loop {
+            match self.input.recv() {
+                Ok(Job::Schedule(backlog)) => {
+                    // self.schedule(backlog);
+                },
+                Ok(Job::Execute(transactions)) => {
+                    self.execute(transactions);
+                },
+                Err(e) => {
+                    // Worker closes shop
+                    return;
+                }
+            }
+        }
+    }
+
+    fn schedule(&mut self, transactions: Arc<Vec<Transaction<A, P>>>, mut foo: Foo) {
+
+        let mut backlog = self.backlog.borrow_mut();
+        let mut address_map = self.address_map.borrow_mut();
+        let mut postponed = self.postponed.borrow_mut();
+
+        backlog.extend(0..transactions.len());
+
+        while let Some(first_index) = backlog.first().map(|first| *first).clone() {
+            self.schedule_once(first_index, &transactions, &mut foo, &mut address_map, &mut backlog, &mut postponed);
+            // backlog is now empty
+            // postponed might have some values
+            backlog.borrow_mut().append(&mut postponed);
+            address_map.clear();
+        };
+
+        // backlog is now empty
+        // postponed is now empty
+
+        // Send result (foo)
+        // TODO
+    }
+
+    // TODO pass everything as arguments...
+    fn schedule_once(&self,
+                     first_index: usize,
+                     transactions: &Arc<Vec<Transaction<A, P>>>,
+                     foo: &mut Foo,
+        address_map: &mut HashMap<StaticAddress, AccessType, BuildHasherDefault<AHasher>>,
+        backlog: &mut Vec<usize>,
+        postponed: &mut Vec<usize>,
+    ) {
+        let mut current_schedule = first_index..first_index;
+
+        'backlog: for index in backlog.drain(0..) {
+            let tx = transactions.get(index).unwrap();
+            // TODO just return an array of Access::Done when there is no accesses instead of doing this weird thing
+            let possible_accesses = tx.mixed_accesses();
+            let accesses = possible_accesses.as_ref().map_or([].as_slice(), |inside| inside.as_slice());
+
+            // let (possible_reads, possible_writes) = tx.accesses();
+            // let reads = possible_reads.as_ref().map_or([].as_slice(), |inside| inside.as_slice());
+            // let writes = possible_writes.as_ref().map_or([].as_slice(), |inside| inside.as_slice());
+
+            // Tx without any memory accesses can always be scheduled ------------------------------
+            // if reads.is_empty() && writes.is_empty() {
+            if accesses.is_empty() {
+                // Add this tx to the schedule
+                current_schedule.end = index + 1;
+                continue 'backlog;
+            }
+
+            'schedule_tx: for access in accesses {
+                match access {
+                    Access::Address(addr, access_type) => {
+                        if (access_type.is_read() && !self.can_read(*addr, address_map)) || !self.can_write(*addr, address_map) {
+                            // Postpone this tx
+                            postponed.push(index);
+
+                            // Commit the current schedule
+                            if !current_schedule.is_empty() {
+                                foo.parallel.push(current_schedule.clone());
+                            }
+
+                            // Start a new schedule
+                            // self.address_map.clear();
+                            current_schedule = (index+1)..(index+1);
+                            continue 'backlog;
+                        }
+                    },
+                    Access::Range(from, to, access_type) => {
+                        assert!(from < to);
+                        'range: for addr in (*from)..(*to) {
+                            if (access_type.is_read() && !self.can_read(addr, address_map)) || !self.can_write(addr, address_map) {
+                                // Postpone this tx
+                                postponed.push(index);
+
+                                // Commit the current schedule
+                                if !current_schedule.is_empty() {
+                                    foo.parallel.push(current_schedule.clone());
+                                }
+
+                                // Start a new schedule
+                                // self.address_map.clear();
+                                current_schedule = (index+1)..(index+1);
+                                continue 'backlog;
+                            }
+                        }
+                    },
+                    Access::All(access_type) => {
+                        // Commit the current schedule
+                        if !current_schedule.is_empty() {
+                            foo.parallel.push(current_schedule.clone());
+                        }
+
+                        if access_type.is_read() {
+                            foo.ro.push(index);
+                        } else {
+                            foo.exclusive.push(index);
+                        }
+
+                        // Start a new schedule
+                        // self.address_map.clear();
+                        current_schedule = (index+1)..(index+1);
+                        continue 'backlog;
+                    },
+                    Access::Done => {
+                        break 'schedule_tx;
+                    }
+                }
+            }
+
+            // Transaction can be executed in parallel, add it to the schedule
+            current_schedule.end = index + 1;
+        }
+
+        // Commit the current schedule
+        if !current_schedule.is_empty() {
+            foo.parallel.push(current_schedule);
+        }
+    }
+
+    fn reset(&mut self) {
+
+    }
+
+    fn can_read(&self, addr: StaticAddress, address_map: &mut HashMap<StaticAddress, AccessType, BuildHasherDefault<AHasher>>) -> bool {
+        let entry = address_map.entry(addr).or_insert(AccessType::Read);
+        *entry == AccessType::Read
+    }
+
+    fn can_write(&self, addr: StaticAddress, address_map: &mut HashMap<StaticAddress, AccessType, BuildHasherDefault<AHasher>>) -> bool {
+        let entry = address_map.entry(addr).or_insert(AccessType::TryWrite);
+        if *entry == AccessType::TryWrite {
+            *entry = AccessType::Write;
+            true
+        } else {
+            false
+        }
+    }
+
+    fn execute(&mut self, transactions: Vec<Transaction<A, P>>) {
+
+    }
+}
+*/
 //
 // #[derive(Debug)]
 // pub struct WipOptimizedParallelVM {

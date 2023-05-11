@@ -18,11 +18,18 @@ pub type FunctionParameter = u32;
 pub const MAX_NB_ADDRESSES: usize = 2;
 pub const MAX_NB_PARAMETERS: usize = 2;
 
-#[derive(Eq, PartialEq)]
+#[derive(Eq, PartialEq, Copy, Clone)]
 pub enum AccessType {
     Read,
     Write,
     TryWrite
+}
+
+impl AccessType {
+    #[inline]
+    pub fn is_read(&self) -> bool {
+        *self == AccessType::Read
+    }
 }
 
 #[derive(Eq, PartialEq, Clone, Copy)]
@@ -30,6 +37,14 @@ pub enum AccessPattern {
     Address(StaticAddress),
     Range(StaticAddress, StaticAddress),
     All,
+    Done
+}
+
+#[derive(Eq, PartialEq, Clone, Copy)]
+pub enum Access {
+    Address(StaticAddress, AccessType),
+    Range(StaticAddress, StaticAddress, AccessType),
+    All(AccessType),
     Done
 }
 
@@ -44,6 +59,86 @@ pub struct Transaction<const ADDRESS_COUNT: usize, const PARAM_COUNT: usize> {
 
 impl<const ADDRESS_COUNT: usize, const PARAM_COUNT: usize> Transaction<ADDRESS_COUNT, PARAM_COUNT> {
     // TODO Add AccessType inside AccessPattern so that only 1 array need to be returned
+    pub fn mixed_accesses(&self) -> Option<[Access; ADDRESS_COUNT]> {
+        let mut accesses = [Access::Done; ADDRESS_COUNT];
+
+        match self.function {
+            AtomicFunction::Transfer => {
+                accesses[0] = Access::Address(self.addresses[0], AccessType::Write);
+                accesses[1] = Access::Address(self.addresses[1], AccessType::Write);
+                Some(accesses)
+            },
+            AtomicFunction::TransferDecrement | AtomicFunction::TransferIncrement => {
+                accesses[0] = Access::Address(self.addresses[0], AccessType::Write);
+                Some(accesses)
+            },
+            AtomicFunction::Fibonacci => None,
+            AtomicFunction::DHashMap(_) => {
+                accesses[0] = Access::All(AccessType::Write);
+                Some(accesses)
+            },
+            AtomicFunction::PieceDHashMap(op) => {
+                use d_hash_map::PiecedOperation::*;
+                match op {
+                    InsertComputeHash | RemoveComputeHash | GetComputeHash | HasComputeHash => None,
+                    InsertFindBucket | RemoveFindBucket | GetFindBucket | HasFindBucket => {
+                        // let hash_table_start = 0;
+                        // reads[0] = AccessPattern::Address(hash_table_start);
+                        // (Some(reads), None)
+
+                        let hash_table_start = 0;
+                        accesses[0] = Access::Address(hash_table_start, AccessType::Read);
+                        Some(accesses)
+                    },
+                    InsertComputeAndFind | RemoveComputeAndFind | GetComputeAndFind | HasComputeAndFind => {
+                        // let hash_table_start = 0;
+                        // reads[0] = AccessPattern::Address(hash_table_start);
+                        // (Some(reads), None)
+
+                        let hash_table_start = 0;
+                        accesses[0] = Access::Address(hash_table_start, AccessType::Read);
+                        Some(accesses)
+                    },
+                    Insert | Remove => {
+                        // let hash_table_start = 0;
+                        // let bucket_location = self.addresses[0] as StaticAddress;
+                        //
+                        // reads[0] = AccessPattern::Address(hash_table_start);
+                        // writes[0] = AccessPattern::Address(bucket_location);
+                        // (Some(reads), Some(writes))
+
+                        let hash_table_start = 0;
+                        let bucket_location = self.addresses[0] as StaticAddress;
+                        accesses[0] = Access::Address(hash_table_start, AccessType::Read);
+                        accesses[1] = Access::Address(bucket_location, AccessType::Write);
+                        Some(accesses)
+                    },
+                    Resize => {
+                        // writes[0] = AccessPattern::All;
+                        // (None, Some(writes))
+                        accesses[0] = Access::All(AccessType::Write);
+                        Some(accesses)
+                    },
+                    Get | Has => {
+                        // let hash_table_start = 0;
+                        // let bucket_location = self.addresses[0] as StaticAddress;
+                        //
+                        // reads[0] = AccessPattern::Address(hash_table_start);
+                        // reads[1] = AccessPattern::Address(bucket_location);
+                        // (Some(reads), None)
+
+                        let hash_table_start = 0;
+                        let bucket_location = self.addresses[0] as StaticAddress;
+                        accesses[0] = Access::Address(hash_table_start, AccessType::Read);
+                        accesses[1] = Access::Address(bucket_location, AccessType::Read);
+                        Some(accesses)
+                    }
+                }
+            },
+            _ => todo!()
+        }
+    }
+
     pub fn accesses(&self) -> (Option<[AccessPattern; ADDRESS_COUNT]>, Option<[AccessPattern; ADDRESS_COUNT]>) {
         let mut reads = [AccessPattern::Done; ADDRESS_COUNT];
         let mut writes = [AccessPattern::Done; ADDRESS_COUNT];

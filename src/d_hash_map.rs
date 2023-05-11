@@ -51,30 +51,36 @@ impl DHashMap {
     #[inline]
     fn blake_hash(key: DKey) -> DHash {
         let hash = blake3::hash(&key.to_le_bytes());
-        let bytes = hash.as_bytes();
-        let mut trunc = [0u8; 8];
-        trunc.copy_from_slice(&bytes[0..8]);
-        u64::from_be_bytes(trunc)
+
+        let mut res = 0u64;
+        for byte in hash.as_bytes() {
+            res = res.wrapping_add(*byte as u64);
+        }
+        res
     }
 
     #[inline]
     fn sha256_hash(key: DKey) -> DHash {
-        let hash = sha256::digest(&key.to_le_bytes());
+        let mut hash = sha256::digest(&key.to_le_bytes());
 
-        let bytes = hash.as_bytes();
-        let mut trunc = [0u8; 8];
-        trunc.copy_from_slice(&bytes[0..8]);
-        u64::from_be_bytes(trunc)
+        let mut res = 0u64;
+        for byte in hash.as_bytes() {
+            res = res.wrapping_add(*byte as u64);
+        }
+        res
+
     }
 
     #[inline]
     fn sh512_hash(key: DKey) -> DHash {
-        let hash = Sha512::digest(&key.to_le_bytes());
+        let mut hash = Sha512::digest(&key.to_le_bytes());
 
-        let bytes = hash.as_slice();
-        let mut trunc = [0u8; 8];
-        trunc.copy_from_slice(&bytes[0..8]);
-        u64::from_be_bytes(trunc)
+        let mut res = 0u64;
+        for byte in hash.as_slice() {
+            res = res.wrapping_add(*byte as u64);
+        }
+        res
+
     }
     //endregion
 
