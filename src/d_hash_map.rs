@@ -576,20 +576,20 @@ impl Operation {
     pub fn corresponding_piece(&self) -> PiecedOperation {
         use Operation::*;
         match self {
-            Get => PiecedOperation::GetRequest,
-            Insert => PiecedOperation::InsertRequest,
-            Remove => PiecedOperation::RemoveRequest,
-            ContainsKey => PiecedOperation::HasRequest,
+            Get => PiecedOperation::GetComputeHash,
+            Insert => PiecedOperation::InsertComputeHash,
+            Remove => PiecedOperation::RemoveComputeHash,
+            ContainsKey => PiecedOperation::HasComputeHash,
         }
     }
 }
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
 pub enum PiecedOperation {
-    InsertRequest,
-    GetRequest,
-    RemoveRequest,
-    HasRequest,
+    InsertComputeHash,
+    GetComputeHash,
+    RemoveComputeHash,
+    HasComputeHash,
     InsertFindBucket,
     GetFindBucket,
     RemoveFindBucket,
@@ -609,10 +609,10 @@ impl PiecedOperation {
     pub fn next_operation(&self) -> PiecedOperation {
         use PiecedOperation::*;
         match self {
-            InsertRequest => InsertFindBucket,
-            GetRequest => GetFindBucket,
-            RemoveRequest => RemoveFindBucket,
-            HasRequest => HasFindBucket,
+            InsertComputeHash => InsertFindBucket,
+            GetComputeHash => GetFindBucket,
+            RemoveComputeHash => RemoveFindBucket,
+            HasComputeHash => HasFindBucket,
 
             InsertFindBucket => Insert,
             GetFindBucket => Get,
@@ -623,11 +623,6 @@ impl PiecedOperation {
             // Insert => RetryInsert,
             // RetryInsert => Resize,
             _ => panic!("no next operation")
-            // TryInsert => ResizeInsert,
-            // ResizeInsert => Get,
-            // Get => Get,
-            // Remove => Get,
-            // Has => Get,
         }
     }
 }

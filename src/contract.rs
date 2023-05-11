@@ -66,7 +66,7 @@ impl<const ADDRESS_COUNT: usize, const PARAM_COUNT: usize> Transaction<ADDRESS_C
             AtomicFunction::PieceDHashMap(op) => {
                 use d_hash_map::PiecedOperation::*;
                 match op {
-                    InsertRequest | RemoveRequest | GetRequest | HasRequest => (None, None),
+                    InsertComputeHash | RemoveComputeHash | GetComputeHash | HasComputeHash => (None, None),
                     InsertFindBucket | RemoveFindBucket | GetFindBucket | HasFindBucket => {
                         let hash_table_start = 0;
                         reads[0] = AccessPattern::Address(hash_table_start);
@@ -411,7 +411,7 @@ impl AtomicFunction {
                 use d_hash_map::Success::*;
 
                 let res = match op {
-                    InsertRequest | RemoveRequest | GetRequest | HasRequest => {
+                    InsertComputeHash | RemoveComputeHash | GetComputeHash | HasComputeHash => {
                         // println!("------------ Compute Hash ---------------");
 
                         let key = tx.params[0];
