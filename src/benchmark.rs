@@ -35,7 +35,7 @@ use crate::parallel_vm::{ParallelVmCollect, ParallelVmImmediate};
 use crate::sequential_vm::SequentialVM;
 use crate::utils::batch_with_conflicts_new_impl;
 use crate::vm::Executor;
-use crate::vm_utils::{CoordinatorCollect, CoordinatorImmediate, CoordinatorMixed, VmFactory, VmResult, VmType};
+use crate::vm_utils::{Coordinator, CoordinatorMixed, VmFactory, VmResult, VmType};
 use crate::wip::Word;
 
 pub fn benchmarking(path: &str) -> Result<()> {
@@ -283,9 +283,9 @@ enum VmWrapper<const A: usize, const P: usize> {
     Sequential(SequentialVM),
     ParallelCollect(ParallelVmCollect),
     ParallelImmediate(ParallelVmImmediate),
-    Immediate(CoordinatorImmediate<A, P>),
+    Immediate(Coordinator<A, P>),
+    Collect(Coordinator<A, P>),
     Mixed(CoordinatorMixed<A, P>),
-    Collect(CoordinatorCollect<A, P>),
 }
 impl<const A: usize, const P: usize> VmWrapper<A, P> {
     pub fn new(p: &RunParameter) -> Self {
@@ -293,8 +293,8 @@ impl<const A: usize, const P: usize> VmWrapper<A, P> {
             VmType::Sequential => VmWrapper::Sequential(SequentialVM::new(p.storage_size).unwrap()),
             VmType::ParallelCollect => VmWrapper::ParallelCollect(ParallelVmCollect::new(p.storage_size, p.nb_schedulers, p.nb_executors).unwrap()),
             VmType::ParallelImmediate => VmWrapper::ParallelImmediate(ParallelVmImmediate::new(p.storage_size, p.nb_schedulers, p.nb_executors).unwrap()),
-            VmType::Immediate => VmWrapper::Immediate(CoordinatorImmediate::new(p.batch_size, p.storage_size, p.nb_schedulers, p.nb_executors)),
-            VmType::Collect => VmWrapper::Collect(CoordinatorCollect::new(p.batch_size, p.storage_size, p.nb_schedulers, p.nb_executors)),
+            VmType::Immediate => VmWrapper::Immediate(Coordinator::new(p.batch_size, p.storage_size, p.nb_schedulers, p.nb_executors)),
+            VmType::Collect => VmWrapper::Collect(Coordinator::new(p.batch_size, p.storage_size, p.nb_schedulers, p.nb_executors)),
             VmType::Mixed => VmWrapper::Mixed(CoordinatorMixed::new(p.batch_size, p.storage_size, p.nb_schedulers, p.nb_executors)),
             _ => todo!()
         }
@@ -316,8 +316,8 @@ impl<const A: usize, const P: usize> VmWrapper<A, P> {
             VmWrapper::Sequential(vm) => { vm.execute(batch) },
             VmWrapper::ParallelCollect(vm) => { vm.execute(batch) },
             VmWrapper::ParallelImmediate(vm) => { vm.execute(batch) },
-            VmWrapper::Immediate(vm) => { vm.execute(batch) },
-            VmWrapper::Collect(vm) => { vm.execute(batch) },
+            VmWrapper::Immediate(vm) => { vm.execute(batch, true) },
+            VmWrapper::Collect(vm) => { vm.execute(batch, false) },
             VmWrapper::Mixed(vm) => { vm.execute(batch) },
             _ => todo!()
         }

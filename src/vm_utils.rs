@@ -1,11 +1,12 @@
 use std::cell::RefCell;
 use std::cmp::max;
 use std::collections::HashMap;
+use std::fmt::format;
 use std::hash::BuildHasherDefault;
 use std::mem;
 use std::thread::JoinHandle;
 // use std::sync::mpsc::Receiver;
-use std::time::Duration;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use ahash::AHasher;
 use crossbeam::channel::{Receiver, Sender, unbounded};
@@ -58,6 +59,47 @@ impl VmUtils {
             recipient.send(chunk)
                 .expect(format!("Failed to send transactions to {} {}", name, index).as_str());
         }
+    }
+
+    fn executor_pool<const A: usize, const P: usize>(
+        to_executors: &Vec<Sender<Vec<Transaction<A, P>>>>,
+        from_executors: &Vec<Receiver<Vec<FunctionResult<A, P>>>>,
+        schedule: &mut Vec<Transaction<A, P>>,
+        backlog: &mut Vec<Transaction<A, P>>,
+        results: &mut Vec<FunctionResult<A, P>>,
+    ) -> usize {
+        let mut nb_executed = 0;
+        // eprintln!("Coordinator: Sending backlog to executors");
+        // eprintln!("---------------------------");
+        VmUtils::timestamp("Coordinator sending backlog to executors");
+        VmUtils::split::<A, P>(schedule, to_executors, "executor");
+        assert!(schedule.is_empty());
+
+        // TODO Execute your own chunk ------------------------------------------------------
+        // TODO Also measure metrics
+
+        // Receive result from other executors -----------------------------------------
+        for (executor_index, executor) in from_executors.iter().enumerate() {
+            // eprintln!("Coordinator: Waiting for results from executor {}", executor_index);
+            if let Ok(mut results_and_tx) = executor.recv() {
+                // eprintln!("\tGot result ({:?} results)", results_and_tx.len());
+                for res in results_and_tx.drain(..) {
+                    match res {
+                        Another(tx) => backlog.push(tx),
+                        res => {
+                            nb_executed += 1;
+                            results.push(res)
+                        },
+                    }
+                }
+                // Done with this executor result (could reuse vec)
+            } else {
+                panic!("Failed to receive executor result")
+            }
+            // Done with this executor
+        }
+
+        nb_executed
     }
 }
 
@@ -312,7 +354,7 @@ impl<const A: usize, const P: usize> SchedulingCore<A, P> {
     }
 
     fn schedule(&mut self, mut backlog: Vec<Transaction<A, P>>) {
-        VmUtils::timestamp(format!("Scheduler {} starts scheduling", self.scheduler_index).as_str());
+        // VmUtils::timestamp(format!("Scheduler {} starts scheduling", self.scheduler_index).as_str());
 
         while !backlog.is_empty() {
             let c = Instant::now();
@@ -328,7 +370,7 @@ impl<const A: usize, const P: usize> SchedulingCore<A, P> {
             if scheduled.is_empty() { panic!("Scheduler produced an empty schedule"); }
             // backlog is now empty
 
-            // VmUtils::timestamp(format!("Scheduler {} sends schedule", scheduler_index).as_str());
+            // VmUtils::timestamp(format!("\tScheduler {} sends schedule", self.scheduler_index).as_str());
             if let Err(e) = self.output.send(scheduled) {
                 panic!("Failed to send schedule: {:?}", e.into_inner());
             }
@@ -377,7 +419,7 @@ impl<const A: usize, const P: usize> ExecutionCore<A, P> {
     }
 
     fn execute(&self, mut backlog: Vec<Transaction<A, P>>) {
-        VmUtils::timestamp(format!("Executor {} starts executing", self.executor_index).as_str());
+        // VmUtils::timestamp(format!("Executor {} starts executing", self.executor_index).as_str());
 
         let mut results = Vec::with_capacity(backlog.len());
         for tx in backlog {
@@ -444,7 +486,7 @@ impl<const A: usize, const P: usize> VmResult<A, P> {
     }
 }
 
-pub struct CoordinatorImmediate<const A: usize, const P: usize> {
+pub struct Coordinator<const A: usize, const P: usize> {
     nb_schedulers: usize,
     to_schedulers: Vec<Sender<Vec<Transaction<A, P>>>>,
     from_schedulers: Vec<Receiver<Vec<Transaction<A, P>>>>,
@@ -460,7 +502,7 @@ pub struct CoordinatorImmediate<const A: usize, const P: usize> {
 
     storage: VmStorage,
 }
-impl<const A: usize, const P: usize> CoordinatorImmediate<A, P> {
+impl<const A: usize, const P: usize> Coordinator<A, P> {
     pub fn new(batch_size: usize, storage_size: usize, nb_schedulers: usize, nb_executors: usize) -> Self {
 
         let storage = VmStorage::new(storage_size);
@@ -532,10 +574,9 @@ impl<const A: usize, const P: usize> CoordinatorImmediate<A, P> {
         }
     }
 
-    // pub fn execute(&mut self, mut batch: Vec<Transaction<A, P>>, debug: &mut DebugStruct)
-    pub fn execute(&mut self, mut batch: Vec<Transaction<A, P>>) -> anyhow::Result<VmResult<A, P>> {
+    pub fn execute(&mut self, mut batch: Vec<Transaction<A, P>>, immediate: bool) -> anyhow::Result<VmResult<A, P>> {
 
-        /* Immediate Version
+        /* Immediate Version (maybe good when there are lots of conflicts because the batch is broken down faster)
         *   Create backlog with content of batch
         *   Split backlog among S schedulers
         *
@@ -544,8 +585,20 @@ impl<const A: usize, const P: usize> CoordinatorImmediate<A, P> {
         *           Wait for schedule i (if empty skip)
         *           Split schedule among W executors
         *           Execute your own chunk
+        *           Receive result from other executors
+        *           Split new tx among S schedulers
+        */
+        /* Collect Version (maybe good when there is few conflicts as it will maximize parallelism)
+        *   Create backlog with content of batch
+        *   Split backlog among S schedulers
+        *
+        *   Loop until executed batch_len tx: (<=> backlog is empty)
+        *       For scheduler 1 to S:
+        *           Wait for schedule i (if empty skip)
+        *           Split schedule among W executors
+        *           Execute your own chunk
         *           Receive result from other executors (put them in backlog)
-        *           Split backlog among S schedulers (send empty if not enough tx)
+        *       Split backlog among S schedulers
         */
 
         let mut nb_executed = 0;
@@ -561,68 +614,51 @@ impl<const A: usize, const P: usize> CoordinatorImmediate<A, P> {
         let mut execution_duration = Duration::from_secs(0);
 
         while nb_executed < nb_to_execute {
-            // eprintln!("Coordinator: Start of loop (executed {} / {})", nb_executed, nb_to_execute);
-            if !backlog.is_empty() {
-                // eprintln!("Coordinator: Sending backlog to schedulers");
-                // eprintln!("==================================");
-                for index in 0..self.nb_schedulers {
-                    self.outstanding_backlogs[index] += 1;
-                }
-                // Split backlog among S schedulers ------------------------------------------------
-                VmUtils::split::<A, P>(&mut backlog, &self.to_schedulers, "scheduler");
-                assert!(backlog.is_empty());
-            }
-
+            VmUtils::timestamp(format!("Coordinator: Start of loop (executed {} / {})", nb_executed, nb_to_execute).as_str());
             // For scheduler 1 to S: ---------------------------------------------------------------
             for (scheduler_index, scheduler) in self.from_schedulers.iter().enumerate() {
+
+                if !backlog.is_empty() && (immediate || scheduler_index == 0) {
+                    VmUtils::timestamp("Coordinator sending backlog to schedulers");
+                    for index in 0..self.nb_schedulers {
+                        self.outstanding_backlogs[index] += 1;
+                    }
+                    // Split backlog among S schedulers ------------------------------------------------
+                    VmUtils::split::<A, P>(&mut backlog, &self.to_schedulers, "scheduler");
+                    assert!(backlog.is_empty());
+                }
+
                 if self.outstanding_backlogs[scheduler_index] == 0 {
-                    // eprintln!("scheduler {} doesn't have any outstanding backlogs, skipping", scheduler_index);
+                    VmUtils::timestamp(format!("scheduler {} doesn't have any outstanding backlogs, skipping", scheduler_index).as_str());
                     continue;
                 }
-                // eprintln!("Waiting for scheduler {}", scheduler_index);
+
+                VmUtils::timestamp(format!("Waiting for scheduler {}", scheduler_index).as_str());
                 if let Ok(mut schedule) = scheduler.recv() {
                     // Wait for schedule i (if empty skip) -----------------------------------------
                     if schedule.is_empty() {
-                        // eprintln!("\tReceived empty schedule, scheduler completed one backlog");
-                        // self.scheduler_is_done[scheduler_index] = true;
+                        // println!("\tReceived empty schedule, scheduler completed one backlog");
                         self.outstanding_backlogs[scheduler_index] -= 1;
                         continue;
                     }
 
-                    // eprintln!("Coordinator: Sending backlog to executors");
                     // Split schedule among W executors --------------------------------------------
                     let a = Instant::now();
-                    // eprintln!("---------------------------");
-                    VmUtils::split::<A, P>(&mut schedule, &self.to_executors, "executor");
-                    assert!(schedule.is_empty());
-
-                    // TODO Execute your own chunk ------------------------------------------------------
-                    // TODO Also measure metrics
-
-                    // Receive result from other executors -----------------------------------------
-                    for (executor_index, executor) in self.from_executors.iter().enumerate() {
-                        // eprintln!("Coordinator: Waiting for results from executor {}", executor_index);
-                        if let Ok(mut results_and_tx) = executor.recv() {
-                            // eprintln!("\tGot result ({:?} results)", results_and_tx.len());
-                            for res in results_and_tx.drain(..) {
-                                match res {
-                                    Another(tx) => backlog.push(tx),
-                                    res => {
-                                        nb_executed += 1;
-                                        results.push(res)
-                                    },
-                                }
-                            }
-                            // Done with this executor result (could reuse vec)
-                        } else { panic!("Failed to receive executor result") }
-                        // Done with this executor
-                    }
-                    execution_duration += a.elapsed()
+                    nb_executed += VmUtils::executor_pool::<A, P>(
+                        &self.to_executors,
+                        &self.from_executors,
+                        &mut schedule,
+                        &mut backlog,
+                        &mut results,
+                    );
+                    execution_duration += a.elapsed();
                     // Done with this schedule (could reuse vec)
-                } else { panic!("Failed to receive schedule") }
+                } else {
+                    panic!("Failed to receive schedule")
+                }
                 // Done with this scheduler
             }
-            // Done one round robin (TODO make schedulers send empty vec when they receive empty backlog)
+            // Done one round robin
         }
 
         // The whole batch was executed to completion
@@ -634,6 +670,7 @@ impl<const A: usize, const P: usize> CoordinatorImmediate<A, P> {
     }
 
     pub fn terminate(&mut self) -> (Vec<Duration>, Vec<Duration>) {
+        // Drop the channels so the cores know that they can exit
         for scheduler in self.to_schedulers.drain(..) {
             drop(scheduler);
         }
@@ -656,41 +693,6 @@ impl<const A: usize, const P: usize> CoordinatorImmediate<A, P> {
         println!("Executors latencies: {:?}", execution_latencies);
 
         (scheduling_latencies, execution_latencies)
-    }
-}
-
-pub struct CoordinatorCollect<const A: usize, const P: usize> {
-    scheduler: SchedulingCore<A, P>,
-    executor: ExecutionCore<A, P>,
-    storage: VmStorage,
-}
-impl<const A: usize, const P: usize> CoordinatorCollect<A, P> {
-    pub fn new(batch_size: usize, storage_size: usize, nb_schedulers: usize, nb_executors: usize) -> Self {
-        todo!()
-    }
-    pub fn execute(&mut self, mut batch: Vec<Transaction<A, P>>) -> anyhow::Result<VmResult<A, P>> {
-
-        /* Collect Version
-        *   Create backlog with content of batch
-        *
-        *   Loop until executed batch_len tx: (<=> backlog is empty)
-        *       Split backlog among S schedulers (send empty if not enough tx)
-        *       For scheduler 1 to S:
-        *           Wait for schedule i (if empty skip)
-        *           Split schedule among W executors
-        *           // Execute your own chunk
-        *           Receive result from other executors (put them in backlog)
-        */
-
-        todo!()
-    }
-
-    pub fn init_storage(&mut self, init: Box<dyn Fn(&mut Vec<Word>)>) {
-        init(&mut self.storage.content)
-    }
-
-    pub fn terminate(&mut self) -> (Vec<Duration>, Vec<Duration>) {
-        todo!()
     }
 }
 
