@@ -1,17 +1,19 @@
 use std::time::Duration;
+use itertools::Itertools;
 use strum::IntoEnumIterator;
 use tokio::time::Instant;
 use crate::contract::{AtomicFunction, FunctionResult, Transaction};
 use crate::contract::FunctionResult::Another;
 use crate::d_hash_map::DHashMap;
 use crate::vm::Executor;
-use crate::vm_utils::{SharedStorage};
+use crate::vm_utils::{SharedStorage, VmResult};
 use crate::wip::Word;
 
 #[derive(Debug)]
 pub struct SequentialVM {
     pub storage: Vec<Word>,
     functions: Vec<AtomicFunction>,
+    execution_measurements: Vec<Duration>
 }
 
 impl SequentialVM {
@@ -19,7 +21,7 @@ impl SequentialVM {
         let storage = vec![0; storage_size];
         let functions = AtomicFunction::all();
 
-        let vm = Self{ storage, functions };
+        let vm = Self{ storage, functions, execution_measurements: Vec::with_capacity(65536) };
         return Ok(vm);
     }
 
@@ -31,7 +33,7 @@ impl SequentialVM {
         init(&mut self.storage)
     }
 
-    pub fn execute<const A: usize, const P: usize>(&mut self, mut batch: Vec<Transaction<A, P>>) -> anyhow::Result<(Duration, Duration)> {
+    pub fn execute<const A: usize, const P: usize>(&mut self, mut batch: Vec<Transaction<A, P>>) -> anyhow::Result<VmResult<A, P>> {
 
         let storage = SharedStorage{ ptr: self.storage.as_mut_ptr(), size: self.storage.len() };
 
@@ -61,12 +63,14 @@ impl SequentialVM {
         // DHashMap::println::<P>(&self.storage);
         // DHashMap::print_bucket_sizes::<P>(&self.storage);
         // DHashMap::print_total_size::<P>(&self.storage);
+        self.execution_measurements.push(execution_start.elapsed());
 
-        return Ok((Duration::from_micros(0), execution_start.elapsed()));
+        return Ok(VmResult::new(vec!(), None, Some(execution_start.elapsed())));
     }
 
     pub fn execute_with_results<const A: usize, const P: usize>(&mut self, mut batch: Vec<Transaction<A, P>>) -> anyhow::Result<Vec<FunctionResult<A, P>>> {
 
+        let execution_start = Instant::now();
         let mut results = vec![FunctionResult::Error; batch.len()];
         let mut tx_index = batch.len() - 1;
         let storage = SharedStorage{ ptr: self.storage.as_mut_ptr(), size: self.storage.len() };
@@ -89,6 +93,12 @@ impl SequentialVM {
             }
         }
 
+        self.execution_measurements.push(execution_start.elapsed());
+
         return Ok(results);
+    }
+
+    pub fn terminate(&mut self) -> (Vec<Duration>, Vec<Duration>) {
+        (vec!(Duration::from_secs(0)), self.execution_measurements.clone())
     }
 }

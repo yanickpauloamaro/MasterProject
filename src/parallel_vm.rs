@@ -19,7 +19,7 @@ use crate::contract::{Access, AccessPattern, AccessType, AtomicFunction, Functio
 use crate::contract::FunctionResult::Another;
 use crate::key_value::KeyValueOperation;
 use crate::vm::Executor;
-use crate::vm_utils::{AddressSet, Scheduling, VmStorage, VmUtils};
+use crate::vm_utils::{AddressSet, Scheduling, VmResult, VmStorage, VmUtils};
 use crate::wip::Word;
 
 #[derive(Debug)]
@@ -37,7 +37,7 @@ impl ParallelVmCollect {
     }
 
     #[inline]
-    pub fn execute<const A: usize, const P: usize>(&mut self, mut batch: Vec<Transaction<A, P>>) -> anyhow::Result<(Duration, Duration)> {
+    pub fn execute<const A: usize, const P: usize>(&mut self, mut batch: Vec<Transaction<A, P>>) -> anyhow::Result<VmResult<A, P>> {
 
         let res = self.vm.execute_variant_6(batch);
         // DHashMap::println::<P>(&self.vm.storage.content);
@@ -51,6 +51,10 @@ impl ParallelVmCollect {
 
     pub fn init_storage(&mut self, init: Box<dyn Fn(&mut Vec<Word>)>) {
         self.vm.init_storage(init);
+    }
+
+    pub fn terminate(&mut self) -> (Vec<Duration>, Vec<Duration>) {
+        self.vm.terminate()
     }
 }
 
@@ -69,7 +73,7 @@ impl ParallelVmImmediate {
     }
 
     #[inline]
-    pub fn execute<const A: usize, const P: usize>(&mut self, mut batch: Vec<Transaction<A, P>>) -> anyhow::Result<(Duration, Duration)> {
+    pub fn execute<const A: usize, const P: usize>(&mut self, mut batch: Vec<Transaction<A, P>>) -> anyhow::Result<VmResult<A, P>> {
         self.vm.execute_variant_7(batch)
     }
 
@@ -79,6 +83,10 @@ impl ParallelVmImmediate {
 
     pub fn init_storage(&mut self, init: Box<dyn Fn(&mut Vec<Word>)>) {
         self.vm.init_storage(init);
+    }
+
+    pub fn terminate(&mut self) -> (Vec<Duration>, Vec<Duration>) {
+        self.vm.terminate()
     }
 }
 
@@ -112,6 +120,8 @@ pub struct ParallelVM {
     scheduler_chunk_size: fn(usize, usize)->usize,
     nb_workers: usize,
     executor_chunk_size: fn(usize, usize)->usize,
+    execution_latencies: Vec<Duration>,
+    scheduling_latencies: Vec<Duration>,
 }
 
 impl ParallelVM {
@@ -150,12 +160,28 @@ impl ParallelVM {
             // }
         };
 
-        let vm = Self{ storage, functions, nb_schedulers, scheduler_chunk_size, nb_workers, executor_chunk_size };
+        let scheduling_latencies = Vec::with_capacity(65536);
+        let execution_latencies = Vec::with_capacity(65536);
+
+        let vm = Self{
+            storage,
+            functions,
+            nb_schedulers,
+            scheduler_chunk_size,
+            nb_workers,
+            executor_chunk_size,
+            scheduling_latencies,
+            execution_latencies,
+        };
         return Ok(vm);
     }
 
     pub fn init_storage(&mut self, init: Box<dyn Fn(&mut Vec<Word>)>) {
         init(&mut self.storage.content)
+    }
+
+    pub fn terminate(&mut self) -> (Vec<Duration>, Vec<Duration>) {
+        (self.scheduling_latencies.clone(), self.execution_latencies.clone())
     }
 
     #[inline]
@@ -257,7 +283,7 @@ impl ParallelVM {
         // round.par_iter().flat_map(|tx| self.execute_tx(tx)).collect()
     }
 
-    pub fn execute_variant_6<const A: usize, const P: usize>(&mut self, mut batch: Vec<Transaction<A, P>>) -> anyhow::Result<(Duration, Duration)> {
+    pub fn execute_variant_6<const A: usize, const P: usize>(&mut self, mut batch: Vec<Transaction<A, P>>) -> anyhow::Result<VmResult<A, P>> {
 
         let (mut send_generated_tx, receive_generated_tx) = unbounded();
         let mut scheduler_outputs = Vec::with_capacity(self.nb_schedulers);
@@ -415,13 +441,16 @@ impl ParallelVM {
         VmUtils::timestamp("rayon end");
         VmUtils::took("rayon::join", a.elapsed());
 
-        let scheduling_duration = scheduling_res.unwrap();
-        let execution_duration = execution_res.unwrap();
+        // let scheduling_duration = scheduling_res.unwrap();
+        // let execution_duration = execution_res.unwrap();
+        self.scheduling_latencies.push(scheduling_res.unwrap());
+        self.execution_latencies.push(execution_res.unwrap());
 
-        Ok((scheduling_duration, execution_duration))
+        // Ok(VmResult::new(vec!(), scheduling_res.ok(), execution_res.ok()))
+        Ok(VmResult::new(vec!(), None, None))
     }
 
-    pub fn execute_variant_7<const A: usize, const P: usize>(&mut self, mut batch: Vec<Transaction<A, P>>) -> anyhow::Result<(Duration, Duration)> {
+    pub fn execute_variant_7<const A: usize, const P: usize>(&mut self, mut batch: Vec<Transaction<A, P>>) -> anyhow::Result<VmResult<A, P>> {
 
         let mut scheduler_outputs = Vec::with_capacity(self.nb_schedulers);
         let mut worker_pool_inputs = Vec::with_capacity(self.nb_schedulers);
@@ -536,10 +565,13 @@ impl ParallelVM {
         // eprintln!("rayon::join took {:?}", a.elapsed());
         VmUtils::took("rayon::join", a.elapsed());
 
-        let scheduling_duration = scheduling_res.unwrap();
-        let execution_duration = execution_res.unwrap();
+        // let scheduling_duration = scheduling_res.unwrap();
+        // let execution_duration = execution_res.unwrap();
+        self.scheduling_latencies.push(scheduling_res.unwrap());
+        self.execution_latencies.push(execution_res.unwrap());
 
-        Ok((scheduling_duration, execution_duration))
+        // Ok(VmResult::new(vec!(), scheduling_res.ok(), execution_res.ok()))
+        Ok(VmResult::new(vec!(), None, None))
     }
 }
 

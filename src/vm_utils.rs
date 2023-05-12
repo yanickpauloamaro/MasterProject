@@ -6,12 +6,11 @@ use std::mem;
 use std::thread::JoinHandle;
 // use std::sync::mpsc::Receiver;
 use std::time::Duration;
-use ahash::AHasher;
-use crossbeam::channel::{Sender, Receiver, unbounded};
-use itertools::Itertools;
 
+use ahash::AHasher;
+use crossbeam::channel::{Receiver, Sender, unbounded};
+use itertools::Itertools;
 use serde::{Deserialize, Serialize};
-use thincollections::thin_map::ThinMap;
 use thincollections::thin_set::ThinSet;
 use tokio::time::Instant;
 
@@ -19,7 +18,7 @@ use crate::config::RunParameter;
 use crate::contract::{AccessPattern, AccessType, AtomicFunction, FunctionResult, StaticAddress, Transaction};
 use crate::contract::FunctionResult::Another;
 use crate::key_value::KeyValueOperation;
-use crate::parallel_vm::{Job, ParallelVM};
+use crate::parallel_vm::Job;
 use crate::vm::{Executor, Jobs};
 use crate::vm_a::VMa;
 use crate::vm_b::VMb;
@@ -51,10 +50,11 @@ impl VmUtils {
         name: &str
     ) {
         let chunk_size = (backlog.len() / recipients.len()) + 1;
+        // eprintln!("Sending backlog to {}s ({} tx)", name, backlog.len());
         let mut work = backlog.drain(..);
-
         for (index, recipient) in recipients.iter().enumerate() {
             let chunk = work.by_ref().take(chunk_size).collect_vec();
+            // eprintln!("\tSending chunk to {} {} ({} tx)", name, index, chunk.len());
             recipient.send(chunk)
                 .expect(format!("Failed to send transactions to {} {}", name, index).as_str());
         }
@@ -262,7 +262,7 @@ impl Scheduling {
         let total = a.elapsed();
         // println!("Scheduled {:?}", scheduled);
         // println!("Scheduled: {}, postponed: {}, took {:?}", scheduled.len(), postponed.len(), total);
-        // total, init, base_case, reads, writes
+        // total, (init, base_case, reads, writes)
         // println!("\ttook {:.3?} \t({:?} µs, {:?} µs, {:?} µs, {:?} µs)", total, init_duration.as_micros(), base_case_duration.as_micros(), reads_duration.as_micros(), writes_duration.as_micros());
         // (scheduled, postponed)
     }
@@ -315,9 +315,9 @@ impl<const A: usize, const P: usize> SchedulingCore<A, P> {
         VmUtils::timestamp(format!("Scheduler {} starts scheduling", self.scheduler_index).as_str());
 
         while !backlog.is_empty() {
+            let c = Instant::now();
             let mut scheduled = Vec::with_capacity(backlog.len());
 
-            let c = Instant::now();
             Scheduling::schedule_chunk_new(
                 &mut backlog,
                 &mut scheduled,
@@ -335,6 +335,10 @@ impl<const A: usize, const P: usize> SchedulingCore<A, P> {
 
             mem::swap(&mut backlog, self.postponed.get_mut());
             self.address_map.get_mut().clear();
+        }
+
+        if let Err(e) = self.output.send(backlog) {
+            panic!("Failed to send end: {:?}", e.into_inner());
         }
 
         VmUtils::timestamp(format!("Scheduler {} done scheduling", self.scheduler_index).as_str());
@@ -425,9 +429,19 @@ impl<const A: usize, const P: usize> MixedCore<A, P> {
     }
 }
 
-pub struct DebugStruct {
+pub struct VmResult<const A: usize, const P: usize> {
+    pub results: Vec<FunctionResult<A, P>>,
     pub scheduling_duration: Duration,
     pub execution_duration: Duration,
+}
+impl<const A: usize, const P: usize> VmResult<A, P> {
+    pub fn new(results: Vec<FunctionResult<A, P>>, scheduling_duration: Option<Duration>, execution_duration: Option<Duration>) -> Self {
+        Self {
+            results,
+            scheduling_duration: scheduling_duration.unwrap_or(Duration::from_secs(0)),
+            execution_duration: execution_duration.unwrap_or(Duration::from_secs(0)),
+        }
+    }
 }
 
 pub struct CoordinatorImmediate<const A: usize, const P: usize> {
@@ -436,6 +450,7 @@ pub struct CoordinatorImmediate<const A: usize, const P: usize> {
     from_schedulers: Vec<Receiver<Vec<Transaction<A, P>>>>,
     scheduler_handles: Vec<JoinHandle<Duration>>,
     local_scheduler: Option<SchedulingCore<A, P>>,
+    outstanding_backlogs: Vec<usize>,
 
     nb_executors: usize,
     to_executors: Vec<Sender<Vec<Transaction<A, P>>>>,
@@ -455,7 +470,7 @@ impl<const A: usize, const P: usize> CoordinatorImmediate<A, P> {
         let mut from_schedulers = Vec::with_capacity(nb_schedulers);
 
         // TODO Create local_scheduler?
-        for scheduler_index in 1..nb_schedulers {
+        for scheduler_index in 0..nb_schedulers {
             let (send_work, receive_work) = unbounded();
             let (send_schedule, receive_schedule) = unbounded();
 
@@ -507,6 +522,7 @@ impl<const A: usize, const P: usize> CoordinatorImmediate<A, P> {
             from_schedulers,
             scheduler_handles,
             local_scheduler: None,
+            outstanding_backlogs: vec![0; nb_schedulers],
             nb_executors,
             to_executors,
             from_executors,
@@ -516,52 +532,9 @@ impl<const A: usize, const P: usize> CoordinatorImmediate<A, P> {
         }
     }
 
-    pub fn init_vm_storage(&mut self, init: Box<dyn Fn(&mut Vec<Word>)>) {
-        init(&mut self.storage.content)
-    }
-
     // pub fn execute(&mut self, mut batch: Vec<Transaction<A, P>>, debug: &mut DebugStruct)
-    pub fn execute(&mut self, mut batch: Vec<Transaction<A, P>>) -> anyhow::Result<(Vec<FunctionResult<A, P>>, DebugStruct)> {
+    pub fn execute(&mut self, mut batch: Vec<Transaction<A, P>>) -> anyhow::Result<VmResult<A, P>> {
 
-        // let mut schedulers = Vec::with_capacity(self.nb_schedulers);
-        // let mut to_scheduler = Vec::with_capacity(self.nb_schedulers);
-        // let mut from_scheduler: Vec<Receiver<Vec<Transaction<A, P>>>> = Vec::with_capacity(self.nb_schedulers);
-        //
-        // for scheduler_index in 0..self.nb_schedulers {
-        //     let (send_work, receive_work) = unbounded();
-        //     let (send_schedule, receive_schedule) = unbounded();
-        //
-        //     schedulers.push(SchedulingCore::spawn(
-        //         scheduler_index,
-        //         batch.len()/self.nb_schedulers,
-        //         receive_work,
-        //         send_schedule,
-        //     ));
-        //
-        //     to_scheduler.push(send_work);
-        //     from_scheduler.push(receive_schedule);
-        // }
-        //
-        // let mut executors = Vec::with_capacity(self.nb_executors);
-        // let mut to_executor = Vec::with_capacity(self.nb_executors);
-        // let mut from_executor: Vec<Receiver<Vec<FunctionResult<A, P>>>> = Vec::with_capacity(self.nb_executors);
-        //
-        // for executor_index in 0..self.nb_schedulers {
-        //     let (send_work, receive_work) = unbounded();
-        //     let (send_results, receive_results) = unbounded();
-        //
-        //     if executor_index != 0 {
-        //         executors.push(ExecutionCore::spawn(
-        //             executor_index,
-        //             receive_work,
-        //             send_results,
-        //             self.storage.get_shared()
-        //         ));
-        //     }
-        //
-        //     to_executor.push(send_work);
-        //     from_executor.push(receive_results);
-        // }
         /* Immediate Version
         *   Create backlog with content of batch
         *   Split backlog among S schedulers
@@ -584,15 +557,17 @@ impl<const A: usize, const P: usize> CoordinatorImmediate<A, P> {
         let mut backlog = vec!();
         backlog.append(&mut batch);
 
-        let mut debug = DebugStruct{
-            scheduling_duration: Duration::from_secs(0),
-            execution_duration: Duration::from_secs(0),
-        };
+        let scheduling_duration = Duration::from_secs(0);
+        let mut execution_duration = Duration::from_secs(0);
 
         while nb_executed < nb_to_execute {
             // eprintln!("Coordinator: Start of loop (executed {} / {})", nb_executed, nb_to_execute);
             if !backlog.is_empty() {
                 // eprintln!("Coordinator: Sending backlog to schedulers");
+                // eprintln!("==================================");
+                for index in 0..self.nb_schedulers {
+                    self.outstanding_backlogs[index] += 1;
+                }
                 // Split backlog among S schedulers ------------------------------------------------
                 VmUtils::split::<A, P>(&mut backlog, &self.to_schedulers, "scheduler");
                 assert!(backlog.is_empty());
@@ -600,16 +575,26 @@ impl<const A: usize, const P: usize> CoordinatorImmediate<A, P> {
 
             // For scheduler 1 to S: ---------------------------------------------------------------
             for (scheduler_index, scheduler) in self.from_schedulers.iter().enumerate() {
+                if self.outstanding_backlogs[scheduler_index] == 0 {
+                    // eprintln!("scheduler {} doesn't have any outstanding backlogs, skipping", scheduler_index);
+                    continue;
+                }
                 // eprintln!("Waiting for scheduler {}", scheduler_index);
                 if let Ok(mut schedule) = scheduler.recv() {
                     // Wait for schedule i (if empty skip) -----------------------------------------
-                    if schedule.is_empty() { continue; }
+                    if schedule.is_empty() {
+                        // eprintln!("\tReceived empty schedule, scheduler completed one backlog");
+                        // self.scheduler_is_done[scheduler_index] = true;
+                        self.outstanding_backlogs[scheduler_index] -= 1;
+                        continue;
+                    }
 
                     // eprintln!("Coordinator: Sending backlog to executors");
                     // Split schedule among W executors --------------------------------------------
+                    let a = Instant::now();
+                    // eprintln!("---------------------------");
                     VmUtils::split::<A, P>(&mut schedule, &self.to_executors, "executor");
                     assert!(schedule.is_empty());
-                    let a = Instant::now();
 
                     // TODO Execute your own chunk ------------------------------------------------------
                     // TODO Also measure metrics
@@ -618,7 +603,7 @@ impl<const A: usize, const P: usize> CoordinatorImmediate<A, P> {
                     for (executor_index, executor) in self.from_executors.iter().enumerate() {
                         // eprintln!("Coordinator: Waiting for results from executor {}", executor_index);
                         if let Ok(mut results_and_tx) = executor.recv() {
-                            // eprintln!("\tGot result {:?}", results_and_tx);
+                            // eprintln!("\tGot result ({:?} results)", results_and_tx.len());
                             for res in results_and_tx.drain(..) {
                                 match res {
                                     Another(tx) => backlog.push(tx),
@@ -629,22 +614,26 @@ impl<const A: usize, const P: usize> CoordinatorImmediate<A, P> {
                                 }
                             }
                             // Done with this executor result (could reuse vec)
-                        }
+                        } else { panic!("Failed to receive executor result") }
                         // Done with this executor
                     }
-                    debug.execution_duration += a.elapsed()
+                    execution_duration += a.elapsed()
                     // Done with this schedule (could reuse vec)
-                }
+                } else { panic!("Failed to receive schedule") }
                 // Done with this scheduler
             }
             // Done one round robin (TODO make schedulers send empty vec when they receive empty backlog)
         }
 
         // The whole batch was executed to completion
-        Ok((results, debug))
+        Ok(VmResult::new(results, None, Some(execution_duration)))
     }
 
-    pub fn terminate(&mut self) {
+    pub fn init_storage(&mut self, init: Box<dyn Fn(&mut Vec<Word>)>) {
+        init(&mut self.storage.content)
+    }
+
+    pub fn terminate(&mut self) -> (Vec<Duration>, Vec<Duration>) {
         for scheduler in self.to_schedulers.drain(..) {
             drop(scheduler);
         }
@@ -662,16 +651,24 @@ impl<const A: usize, const P: usize> CoordinatorImmediate<A, P> {
         for executor in self.executor_handles.drain(..) {
             execution_latencies.push(executor.join().unwrap_or(Duration::from_secs(0)));
         }
+
+        println!("Scheduling latencies: {:?}", scheduling_latencies);
+        println!("Executors latencies: {:?}", execution_latencies);
+
+        (scheduling_latencies, execution_latencies)
     }
 }
 
 pub struct CoordinatorCollect<const A: usize, const P: usize> {
     scheduler: SchedulingCore<A, P>,
     executor: ExecutionCore<A, P>,
-    // storage: VmStorage,
+    storage: VmStorage,
 }
 impl<const A: usize, const P: usize> CoordinatorCollect<A, P> {
-    fn execute(&mut self, batch: Vec<Transaction<A, P>>, debug: &mut DebugStruct) -> Vec<FunctionResult<A, P>> {
+    pub fn new(batch_size: usize, storage_size: usize, nb_schedulers: usize, nb_executors: usize) -> Self {
+        todo!()
+    }
+    pub fn execute(&mut self, mut batch: Vec<Transaction<A, P>>) -> anyhow::Result<VmResult<A, P>> {
 
         /* Collect Version
         *   Create backlog with content of batch
@@ -687,15 +684,27 @@ impl<const A: usize, const P: usize> CoordinatorCollect<A, P> {
 
         todo!()
     }
+
+    pub fn init_storage(&mut self, init: Box<dyn Fn(&mut Vec<Word>)>) {
+        init(&mut self.storage.content)
+    }
+
+    pub fn terminate(&mut self) -> (Vec<Duration>, Vec<Duration>) {
+        todo!()
+    }
 }
 
 pub struct CoordinatorMixed<const A: usize, const P: usize> {
     scheduler: SchedulingCore<A, P>,
     executor: ExecutionCore<A, P>,
-    // storage: VmStorage,
+    storage: VmStorage,
 }
 impl<const A: usize, const P: usize> CoordinatorMixed<A, P> {
-    fn execute(&mut self, batch: Vec<Transaction<A, P>>, debug: &mut DebugStruct) -> Vec<FunctionResult<A, P>> {
+    pub fn new(batch_size: usize, storage_size: usize, nb_schedulers: usize, nb_executors: usize) -> Self {
+        todo!()
+    }
+
+    pub fn execute(&mut self, mut batch: Vec<Transaction<A, P>>) -> anyhow::Result<VmResult<A, P>> {
 
         /* Mixed Version
         *   Create backlog with content of batch
@@ -714,6 +723,14 @@ impl<const A: usize, const P: usize> CoordinatorMixed<A, P> {
 
         todo!()
     }
+
+    pub fn init_storage(&mut self, init: Box<dyn Fn(&mut Vec<Word>)>) {
+        init(&mut self.storage.content)
+    }
+
+    pub fn terminate(&mut self) -> (Vec<Duration>, Vec<Duration>) {
+        todo!()
+    }
 }
 //region VM Types ==================================================================================
 #[derive(Debug, Serialize, Deserialize, Copy, Clone, PartialEq)]
@@ -725,6 +742,9 @@ pub enum VmType {
     Sequential,
     ParallelCollect,
     ParallelImmediate,
+    Immediate,
+    Collect,
+    Mixed
 }
 
 impl VmType {
@@ -737,6 +757,9 @@ impl VmType {
             VmType::Sequential => String::from("Sequential"),
             VmType::ParallelCollect => String::from("ParallelCollect"),
             VmType::ParallelImmediate => String::from("ParallelImmediate"),
+            VmType::Immediate => String::from("Immediate"),
+            VmType::Collect => String::from("Collect"),
+            VmType::Mixed => String::from("Mixed"),
         }
     }
 
@@ -745,6 +768,9 @@ impl VmType {
             VmType::Sequential => true,
             VmType::ParallelCollect => true,
             VmType::ParallelImmediate => true,
+            VmType::Immediate => true,
+            VmType::Collect => true,
+            VmType::Mixed => true,
             _ => false
         }
     }

@@ -35,7 +35,7 @@ use crate::parallel_vm::{ParallelVmCollect, ParallelVmImmediate};
 use crate::sequential_vm::SequentialVM;
 use crate::utils::batch_with_conflicts_new_impl;
 use crate::vm::Executor;
-use crate::vm_utils::{VmFactory, VmType};
+use crate::vm_utils::{CoordinatorCollect, CoordinatorImmediate, CoordinatorMixed, VmFactory, VmResult, VmType};
 use crate::wip::Word;
 
 pub fn benchmarking(path: &str) -> Result<()> {
@@ -213,13 +213,21 @@ fn bench_with_parameter_and_details(run: RunParameter) -> BenchmarkResult {
         let batch = batch.clone();
 
         vm.init_vm_storage(&run);
-        let start = Instant::now();
-        let (scheduling, execution) = vm.execute(batch).unwrap();
-        let duration = start.elapsed();
+        // let start = Instant::now();
+        // let (scheduling, execution) = vm.execute(batch).unwrap();
+        // let duration = start.elapsed();
+        //
+        // latency_reps.push(duration);
+        // scheduling_latency.push(scheduling);
+        // execution_latency.push(execution);
 
+        let start = Instant::now();
+        let result = vm.execute(batch).unwrap();
+        let duration = start.elapsed();
+        // eprintln!("Done one iteration=======================");
         latency_reps.push(duration);
-        scheduling_latency.push(scheduling);
-        execution_latency.push(execution);
+        scheduling_latency.push(result.scheduling_duration);
+        execution_latency.push(result.execution_duration);
     }
 
     return BenchmarkResult::from_latency_with_breakdown(run, latency_reps, scheduling_latency, execution_latency);
@@ -259,7 +267,7 @@ impl Bench {
         }
     }
 
-    pub fn execute<const A: usize, const B: usize>(&mut self, batch: Vec<Transaction<A, B>>) -> Result<(Duration, Duration)>{
+    pub fn execute<const A: usize, const P: usize>(&mut self, batch: Vec<Transaction<A, P>>) -> Result<VmResult<A, P>>{
         match self {
             Bench::Sequential(vm) => { vm.execute(batch) },
             // Bench::Sequential(vm) => { vm.execute_with_results(batch); Ok((Duration::from_secs(0), Duration::from_secs(0))) },
@@ -271,17 +279,23 @@ impl Bench {
 }
 
 //region vm wrapper ================================================================================
-enum VmWrapper {
+enum VmWrapper<const A: usize, const P: usize> {
     Sequential(SequentialVM),
     ParallelCollect(ParallelVmCollect),
     ParallelImmediate(ParallelVmImmediate),
+    Immediate(CoordinatorImmediate<A, P>),
+    Mixed(CoordinatorMixed<A, P>),
+    Collect(CoordinatorCollect<A, P>),
 }
-impl VmWrapper {
+impl<const A: usize, const P: usize> VmWrapper<A, P> {
     pub fn new(p: &RunParameter) -> Self {
         match p.vm_type {
             VmType::Sequential => VmWrapper::Sequential(SequentialVM::new(p.storage_size).unwrap()),
             VmType::ParallelCollect => VmWrapper::ParallelCollect(ParallelVmCollect::new(p.storage_size, p.nb_schedulers, p.nb_executors).unwrap()),
             VmType::ParallelImmediate => VmWrapper::ParallelImmediate(ParallelVmImmediate::new(p.storage_size, p.nb_schedulers, p.nb_executors).unwrap()),
+            VmType::Immediate => VmWrapper::Immediate(CoordinatorImmediate::new(p.batch_size, p.storage_size, p.nb_schedulers, p.nb_executors)),
+            VmType::Collect => VmWrapper::Collect(CoordinatorCollect::new(p.batch_size, p.storage_size, p.nb_schedulers, p.nb_executors)),
+            VmType::Mixed => VmWrapper::Mixed(CoordinatorMixed::new(p.batch_size, p.storage_size, p.nb_schedulers, p.nb_executors)),
             _ => todo!()
         }
     }
@@ -290,16 +304,34 @@ impl VmWrapper {
             VmWrapper::Sequential(vm) =>  vm.init_storage(init),
             VmWrapper::ParallelCollect(vm) => vm.init_storage(init),
             VmWrapper::ParallelImmediate(vm) => vm.init_storage(init),
+            VmWrapper::Immediate(vm) => vm.init_storage(init),
+            VmWrapper::Collect(vm) => vm.init_storage(init),
+            VmWrapper::Mixed(vm) => vm.init_storage(init),
             _ => todo!()
         }
     }
 
-    pub fn execute<const A: usize, const B: usize>(&mut self, batch: Vec<Transaction<A, B>>) -> Result<(Duration, Duration)>{
+    pub fn execute(&mut self, batch: Vec<Transaction<A, P>>) -> Result<VmResult<A, P>>{
         match self {
             VmWrapper::Sequential(vm) => { vm.execute(batch) },
             VmWrapper::ParallelCollect(vm) => { vm.execute(batch) },
             VmWrapper::ParallelImmediate(vm) => { vm.execute(batch) },
+            VmWrapper::Immediate(vm) => { vm.execute(batch) },
+            VmWrapper::Collect(vm) => { vm.execute(batch) },
+            VmWrapper::Mixed(vm) => { vm.execute(batch) },
             _ => todo!()
+        }
+    }
+
+    pub fn terminate(&mut self) -> (Vec<Duration>, Vec<Duration>) {
+        match self {
+            VmWrapper::Sequential(vm) => { vm.terminate() },
+            VmWrapper::ParallelCollect(vm) => { vm.terminate() },
+            VmWrapper::ParallelImmediate(vm) => { vm.terminate() },
+            VmWrapper::Immediate(vm) => { vm.terminate() },
+            VmWrapper::Collect(vm) => { vm.terminate() },
+            VmWrapper::Mixed(vm) => { vm.terminate() },
+            _ => (vec!(), vec!())
         }
     }
 }
@@ -425,7 +457,8 @@ impl TestBench {
         let result = match params.vm_type {
             VmType::Sequential => TestBench::bench_with_parameter_new(params, workload),
             // VmType::ParallelCollect | VmType::ParallelImmediate if params.with_details => TestBench::bench_with_parameter_and_details(params),
-            VmType::ParallelCollect | VmType::ParallelImmediate => TestBench::bench_with_parameter_new_and_details(params, workload),
+            VmType::ParallelCollect | VmType::ParallelImmediate | VmType::Immediate | VmType::Collect | VmType::Mixed
+                => TestBench::bench_with_parameter_new_and_details(params, workload),
             _ => TestBench::bench_with_parameter(params)
         };
 
@@ -525,10 +558,16 @@ impl TestBench {
 
         params.storage_size = workload.storage_size(&params);
         let mut vm = VmWrapper::new(&params);
+        // let mut vm = CoordinatorImmediate::<A, P>::new(
+        //     params.batch_size,
+        //     params.storage_size,
+        //     params.nb_schedulers,
+        //     params.nb_executors
+        // );
 
         let mut latency_reps = Vec::with_capacity(params.repetitions as usize);
-        let mut scheduling_latency = Vec::with_capacity(params.repetitions as usize);
-        let mut execution_latency = Vec::with_capacity(params.repetitions as usize);
+        // let mut scheduling_latency = Vec::with_capacity(params.repetitions as usize);
+        // let mut execution_latency = Vec::with_capacity(params.repetitions as usize);
 
         let mut rng = match params.seed {
             Some(seed) => StdRng::seed_from_u64(seed),
@@ -547,14 +586,24 @@ impl TestBench {
             let batch = batch.clone();
             vm.init_vm_storage(workload.initialisation(&params, &mut rng));
 
-            let start = Instant::now();
-            let (scheduling, execution) = vm.execute(batch).unwrap();
-            let duration = start.elapsed();
+            // let start = Instant::now();
+            // let (scheduling, execution) = vm.execute(batch).unwrap();
+            // let duration = start.elapsed();
+            //
+            // latency_reps.push(duration);
+            // scheduling_latency.push(scheduling);
+            // execution_latency.push(execution);
 
+            let start = Instant::now();
+            let result = vm.execute(batch).unwrap();
+            let duration = start.elapsed();
+            // eprintln!("Done one iteration=======================");
             latency_reps.push(duration);
-            scheduling_latency.push(scheduling);
-            execution_latency.push(execution);
+            // scheduling_latency.push(result.scheduling_duration);
+            // execution_latency.push(result.execution_duration);
         }
+
+        let (scheduling_latency, execution_latency) = vm.terminate();
 
         return BenchmarkResult::from_latency_with_breakdown(params, latency_reps, scheduling_latency, execution_latency);
     }
@@ -832,7 +881,8 @@ impl DHashMapWorkload {
     }
 
     pub fn test_batch<const ENTRY_SIZE: usize>(&mut self, params: &RunParameter, rng: &mut StdRng) -> Vec<Transaction<5, ENTRY_SIZE>> {
-        let batch_size = 10;
+        let batch_size = 100;
+        eprintln!("Test batch");
 
         let mut batch: Vec<_> = (0..batch_size)
             .map(|tx_index| {
@@ -896,7 +946,7 @@ impl DHashMapWorkload {
 impl<const ENTRY_SIZE: usize> ApplicationWorkload<5, ENTRY_SIZE> for DHashMapWorkload {
     fn next_batch(&mut self, params: &RunParameter, rng: &mut StdRng) -> Vec<Transaction<5, ENTRY_SIZE>> {
 
-        return self.test_batch(params, rng);
+        // return self.test_batch(params, rng);
 
         use d_hash_map::*;
         use AtomicFunction::PieceDHashMap;
@@ -913,8 +963,8 @@ impl<const ENTRY_SIZE: usize> ApplicationWorkload<5, ENTRY_SIZE> for DHashMapWor
         let (addresses, operations) = match &params.workload {
             name if name.starts_with(Self::NAME) => {
                 // println!("Using monolithic version version");
-            let addresses = [0, 0, 0, 0, 0];
-            let operations = [
+                let addresses = [0, 0, 0, 0, 0];
+                let operations = [
                     DHashMap(Operation::Get),
                     DHashMap(Operation::Insert),
                     DHashMap(Operation::Remove),
@@ -930,19 +980,19 @@ impl<const ENTRY_SIZE: usize> ApplicationWorkload<5, ENTRY_SIZE> for DHashMapWor
                     PieceDHashMap(PiecedOperation::InsertComputeHash),
                     PieceDHashMap(PiecedOperation::RemoveComputeHash),
                     PieceDHashMap(PiecedOperation::HasComputeHash),
-            ];
-            (addresses, operations)
+                ];
+                (addresses, operations)
             },
             name if name.starts_with(Self::PREVIOUS) => {
                 // println!("Using previous pieced version");
-            let addresses = [0, 0, 0, 0, 0];
-            let operations = [
+                let addresses = [0, 0, 0, 0, 0];
+                let operations = [
                     PieceDHashMap(PiecedOperation::GetComputeAndFind),
                     PieceDHashMap(PiecedOperation::InsertComputeAndFind),
                     PieceDHashMap(PiecedOperation::RemoveComputeAndFind),
                     PieceDHashMap(PiecedOperation::HasComputeAndFind),
-            ];
-            (addresses, operations)
+                ];
+                (addresses, operations)
             },
             other => panic!("Unknown workload: {:?}", other)
         };
