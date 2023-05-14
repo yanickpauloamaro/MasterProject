@@ -32,7 +32,7 @@ rayon = "1.7.0"
 thincollections = "0.5.3"
 nohash-hasher = "0.2.0"
 tinyset = "0.4.15"
-voracious_radix_sort = { version = "1.2.0", features = ["voracious_multithread"] }
+#voracious_radix_sort = { version = "1.2.0", features = ["voracious_multithread"] }
 itertools = "0.10.5"
 futures = "0.3.27"
 strum = { version = "0.24.1", features = ["derive"] }
@@ -50,3 +50,6 @@ criterion = { version = "0.4.0", features = ["async_tokio", "async_futures"]}
 name = "criterion_benchmark"
 harness = false
 bench = true
+
+[profile.release]
+debug = true

@@ -24,8 +24,8 @@ impl DHashMap {
     //region hashes
     #[inline]
     pub fn compute_hash(key: DKey) -> DHash {
-        Self::trivial_hash(key)
-        // Self::blake_hash(key)
+        // Self::trivial_hash(key)
+        Self::blake_hash(key)
         // Self::sha256_hash(key)
         // Self::sh512_hash(key)
     }

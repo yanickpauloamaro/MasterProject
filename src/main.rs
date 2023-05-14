@@ -10,7 +10,7 @@ extern crate tokio;
 
 use futures::future::BoxFuture;
 use itertools::Itertools;
-use voracious_radix_sort::RadixSort;
+// use voracious_radix_sort::RadixSort;
 use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::{fs, mem};
 use std::ops::{Add, Div, Mul, Sub};
@@ -40,7 +40,7 @@ use testbench::{bounded_array, contract, debug, debugging, micro_benchmark, util
 use testbench::applications::{Currency, Workload};
 use testbench::contract::{AccessPattern, AtomicFunction, FunctionParameter, SenderAddress, StaticAddress, TestSharedMap, Transaction};
 use testbench::transaction::{Transaction as BasicTransaction, TransactionAddress};
-use testbench::utils::{batch_with_conflicts, batch_with_conflicts_new_impl, BoundedArray, mean_ci_str};
+use testbench::utils::{batch_with_conflicts, batch_with_conflicts_new_impl, BitVector, BoundedArray, mean_ci_str};
 use testbench::vm::{ExecutionResult, Executor};
 use testbench::vm_a::VMa;
 use testbench::vm_c::VMc;
@@ -51,10 +51,10 @@ use testbench::parallel_vm::{ParallelVM, ParallelVmCollect, ParallelVmImmediate}
 use testbench::sequential_vm::SequentialVM;
 use testbench::worker_implementation::WorkerC;
 use std::str::FromStr;
-use core_affinity::CoreId;
+use core_affinity::{CoreId, get_core_ids};
 use futures::stream::iter;
 use rand::prelude::SliceRandom;
-use testbench::micro_benchmark::all_numa_latencies;
+use testbench::micro_benchmark::{all_numa_latencies, hwloc_test};
 
 type A = u64;
 type Set = IntSet<u64>;
@@ -64,8 +64,9 @@ struct T {
     to: A,
 }
 
-#[tokio::main]
-async fn main() -> Result<()> {
+// #[tokio::main]
+// async fn main() -> Result<()> {
+fn main() -> Result<()> {
 
     let total = Instant::now();
 
@@ -77,8 +78,9 @@ async fn main() -> Result<()> {
     // transaction_sizes(24, 8);
     // return Ok(());
 
-    // micro_benchmark::bench_hashmaps(100, 2, 65536/8);   // <<<<<<<<<<<<
+    // micro_benchmark::bench_hashmaps_clear(100, 2, 65536/8);   // <<<<<<<<<<<<
     // micro_benchmark::bench_hashmaps(100, 10, 65536/8);   // <<<<<<<<<<<
+    // micro_benchmark::bench_hashmaps_clear(100, 10, 65536/8);   // <<<<<<<<<<<
     // println!("======================================================================================");
     // println!("======================================================================================");
     // micro_benchmark::bench_hashmaps(100, 2, 65536/16);
@@ -90,18 +92,22 @@ async fn main() -> Result<()> {
     //
     // println!("======================================================================================");
     // println!("======================================================================================");
-    // micro_benchmark::profile_schedule_chunk(65536, 100, 8, 4, 0.0); // <<<<<<
-    // micro_benchmark::profile_schedule_chunk(65536, 1, 16, 4, 0.0);
-    // micro_benchmark::profile_schedule_chunk(65536, 1, 32, 4, 0.0);
+    // micro_benchmark::profile_schedule_chunk(65536, 100, 8, 4, 0.5); // <<<<<<
+    // // micro_benchmark::profile_schedule_chunk(65536, 1, 16, 4, 0.0);
+    // // micro_benchmark::profile_schedule_chunk(65536, 1, 32, 4, 0.0);
+    // micro_benchmark::profile_schedule_chunk(65536, 100, 8, 24, 0.0); // <<<<<<
+    // micro_benchmark::profile_schedule_chunk(65536, 100, 16, 16, 0.0);
+    // micro_benchmark::profile_schedule_chunk(65536, 100, 32, 1, 0.0);
 
-    tokio::task::spawn_blocking(|| {
-        // println!("Previous version");
-        // benchmarking("benchmark_config.json");
-        //
-        // println!();
-        // println!("New version");
-        TestBench::benchmark("benchmark_config.json")
-    }).await.expect("Task panicked")?;
+    // tokio::task::spawn_blocking(|| {
+    //     // println!("Previous version");
+    //     // benchmarking("benchmark_config.json");
+    //     //
+    //     // println!();
+    //     // println!("New version");
+    //     TestBench::benchmark("benchmark_config.json")
+    // }).await.expect("Task panicked")?;
+    TestBench::benchmark("benchmark_config.json")?;
 
     // let from_power = 2;
     // // let to_power = 18;
@@ -113,6 +119,17 @@ async fn main() -> Result<()> {
     //     Err(e) => eprintln!("Failed to run micro benchmark: {:?}", e)
     // }
 
+    // let test = vec![0, 2, 8, 9, 15];
+    // let mut vector = BitVector::new();
+    // for i in test.iter() {
+    //     vector.set(*i);
+    // }
+    // print!("[");
+    // for index in vector.iter() {
+    //     print!("{}, ", index);
+    // }
+    // println!("]");
+    //
     // manual_test()?;
 
     // profiling("benchmark_config.json")?; // ???
@@ -192,10 +209,12 @@ fn manual_test() -> Result<()> {
 
     for _ in 0..iter {
         let b = batch.clone();
-        let (scheduling, execution) = parallel_collect.execute(b)?;
+        let res = parallel_collect.execute(b)?;
+        let (scheduling, execution) = (res.scheduling_duration, res.execution_duration);
 
         let b = batch.clone();
-        let (scheduling, execution) = parallel_immediate.execute(b)?;
+        let res = parallel_immediate.execute(b)?;
+        let (scheduling, execution) = (res.scheduling_duration, res.execution_duration);
     }
     parallel_collect.vm.storage.set_storage(20 * iter);
     parallel_immediate.vm.storage.set_storage(20 * iter);
@@ -203,14 +222,16 @@ fn manual_test() -> Result<()> {
     for _ in 0..iter {
         let b = batch.clone();
         let start = Instant::now();
-        let (scheduling, execution) = parallel_collect.execute(b)?;
+        let res = parallel_collect.execute(b)?;
+        let (scheduling, execution) = (res.scheduling_duration, res.execution_duration);
         parallel_latency_v6.push(start.elapsed());
         parallel_scheduling_v6.push(scheduling);
         parallel_execution_v6.push(execution);
 
         let b = batch.clone();
         let start = Instant::now();
-        let (scheduling, execution) = parallel_immediate.execute(b)?;
+        let res = parallel_immediate.execute(b)?;
+        let (scheduling, execution) = (res.scheduling_duration, res.execution_duration);
         parallel_latency_v7.push(start.elapsed());
         parallel_scheduling_v7.push(scheduling);
         parallel_execution_v7.push(execution);
@@ -253,14 +274,16 @@ fn manual_test() -> Result<()> {
     // for _ in 0..iter {
     //     let b = batch_pieces.clone();
     //     let start = Instant::now();
-    //     let (scheduling, execution) = parallel_collect.execute(b)?;
+    //     let res = parallel_collect.execute(b)?;
+    //     let (scheduling, execution) = (res.scheduling_duration, res.execution_duration);
     //     parallel_latency_v6.push(start.elapsed());
     //     parallel_scheduling_v6.push(scheduling);
     //     parallel_execution_v6.push(execution);
     //
     //     let b = batch_pieces.clone();
     //     let start = Instant::now();
-    //     let (scheduling, execution) = parallel_immediate.execute(b)?;
+    //     let res = parallel_immediate.execute(b)?;
+    //     let (scheduling, execution) = (res.scheduling_duration, res.execution_duration);
     //     parallel_latency_v7.push(start.elapsed());
     //     parallel_scheduling_v7.push(scheduling);
     //     parallel_execution_v7.push(execution);
@@ -1817,32 +1840,32 @@ impl ThinSetWrapper {
 }
 unsafe impl Send for ThinSetWrapper {}
 
-#[derive(Clone, Debug)]
-struct SortedVecWrapper {
-    inner: Vec<u64>
-}
-impl SortedVecWrapper {
-    pub fn with_capacity_and_max(cap: usize, max: u64) -> Self {
-        let inner = Vec::with_capacity(cap);
-        return Self { inner };
-    }
-    pub fn contains(&self, el: u64) -> bool {
-        self.inner.binary_search(&el).is_ok()
-    }
-    pub fn insert(&mut self, el: u64) -> bool {
-        match self.inner.binary_search(&el) {
-            Ok(pos) => false, // element already in vector @ `pos`
-            Err(pos) => {
-                self.inner.insert(pos, el);
-                true
-            },
-        }
-    }
-    #[inline]
-    pub fn sort(&mut self) {
-        self.inner.voracious_sort();
-    }
-}
+// #[derive(Clone, Debug)]
+// struct SortedVecWrapper {
+//     inner: Vec<u64>
+// }
+// impl SortedVecWrapper {
+//     pub fn with_capacity_and_max(cap: usize, max: u64) -> Self {
+//         let inner = Vec::with_capacity(cap);
+//         return Self { inner };
+//     }
+//     pub fn contains(&self, el: u64) -> bool {
+//         self.inner.binary_search(&el).is_ok()
+//     }
+//     pub fn insert(&mut self, el: u64) -> bool {
+//         match self.inner.binary_search(&el) {
+//             Ok(pos) => false, // element already in vector @ `pos`
+//             Err(pos) => {
+//                 self.inner.insert(pos, el);
+//                 true
+//             },
+//         }
+//     }
+//     #[inline]
+//     pub fn sort(&mut self) {
+//         self.inner.voracious_sort();
+//     }
+// }
 
 #[derive(Clone, Debug)]
 struct SparseSet {
@@ -2594,22 +2617,22 @@ fn try_sorting(batch: &Vec<T>) {
     println!("Took {:?}", elapsed);
     println!("---------------------------------------------------");
 
-    let mut to_sort: Vec<_> = batch.iter().map(|tx| tx.from).collect();
-    let a = Instant::now();
-    to_sort.voracious_sort();
-    let elapsed = a.elapsed();
-    let t: Vec<_> = to_sort.iter().take(10).collect();
-    println!("voracious sorted: {:?}", t);
-    println!("Took {:?}", elapsed);
-    println!("---------------------------------------------------");
+    // let mut to_sort: Vec<_> = batch.iter().map(|tx| tx.from).collect();
+    // let a = Instant::now();
+    // to_sort.voracious_sort();
+    // let elapsed = a.elapsed();
+    // let t: Vec<_> = to_sort.iter().take(10).collect();
+    // println!("voracious sorted: {:?}", t);
+    // println!("Took {:?}", elapsed);
+    // println!("---------------------------------------------------");
 
-    let mut to_sort: Vec<_> = batch.iter().map(|tx| tx.from).collect();
-    let a = Instant::now();
-    to_sort.voracious_mt_sort(4);
-    let elapsed = a.elapsed();
-    let t: Vec<_> = to_sort.iter().take(10).collect();
-    println!("voracious sorted: {:?}", t);
-    println!("Took {:?}", elapsed);
+    // let mut to_sort: Vec<_> = batch.iter().map(|tx| tx.from).collect();
+    // let a = Instant::now();
+    // to_sort.voracious_mt_sort(4);
+    // let elapsed = a.elapsed();
+    // let t: Vec<_> = to_sort.iter().take(10).collect();
+    // println!("voracious sorted: {:?}", t);
+    // println!("Took {:?}", elapsed);
 
     println!();
 }

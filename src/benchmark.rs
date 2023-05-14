@@ -22,6 +22,7 @@ use rand::SeedableRng;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use serde::de::Visitor;
 use thincollections::thin_map::ThinMap;
+use thincollections::thin_set::ThinSet;
 
 use crate::applications::Workload;
 use crate::{auction, d_hash_map};
@@ -33,10 +34,10 @@ use crate::key_value::{Value, KeyValue, KeyValueOperation};
 use crate::micro_benchmark::adapt_unit;
 use crate::parallel_vm::{ParallelVmCollect, ParallelVmImmediate};
 use crate::sequential_vm::SequentialVM;
-use crate::utils::batch_with_conflicts_new_impl;
+use crate::utils::{batch_with_conflicts_new_impl, mean_ci_str};
 use crate::vm::Executor;
 use crate::vm_utils::{Coordinator, CoordinatorMixed, VmFactory, VmResult, VmType};
-use crate::wip::Word;
+use crate::wip::{NONE_WIP, Word};
 
 pub fn benchmarking(path: &str) -> Result<()> {
 
@@ -325,12 +326,33 @@ impl<const A: usize, const P: usize> VmWrapper<A, P> {
 
     pub fn terminate(&mut self) -> (Vec<Duration>, Vec<Duration>) {
         match self {
-            VmWrapper::Sequential(vm) => { vm.terminate() },
-            VmWrapper::ParallelCollect(vm) => { vm.terminate() },
-            VmWrapper::ParallelImmediate(vm) => { vm.terminate() },
-            VmWrapper::Immediate(vm) => { vm.terminate() },
-            VmWrapper::Collect(vm) => { vm.terminate() },
-            VmWrapper::Mixed(vm) => { vm.terminate() },
+            VmWrapper::Sequential(vm) => {
+                // DHashMap::println::<P>(&vm.storage);
+                // DHashMap::print_total_size::<P>(&vm.storage);
+                vm.terminate()
+            },
+            VmWrapper::ParallelCollect(vm) => {
+                // DHashMap::print_total_size::<P>(&vm.vm.storage.content);
+                vm.terminate()
+            },
+            VmWrapper::ParallelImmediate(vm) => {
+                // DHashMap::println::<P>(&vm.vm.storage.content);
+                // DHashMap::print_total_size::<P>(&vm.vm.storage.content);
+                vm.terminate()
+            },
+            VmWrapper::Immediate(vm) => {
+                // DHashMap::println::<P>(&vm.storage.content);
+                // DHashMap::print_total_size::<P>(&vm.storage.content);
+                vm.terminate()
+            },
+            VmWrapper::Collect(vm) => {
+                // DHashMap::print_total_size::<P>(&vm.storage.content);
+                vm.terminate()
+            },
+            VmWrapper::Mixed(vm) => {
+                // DHashMap::print_total_size::<P>(&vm.storage.content);
+                vm.terminate()
+            },
             _ => (vec!(), vec!())
         }
     }
@@ -551,6 +573,8 @@ impl TestBench {
             latency_reps.push(duration);
         }
 
+        vm.terminate();
+
         return BenchmarkResult::from_latency(params, latency_reps);
     }
 
@@ -558,16 +582,16 @@ impl TestBench {
 
         params.storage_size = workload.storage_size(&params);
         let mut vm = VmWrapper::new(&params);
-        // let mut vm = CoordinatorImmediate::<A, P>::new(
-        //     params.batch_size,
-        //     params.storage_size,
-        //     params.nb_schedulers,
-        //     params.nb_executors
-        // );
 
         let mut latency_reps = Vec::with_capacity(params.repetitions as usize);
-        // let mut scheduling_latency = Vec::with_capacity(params.repetitions as usize);
-        // let mut execution_latency = Vec::with_capacity(params.repetitions as usize);
+        let mut scheduling_latency = Vec::with_capacity(params.repetitions as usize);
+        let mut execution_latency = Vec::with_capacity(params.repetitions as usize);
+
+        let mut coordinator_wait = Vec::with_capacity(params.repetitions as usize);
+        let mut scheduler_msg_allocation = Vec::with_capacity(params.repetitions as usize);
+        let mut scheduler_msg_sending = Vec::with_capacity(params.repetitions as usize);
+        let mut executor_msg_allocation = Vec::with_capacity(params.repetitions as usize);
+        let mut executor_msg_sending = Vec::with_capacity(params.repetitions as usize);
 
         let mut rng = match params.seed {
             Some(seed) => StdRng::seed_from_u64(seed),
@@ -599,11 +623,47 @@ impl TestBench {
             let duration = start.elapsed();
             // eprintln!("Done one iteration=======================");
             latency_reps.push(duration);
-            // scheduling_latency.push(result.scheduling_duration);
-            // execution_latency.push(result.execution_duration);
+            scheduling_latency.push(result.scheduling_duration);
+            execution_latency.push(result.execution_duration);
+            if let Some(wait) = result.coordinator_wait_duration {
+                coordinator_wait.push(wait);
+            }
+
+            if let Some(wait) = result.scheduler_msg_allocation {
+                scheduler_msg_allocation.push(wait);
+            }
+            if let Some(wait) = result.scheduler_msg_sending {
+                scheduler_msg_sending.push(wait);
+            }
+            if let Some(wait) = result.executor_msg_allocation {
+                executor_msg_allocation.push(wait);
+            }
+            if let Some(wait) = result.executor_msg_sending {
+                executor_msg_sending.push(wait);
+            }
         }
 
-        let (scheduling_latency, execution_latency) = vm.terminate();
+        let _ = vm.terminate();
+        let wait = if coordinator_wait.is_empty() { None } else {
+            println!("\t\t\twaiting for schedules: {}", mean_ci_str(&coordinator_wait));
+            Some(coordinator_wait)
+        };
+        let wait = if scheduler_msg_allocation.is_empty() { None } else {
+            println!("\t\t\tallocating msg (to schedulers): {}", mean_ci_str(&scheduler_msg_allocation));
+            Some(scheduler_msg_allocation)
+        };
+        let wait = if scheduler_msg_sending.is_empty() { None } else {
+            println!("\t\t\tsending message to schedulers: {}", mean_ci_str(&scheduler_msg_sending));
+            Some(scheduler_msg_sending)
+        };
+        let wait = if executor_msg_allocation.is_empty() { None } else {
+            println!("\t\t\tallocating msg (to executors): {}", mean_ci_str(&executor_msg_allocation));
+            Some(executor_msg_allocation)
+        };
+        let wait = if executor_msg_sending.is_empty() { None } else {
+            println!("\t\t\tsending message to executors: {}", mean_ci_str(&executor_msg_sending));
+            Some(executor_msg_sending)
+        };
 
         return BenchmarkResult::from_latency_with_breakdown(params, latency_reps, scheduling_latency, execution_latency);
     }
@@ -872,8 +932,8 @@ impl DHashMapWorkload {
                     map_size,
                     get_proportion: get,
                     insert_proportion: insert,
-                    contains_proportion: remove,
-                    remove_proportion: contains,
+                    remove_proportion: remove,
+                    contains_proportion: contains,
                 })
             }
             other => panic!("Unable to parse argument to DHashMapWorkload workload: {:?}", other)
@@ -999,11 +1059,16 @@ impl<const ENTRY_SIZE: usize> ApplicationWorkload<5, ENTRY_SIZE> for DHashMapWor
 
         let dist2 = WeightedIndex::new(weights).unwrap();
 
+        // let mut set = ThinSet::new();
         let mut tx_params = [0 as FunctionParameter; ENTRY_SIZE];
-
+        // let mut __nb_inserts = 0;
         let batch = (0..params.batch_size).map(|tx_index| {
             let op = operations[dist2.sample(rng)];
             let key = *self.key_space.choose(rng).unwrap_or(&0);
+            // if op == PieceDHashMap(PiecedOperation::InsertComputeHash) && !set.contains((&key)) {
+            //     __nb_inserts += 1;
+            //     set.insert(key);
+            // }
 
             for i in 0..ENTRY_SIZE { tx_params[i] = (ENTRY_SIZE - i) as FunctionParameter; }
             tx_params[0] = key;
@@ -1016,6 +1081,7 @@ impl<const ENTRY_SIZE: usize> ApplicationWorkload<5, ENTRY_SIZE> for DHashMapWor
                 params: tx_params,
             }
         }).collect();
+        // println!("Nb to insert = {}", __nb_inserts);
 
         batch
     }

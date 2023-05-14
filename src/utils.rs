@@ -35,6 +35,81 @@ macro_rules! debug {
     }};
 }
 
+//region BitVector
+pub struct BitVector {
+    pub inner: [u8; 2],
+    size: usize,
+}
+impl BitVector {
+    pub fn new() -> Self {
+        Self {
+            inner: [0u8; 2],
+            size: 0,
+        }
+    }
+    pub fn set(&mut self, mut index: usize) {
+        let mut chunk_index = 0;
+        while index >= 8 {
+            index -= 8;
+            chunk_index += 1;
+        }
+
+        let mask = 1 << index;
+        println!("Setting bit {} of chunk {} using mask {:#b}", index, chunk_index, mask);
+        self.inner[chunk_index] = self.inner[chunk_index] | mask;
+        self.size += 1;
+    }
+    pub fn iter(&self) -> IterBitVector<'_> {
+        IterBitVector{
+            bitvector: &self,
+            current_chunk_index: 0,
+            current_chunk: self.inner[0],
+            current_index: 0,
+            done: false,
+        }
+    }
+}
+
+pub struct IterBitVector<'a> {
+    pub bitvector: &'a BitVector,
+    pub current_chunk_index: usize,
+    pub current_chunk: u8,
+    pub current_index: usize,
+    pub done: bool,
+}
+impl<'a> Iterator for IterBitVector<'a> {
+    type Item = usize;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.done {
+            return None;
+        }
+
+        let mut trailing = self.current_chunk.trailing_zeros() as usize;
+        if trailing < 8 {
+            let chunk_start = 8 * self.current_chunk_index;
+            let found = chunk_start + self.current_index + trailing;
+            let jump = trailing + 1;
+            // println!("current_index: {}, trailing: {}, chunk: {:#b}, found: {}", self.current_index, trailing, self.current_chunk, found);
+
+            self.current_index += jump;
+            self.current_chunk = self.current_chunk >> jump;
+            Some(found)
+        } else if self.current_chunk_index < self.bitvector.inner.len() - 1 {
+            // move to next chunk
+            self.current_chunk_index += 1;
+            self.current_chunk = self.bitvector.inner[self.current_chunk_index];
+            self.current_index = 0;
+            self.next()
+        } else {
+            // done
+            self.done = true;
+            None
+        }
+    }
+}
+//endregion BitVector
+
 //region BoundedArray
 #[macro_export]
 macro_rules! bounded_array {

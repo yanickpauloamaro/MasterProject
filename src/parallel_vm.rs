@@ -4,7 +4,7 @@ use std::hash::BuildHasherDefault;
 use std::mem;
 use std::ops::Range;
 use std::sync::Arc;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{SystemTime, UNIX_EPOCH, Instant};
 
 use ahash::{AHasher};
 use crossbeam::channel::{Receiver, Sender, unbounded};
@@ -13,10 +13,11 @@ use itertools::Itertools;
 use rayon::prelude::*;
 use strum::IntoEnumIterator;
 use thincollections::thin_map::ThinMap;
-use tokio::time::{Duration, Instant};
+use tokio::time::{Duration};
 
 use crate::contract::{Access, AccessPattern, AccessType, AtomicFunction, FunctionResult, MAX_NB_ADDRESSES, StaticAddress, Transaction};
 use crate::contract::FunctionResult::Another;
+use crate::d_hash_map::DHashMap;
 use crate::key_value::KeyValueOperation;
 use crate::vm::Executor;
 use crate::vm_utils::{AddressSet, Scheduling, VmResult, VmStorage, VmUtils};
@@ -139,7 +140,7 @@ impl ParallelVM {
         // let (tx_batch_done, rx_batch_done) = unbounded();
 
         let scheduler_chunk_size = |backlog_size: usize, nb_schedulers: usize| {
-            backlog_size/nb_schedulers + 1
+            (backlog_size/nb_schedulers) + 1
             // 65536/self.nb_schedulers + 1
             // backlog_size/self.nb_schedulers + 1
             // if backlog_size >= self.nb_schedulers {
@@ -150,7 +151,7 @@ impl ParallelVM {
         };
 
         let executor_chunk_size = |round_size: usize, nb_executors: usize| {
-            round_size/nb_executors + 1
+            (round_size/nb_executors) + 1
             // // (65536/self.nb_schedulers+1)/self.nb_executors + 1
             // round_size/self.nb_executors + 1
             // if round_size >= self.nb_executors {
@@ -206,7 +207,7 @@ impl ParallelVM {
     }
 
     pub fn schedule_chunk_old<const A: usize, const P: usize>(&self, mut chunk: Vec<Transaction<A, P>>) -> (Vec<Transaction<A, P>>, Vec<Transaction<A, P>>) {
-        let a = Instant::now();
+        // let a = Instant::now();
         let mut scheduled = Vec::with_capacity(chunk.len());
         let mut postponed = Vec::with_capacity(chunk.len());
 
@@ -214,12 +215,14 @@ impl ParallelVM {
             self.get_address_set_capacity(chunk.len())
         );
 
-        Scheduling::schedule_chunk_old(chunk, scheduled, postponed, working_set, a)
+        Scheduling::schedule_chunk_old(chunk, scheduled, postponed, working_set,
+                                       // a
+        )
     }
 
 
     pub fn schedule_chunk_new<const A: usize, const P: usize>(&self, mut chunk: Vec<Transaction<A, P>>) -> (Vec<Transaction<A, P>>, Vec<Transaction<A, P>>) {
-        let a = Instant::now();
+        // let a = Instant::now();
         let mut scheduled = Vec::with_capacity(chunk.len());
         let mut postponed = Vec::with_capacity(chunk.len());
 
@@ -230,7 +233,9 @@ impl ParallelVM {
         type Map = HashMap<StaticAddress, AccessType, BuildHasherDefault<AHasher>>;
         let mut address_map: Map = HashMap::with_capacity_and_hasher(address_map_capacity, BuildHasherDefault::default());
 
-        Scheduling::schedule_chunk_new(&mut chunk, &mut scheduled, &mut postponed, &mut address_map, a);
+        Scheduling::schedule_chunk_new(&mut chunk, &mut scheduled, &mut postponed, &mut address_map,
+                                       // a
+        );
 
         (scheduled, postponed)
     }
@@ -300,15 +305,15 @@ impl ParallelVM {
         // TODO duplicated code 1
         let scheduling = |new_backlog: Receiver<Vec<Transaction<A, P>>>, mut outputs: Vec<Sender<Vec<Transaction<A, P>>>>| {
             VmUtils::timestamp("Scheduling closure starts");
-            let a = Instant::now();
-            let mut waited = Duration::from_secs(0);
+            // let a = Instant::now();
+            // let mut waited = Duration::from_secs(0);
             let mut duration = Duration::from_secs(0);
-            let mut b = Instant::now();
+            // let mut b = Instant::now();
             VmUtils::timestamp("Scheduling waits for first backlog");
             while let Ok(mut backlog) = new_backlog.recv() {
                 VmUtils::timestamp("Scheduling receives backlog");
                 let scheduling_start = Instant::now();
-                waited += b.elapsed();
+                // waited += b.elapsed();
                 while !backlog.is_empty() {
                     VmUtils::timestamp("Start scheduling backlog");
                     let chunk_size = self.get_scheduler_chunk_size(backlog.len());
@@ -358,20 +363,20 @@ impl ParallelVM {
 
                 VmUtils::timestamp("Scheduling waits for next backlog");
                 duration += scheduling_start.elapsed();
-                b = Instant::now();
+                // b = Instant::now();
             }
-            VmUtils::timestamp("End of scheduling closure");
+            // VmUtils::timestamp("End of scheduling closure");
             // eprintln!("scheduling closure took {:?}", a.elapsed());
             // eprintln!("\tincl. {:?} waiting for input from executor", waited);
-            VmUtils::took("scheduling closure", a.elapsed());
-            VmUtils::took("\t waiting for input from executor", waited);
+            // VmUtils::took("scheduling closure", a.elapsed());
+            // VmUtils::took("\t waiting for input from executor", waited);
             anyhow::Ok(duration)
         };
 
         let execution = |inputs: Vec<Receiver<Vec<Transaction<A, P>>>>, mut scheduling_pool: Sender<Vec<Transaction<A, P>>>| {
                 VmUtils::timestamp("Execution closure starts");
-                let a = Instant::now();
-                let mut waited = Duration::from_secs(0);
+                // let a = Instant::now();
+                // let mut waited = Duration::from_secs(0);
                 // TODO return results of transactions
                 let mut duration = Duration::from_secs(0);
                 let mut executed = 0;
@@ -381,11 +386,11 @@ impl ParallelVM {
                     let mut generated_tx = vec!();
                     VmUtils::timestamp("Executor pool start round robin");
                     'round_robin: for (scheduler_index, input) in inputs.iter().enumerate() {
-                        let b = Instant::now();
+                        // let b = Instant::now();
                         VmUtils::timestamp(format!("Executor pool waits for input from scheduler {}", scheduler_index).as_str());
                         if let Ok(round) = input.recv() {
                             VmUtils::timestamp(format!("Executor pool receive schedule from scheduler {}", scheduler_index).as_str());
-                            waited += b.elapsed();
+                            // waited += b.elapsed();
                             let execution_start = Instant::now();
                             if round.is_empty() {
                                 VmUtils::timestamp("Executor pool breaks round robin");
@@ -417,16 +422,16 @@ impl ParallelVM {
                         panic!("Failed to send generated tx: {:?}", e);
                     }
                 }
-                VmUtils::timestamp("End of execution closure");
-                VmUtils::took("execution closure", a.elapsed());
-                VmUtils::took("\t waiting for input from scheduler", waited);
-                VmUtils::nb_rounds(execution_rounds);
+                // VmUtils::timestamp("End of execution closure");
+                // VmUtils::took("execution closure", a.elapsed());
+                // VmUtils::took("\t waiting for input from scheduler", waited);
+                // VmUtils::nb_rounds(execution_rounds);
                 // eprintln!("execution closure took {:?}", a.elapsed());
                 // eprintln!("\tincl. {:?} waiting for input from scheduler", waited);
                 anyhow::Ok(duration)
             };
 
-        let a = Instant::now();
+        // let a = Instant::now();
         VmUtils::timestamp("rayon start");
         let (scheduling_res, execution_res) = rayon::join(
             || {
@@ -439,15 +444,16 @@ impl ParallelVM {
             },
         );
         VmUtils::timestamp("rayon end");
-        VmUtils::took("rayon::join", a.elapsed());
+        // VmUtils::took("rayon::join", a.elapsed());
 
         // let scheduling_duration = scheduling_res.unwrap();
         // let execution_duration = execution_res.unwrap();
-        self.scheduling_latencies.push(scheduling_res.unwrap());
-        self.execution_latencies.push(execution_res.unwrap());
+        Ok(VmResult::new(vec!(), scheduling_res.ok(), execution_res.ok()))
 
-        // Ok(VmResult::new(vec!(), scheduling_res.ok(), execution_res.ok()))
-        Ok(VmResult::new(vec!(), None, None))
+        // self.scheduling_latencies.push(scheduling_res.unwrap());
+        // self.execution_latencies.push(execution_res.unwrap());
+        //
+        // Ok(VmResult::new(vec!(), None, None))
     }
 
     pub fn execute_variant_7<const A: usize, const P: usize>(&mut self, mut batch: Vec<Transaction<A, P>>) -> anyhow::Result<VmResult<A, P>> {
@@ -466,12 +472,12 @@ impl ParallelVM {
 
         // TODO duplicated code 1
         let scheduling = |new_backlog: Receiver<Vec<Transaction<A, P>>>, mut outputs: Vec<Sender<Vec<Transaction<A, P>>>>| {
-            let a = Instant::now();
-            let mut waited = Duration::from_secs(0);
+            // let a = Instant::now();
+            // let mut waited = Duration::from_secs(0);
             let mut duration = Duration::from_secs(0);
-            let mut b = Instant::now();
+            // let mut b = Instant::now();
             while let Ok(mut backlog) = new_backlog.recv() {
-                waited += b.elapsed();
+                // waited += b.elapsed();
                 let scheduling_start = Instant::now();
 
                 while !backlog.is_empty() {
@@ -506,27 +512,27 @@ impl ParallelVM {
                 }
 
                 duration += scheduling_start.elapsed();
-                b = Instant::now();
+                // b = Instant::now();
             }
             // eprintln!("scheduling closure took {:?}", a.elapsed());
             // eprintln!("\tincl. {:?} waiting for input from executor", waited);
-            VmUtils::took("scheduling closure", a.elapsed());
-            VmUtils::took("\t waiting for input from executor", waited);
+            // VmUtils::took("scheduling closure", a.elapsed());
+            // VmUtils::took("\t waiting for input from executor", waited);
             anyhow::Ok(duration)
         };
 
         // TODO return the channels so that they are not dropped
         let execution = |inputs: Vec<Receiver<Vec<Transaction<A, P>>>>, mut scheduling_pool: Sender<Vec<Transaction<A, P>>>| {
-                let a = Instant::now();
-                let mut waited = Duration::from_secs(0);
+                // let a = Instant::now();
+                // let mut waited = Duration::from_secs(0);
                 let mut duration = Duration::from_secs(0);
                 let mut executed = 0;
             let mut execution_rounds = 0;
                 'outer_loop: loop {
                     'round_robin: for input in inputs.iter() {
-                        let b = Instant::now();
+                        // let b = Instant::now();
                         if let Ok(round) = input.recv() {
-                            waited += b.elapsed();
+                            // waited += b.elapsed();
                             let execution_start = Instant::now();
                             if round.is_empty() {
                                 break 'round_robin;
@@ -551,27 +557,28 @@ impl ParallelVM {
                 }
                 // eprintln!("execution closure took {:?}", a.elapsed());
                 // eprintln!("\tincl. {:?} waiting for input from scheduler", waited);
-                VmUtils::took("execution closure", a.elapsed());
-                VmUtils::took("\t waiting for input from scheduler", waited);
-                VmUtils::nb_rounds(execution_rounds);
+                // VmUtils::took("execution closure", a.elapsed());
+                // VmUtils::took("\t waiting for input from scheduler", waited);
+                // VmUtils::nb_rounds(execution_rounds);
                 anyhow::Ok(duration)
             };
 
-        let a = Instant::now();
+        // let a = Instant::now();
         let (scheduling_res, execution_res) = rayon::join(
             || scheduling(receive_generated_tx, scheduler_outputs),
             || execution(worker_pool_inputs, send_generated_tx),
         );
         // eprintln!("rayon::join took {:?}", a.elapsed());
-        VmUtils::took("rayon::join", a.elapsed());
+        // VmUtils::took("rayon::join", a.elapsed());
 
         // let scheduling_duration = scheduling_res.unwrap();
         // let execution_duration = execution_res.unwrap();
-        self.scheduling_latencies.push(scheduling_res.unwrap());
-        self.execution_latencies.push(execution_res.unwrap());
+        Ok(VmResult::new(vec!(), scheduling_res.ok(), execution_res.ok()))
 
-        // Ok(VmResult::new(vec!(), scheduling_res.ok(), execution_res.ok()))
-        Ok(VmResult::new(vec!(), None, None))
+        // self.scheduling_latencies.push(scheduling_res.unwrap());
+        // self.execution_latencies.push(execution_res.unwrap());
+        //
+        // Ok(VmResult::new(vec!(), None, None))
     }
 }
 

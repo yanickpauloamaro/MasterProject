@@ -751,10 +751,39 @@ pub fn bench_hashmaps(nb_iter: usize, addr_per_tx: usize, batch_size: usize) {
     //Expected results: https://github.com/rust-lang/hashbrown
 }
 
+pub fn bench_hashmaps_clear(nb_iter: usize, addr_per_tx: usize, batch_size: usize) {
+    println!("Batch of {} tx with {} addr per tx = {} insertions ({} reps)", batch_size, addr_per_tx, batch_size * addr_per_tx, nb_iter);
+    let mut rng = StdRng::seed_from_u64(10);
+    let storage_size = 100 * batch_size;
+    let mut addresses: Vec<StaticAddress> = (0..storage_size).map(|el| el as StaticAddress).collect();
+    addresses.shuffle(&mut rng);
+    addresses.truncate(addr_per_tx * batch_size);
+    let map_capacity = 2 * addresses.len();
+
+    let mut measurements = vec!();
+
+    measurements.push(HashMap::<StaticAddress, StaticAddress>::measure_clear(nb_iter, &addresses));
+    measurements.push(HashMapNoHash::measure_clear(nb_iter, &addresses));
+    measurements.push(HashMapAHash::measure_clear(nb_iter, &addresses));
+
+    measurements.push(BrownMap::<StaticAddress, StaticAddress>::measure_clear(nb_iter, &addresses));
+    measurements.push(BrownMapNoHash::measure_clear(nb_iter, &addresses));
+
+    measurements.push(ThinMap::<StaticAddress, StaticAddress>::measure_clear(nb_iter, &addresses));
+    measurements.push(ThinMapNoHash::measure_clear(nb_iter, &addresses));
+    measurements.push(ThinMapAHash::measure_clear(nb_iter, &addresses));
+
+    println!("{}", Table::new(measurements).to_string());
+    println!();
+
+    //Expected results: https://github.com/rust-lang/hashbrown
+}
+
 trait HashMapWrapper {
     fn print_name() -> String where Self: Sized;
     fn with_capacity(capacity: usize) -> Self where Self: Sized;
     fn insert(&mut self, key: StaticAddress, value: StaticAddress) -> Option<StaticAddress>;
+    fn clear(&mut self);
     fn measure(nb_iter: usize, to_insert: &Vec<StaticAddress>) -> HashMapMeasurement where Self: Sized {
         
         let mut durations = Vec::with_capacity(nb_iter);
@@ -767,6 +796,30 @@ trait HashMapWrapper {
             for addr in to_insert.iter() {
                 map.insert(*addr, *addr);
             }
+            durations.push(start.elapsed());
+        }
+        let (mean, ci) = mean_ci(&durations);
+
+        HashMapMeasurement {
+            hash_map_type: Self::print_name(),
+            mean_latency: format!("{:?}", mean),
+            ci: format!("{:?}", ci),
+        }
+    }
+
+    fn measure_clear(nb_iter: usize, to_insert: &Vec<StaticAddress>) -> HashMapMeasurement where Self: Sized {
+
+        let mut durations = Vec::with_capacity(nb_iter);
+        let capacity = 2 * to_insert.len(); // capacity must be slightly larger than the number of value to insert
+
+        for _ in 0..nb_iter {
+            let mut map: Box<dyn HashMapWrapper> = Box::new(Self::with_capacity(capacity));
+
+            for addr in to_insert.iter() {
+                map.insert(*addr, *addr);
+            }
+            let start = Instant::now();
+            map.clear();
             durations.push(start.elapsed());
         }
         let (mean, ci) = mean_ci(&durations);
@@ -800,6 +853,10 @@ impl HashMapWrapper for HashMap<StaticAddress, StaticAddress> {
     fn insert(&mut self, key: StaticAddress, value: StaticAddress) -> Option<StaticAddress> {
         self.insert(key, value)
     }
+
+    fn clear(&mut self) {
+        self.clear();
+    }
 }
 
 type HashMapNoHash = HashMap<StaticAddress, StaticAddress, BuildHasherDefault<NoHashHasher<StaticAddress>>>;
@@ -814,6 +871,10 @@ impl HashMapWrapper for HashMapNoHash {
     fn insert(&mut self, key: StaticAddress, value: StaticAddress) -> Option<StaticAddress> {
         self.insert(key, value)
     }
+
+    fn clear(&mut self) {
+        self.clear();
+    }
 }
 
 type HashMapAHash = HashMap<StaticAddress, StaticAddress, BuildHasherDefault<AHasher>>;
@@ -827,6 +888,10 @@ impl HashMapWrapper for HashMapAHash {
 
     fn insert(&mut self, key: StaticAddress, value: StaticAddress) -> Option<StaticAddress> {
         self.insert(key, value)
+    }
+
+    fn clear(&mut self) {
+        self.clear();
     }
 }
 
@@ -843,6 +908,10 @@ impl HashMapWrapper for BrownMap<StaticAddress, StaticAddress> {
     fn insert(&mut self, key: StaticAddress, value: StaticAddress) -> Option<StaticAddress> {
         self.insert(key, value)
     }
+
+    fn clear(&mut self) {
+        self.clear();
+    }
 }
 
 type BrownMapNoHash = BrownMap<StaticAddress, StaticAddress, BuildHasherDefault<NoHashHasher<StaticAddress>>>;
@@ -857,6 +926,10 @@ impl HashMapWrapper for BrownMapNoHash {
 
     fn insert(&mut self, key: StaticAddress, value: StaticAddress) -> Option<StaticAddress> {
         self.insert(key, value)
+    }
+
+    fn clear(&mut self) {
+        self.clear();
     }
 }
 
@@ -873,6 +946,10 @@ impl HashMapWrapper for ThinMap<StaticAddress, StaticAddress> {
     fn insert(&mut self, key: StaticAddress, value: StaticAddress) -> Option<StaticAddress> {
         self.insert(key, value)
     }
+
+    fn clear(&mut self) {
+        self.clear();
+    }
 }
 
 type ThinMapNoHash = ThinMap<StaticAddress, StaticAddress, BuildHasherDefault<NoHashHasher<StaticAddress>>>;
@@ -888,6 +965,10 @@ impl HashMapWrapper for ThinMapNoHash {
     fn insert(&mut self, key: StaticAddress, value: StaticAddress) -> Option<StaticAddress> {
         self.insert(key, value)
     }
+
+    fn clear(&mut self) {
+        self.clear();
+    }
 }
 
 type ThinMapAHash = ThinMap<StaticAddress, StaticAddress, BuildHasherDefault<AHasher>>;
@@ -902,6 +983,10 @@ impl HashMapWrapper for ThinMapAHash {
 
     fn insert(&mut self, key: StaticAddress, value: StaticAddress) -> Option<StaticAddress> {
         self.insert(key, value)
+    }
+
+    fn clear(&mut self) {
+        self.clear();
     }
 }
 //endregion
