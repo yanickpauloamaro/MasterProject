@@ -96,7 +96,6 @@ impl VmUtils {
         assert!(schedule.is_empty());
 
         // TODO Execute your own chunk ------------------------------------------------------
-        // TODO Also measure metrics
 
         // Receive result from other executors -----------------------------------------
         for (executor_index, executor) in from_executors.iter().enumerate() {
@@ -172,7 +171,8 @@ impl Scheduling {
         mut postponed: &mut Vec<Transaction<A, P>>,
         mut address_map: &mut Map,
         // a: Instant,
-    ) {
+    )
+    {
 
         assert!(!chunk.is_empty());
         if chunk.len() == 1 {
@@ -698,6 +698,7 @@ impl<const A: usize, const P: usize> Coordinator<A, P> {
                                            scheduler_index, self.outstanding_backlogs[scheduler_index]).as_str());
                 // let __wait_start = Instant::now();
                 if let Ok(mut schedule) = scheduler.recv() {
+                    // println!("Schedule from {}: {:?}", scheduler_index, schedule);
                     // __coordinator_wait_duration += __wait_start.elapsed();
                     // Wait for schedule i (if empty skip) -----------------------------------------
                     if schedule.is_empty() {

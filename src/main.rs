@@ -54,7 +54,7 @@ use std::str::FromStr;
 use core_affinity::{CoreId, get_core_ids};
 use futures::stream::iter;
 use rand::prelude::SliceRandom;
-use testbench::micro_benchmark::{all_numa_latencies, hwloc_test};
+use testbench::micro_benchmark::{all_numa_latencies};
 
 type A = u64;
 type Set = IntSet<u64>;

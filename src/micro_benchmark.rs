@@ -1,4 +1,4 @@
-use hwloc2::{Topology, TopologyObject, ObjectType, CpuBindFlags};
+// use hwloc2::{Topology, TopologyObject, ObjectType, CpuBindFlags};
 use ahash::AHasher;
 use std::collections::HashMap;
 use hashbrown::HashMap as BrownMap;
@@ -143,6 +143,7 @@ impl CoreLatencyMeasurement {
 }
 //endregion
 
+/*
 pub async fn hwloc_test() {
     fn print_children(topo: &Topology, obj: &TopologyObject, depth: usize) {
         let mut padding = std::iter::repeat("  ").take(depth)
@@ -213,6 +214,7 @@ pub async fn hwloc_test() {
         println!("Last Known CPU Location: {:?}", l);
     }
 }
+*/
 
 pub fn adapt_unit(size_b: usize) -> String {
     match size_b {

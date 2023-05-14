@@ -389,6 +389,7 @@ impl ParallelVM {
                         // let b = Instant::now();
                         VmUtils::timestamp(format!("Executor pool waits for input from scheduler {}", scheduler_index).as_str());
                         if let Ok(round) = input.recv() {
+                            // println!("Schedule from {}: {:?}", scheduler_index, round);
                             VmUtils::timestamp(format!("Executor pool receive schedule from scheduler {}", scheduler_index).as_str());
                             // waited += b.elapsed();
                             let execution_start = Instant::now();
