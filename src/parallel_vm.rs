@@ -233,11 +233,21 @@ impl ParallelVM {
         type Map = HashMap<StaticAddress, AccessType, BuildHasherDefault<AHasher>>;
         let mut address_map: Map = HashMap::with_capacity_and_hasher(address_map_capacity, BuildHasherDefault::default());
 
-        Scheduling::schedule_chunk_new(&mut chunk, &mut scheduled, &mut postponed, &mut address_map,
+        // Scheduling::schedule_chunk_new(&mut chunk, &mut scheduled, &mut postponed, &mut address_map,
+        //                                // a
+        // );
+        let mut indices = (0..chunk.len()).collect_vec();
+        let transactions = Arc::new(chunk);
+        Scheduling::schedule_chunk_new(&transactions, &mut indices, &mut scheduled, &mut postponed, &mut address_map,
                                        // a
         );
 
-        (scheduled, postponed)
+        (
+            scheduled.into_iter().map(|index| transactions[index]).collect_vec(),
+            postponed.into_iter().map(|index| transactions[index]).collect_vec()
+        )
+
+        // (scheduled, postponed)
     }
 
     fn execute_tx<const A: usize, const P: usize>(&self, tx: &Transaction<A, P>) -> Option<Transaction<A, P>> {
