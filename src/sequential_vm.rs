@@ -68,7 +68,7 @@ impl SequentialVM {
         return Ok(VmResult::new(vec!(), None, Some(execution_start.elapsed())));
     }
 
-    pub fn execute_with_results<const A: usize, const P: usize>(&mut self, mut batch: Vec<Transaction<A, P>>) -> anyhow::Result<Vec<FunctionResult<A, P>>> {
+    pub fn execute_with_results<const A: usize, const P: usize>(&mut self, mut batch: Vec<Transaction<A, P>>) -> anyhow::Result<VmResult<A, P>> {
 
         let execution_start = Instant::now();
         let mut results = vec![FunctionResult::Error; batch.len()];
@@ -93,9 +93,9 @@ impl SequentialVM {
             }
         }
 
-        self.execution_measurements.push(execution_start.elapsed());
-
-        return Ok(results);
+        return Ok(VmResult::new(results, None, Some(execution_start.elapsed())));
+        // self.execution_measurements.push(execution_start.elapsed());
+        // return Ok(results);
     }
 
     pub fn terminate(&mut self) -> (Vec<Duration>, Vec<Duration>) {

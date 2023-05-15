@@ -314,10 +314,13 @@ impl<const A: usize, const P: usize> VmWrapper<A, P> {
 
     pub fn execute(&mut self, batch: Vec<Transaction<A, P>>) -> Result<VmResult<A, P>>{
         match self {
-            VmWrapper::Sequential(vm) => { vm.execute(batch) },
+            VmWrapper::Sequential(vm) => { vm.execute_with_results(batch) },
             VmWrapper::ParallelCollect(vm) => { vm.execute(batch) },
             VmWrapper::ParallelImmediate(vm) => { vm.execute(batch) },
-            VmWrapper::Immediate(vm) => { vm.execute(batch, true) },
+            VmWrapper::Immediate(vm) => {
+                // vm.execute(batch, true)
+                vm.execute_immediate(batch)
+            },
             VmWrapper::Collect(vm) => { vm.execute(batch, false) },
             VmWrapper::Mixed(vm) => { vm.execute(batch) },
             _ => todo!()
