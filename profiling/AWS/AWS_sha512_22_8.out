@@ -1,0 +1,162 @@
+Sequential {
+	22 schedulers, 8 executors {
+		Transfer(0.0) {
+			34.80 ± 0.81 tx/µs
+			1.883ms ± 43µs
+		}
+		Transfer(0.5) {
+			41.06 ± 1.06 tx/µs
+			1.596ms ± 40µs
+		}
+		Fibonacci(10) {
+			6.34 ± 0.00 tx/µs
+			10.339ms ± 2µs
+		}
+		Fibonacci(15) {
+			0.57 ± 0.00 tx/µs
+			114.222ms ± 9µs
+		}
+		Fibonacci(20) {
+			0.05 ± 0.00 tx/µs
+			1.27856s ± 47µs
+		}
+		PreviousDHashMap(7, 64, 1024; 0.2, 0.2, 0.2, 0.2) {
+			2.53 ± 0.00 tx/µs
+			25.94ms ± 8µs
+		}
+		PieceDHashMap(7, 64, 1024; 0.2, 0.2, 0.2, 0.2) {
+			2.47 ± 0.00 tx/µs
+			26.495ms ± 7µs
+		}
+	}
+}
+ParallelCollect {
+	22 schedulers, 8 executors {
+		Transfer(0.0) {
+			23.37 ± 0.57 tx/µs
+			2.804ms ± 67µs	(scheduling: 523µs ± 35µs, execution: 2.436ms ± 21µs)
+		}
+		Transfer(0.5) {
+			14.43 ± 0.14 tx/µs
+			4.543ms ± 43µs	(scheduling: 629µs ± 22µs, execution: 4.183ms ± 42µs)
+		}
+		Fibonacci(10) {
+			17.32 ± 0.09 tx/µs
+			3.784ms ± 19µs	(scheduling: 281µs ± 11µs, execution: 3.617ms ± 18µs)
+		}
+		Fibonacci(15) {
+			2.79 ± 0.07 tx/µs
+			23.476ms ± 571µs	(scheduling: 1.05ms ± 92µs, execution: 23.292ms ± 572µs)
+		}
+		Fibonacci(20) {
+			0.31 ± 0.01 tx/µs
+			211.301ms ± 3.402ms	(scheduling: 10.813ms ± 1.122ms, execution: 211.091ms ± 3.402ms)
+		}
+		PreviousDHashMap(7, 64, 1024; 0.2, 0.2, 0.2, 0.2) {
+			2.46 ± 0.02 tx/µs
+			26.587ms ± 221µs	(scheduling: 2.618ms ± 87µs, execution: 25.689ms ± 202µs)
+		}
+		PieceDHashMap(7, 64, 1024; 0.2, 0.2, 0.2, 0.2) {
+			1.76 ± 0.01 tx/µs
+			37.318ms ± 254µs	(scheduling: 2.879ms ± 51µs, execution: 36.286ms ± 250µs)
+		}
+	}
+}
+ParallelImmediate {
+	22 schedulers, 8 executors {
+		Transfer(0.0) {
+			24.34 ± 0.18 tx/µs
+			2.692ms ± 20µs	(scheduling: 470µs ± 10µs, execution: 2.364ms ± 17µs)
+		}
+		Transfer(0.5) {
+			14.29 ± 0.14 tx/µs
+			4.586ms ± 46µs	(scheduling: 659µs ± 31µs, execution: 4.244ms ± 42µs)
+		}
+		Fibonacci(10) {
+			17.36 ± 0.14 tx/µs
+			3.775ms ± 31µs	(scheduling: 286µs ± 13µs, execution: 3.609ms ± 31µs)
+		}
+		Fibonacci(15) {
+			2.77 ± 0.06 tx/µs
+			23.65ms ± 469µs	(scheduling: 1.165ms ± 97µs, execution: 23.454ms ± 466µs)
+		}
+		Fibonacci(20) {
+			0.31 ± 0.01 tx/µs
+			213.475ms ± 3.535ms	(scheduling: 10.733ms ± 1.262ms, execution: 213.263ms ± 3.533ms)
+		}
+		PreviousDHashMap(7, 64, 1024; 0.2, 0.2, 0.2, 0.2) {
+			0.72 ± 0.00 tx/µs
+			90.729ms ± 295µs	(scheduling: 8.308ms ± 131µs, execution: 90.217ms ± 295µs)
+		}
+		PieceDHashMap(7, 64, 1024; 0.2, 0.2, 0.2, 0.2) {
+			0.08 ± 0.00 tx/µs
+			820.504ms ± 1.748ms	(scheduling: 19.06ms ± 283µs, execution: 818.643ms ± 1.74ms)
+		}
+	}
+}
+Collect {
+	22 schedulers, 8 executors {
+		Transfer(0.0) {
+			25.87 ± 0.05 tx/µs
+			2.533ms ± 5µs	(scheduling: 163µs ± 1µs, execution: 465µs ± 2µs)
+		}
+		Transfer(0.5) {
+			19.12 ± 0.25 tx/µs
+			3.427ms ± 45µs	(scheduling: 161µs ± 2µs, execution: 466µs ± 8µs)
+		}
+		Fibonacci(10) {
+			19.19 ± 2.96 tx/µs
+			3.415ms ± 457µs	(scheduling: 31µs ± 0ns, execution: 1.456ms ± 52µs)
+		}
+		Fibonacci(15) {
+			4.05 ± 0.01 tx/µs
+			16.17ms ± 52µs	(scheduling: 35µs ± 1µs, execution: 14.389ms ± 4µs)
+		}
+		Fibonacci(20) {
+			0.40 ± 0.00 tx/µs
+			164.111ms ± 1.219ms	(scheduling: 42µs ± 1µs, execution: 162.124ms ± 1.216ms)
+		}
+		PreviousDHashMap(7, 64, 1024; 0.2, 0.2, 0.2, 0.2) {
+			4.36 ± 0.13 tx/µs
+			15.021ms ± 444µs	(scheduling: 563µs ± 6µs, execution: 3.878ms ± 110µs)
+		}
+		PieceDHashMap(7, 64, 1024; 0.2, 0.2, 0.2, 0.2) {
+			3.25 ± 0.10 tx/µs
+			20.143ms ± 617µs	(scheduling: 636µs ± 10µs, execution: 4.172ms ± 169µs)
+		}
+	}
+}
+Immediate {
+	22 schedulers, 8 executors {
+		Transfer(0.0) {
+			27.03 ± 0.09 tx/µs
+			2.425ms ± 8µs	(scheduling: 161µs ± 1µs, execution: 471µs ± 3µs)
+		}
+		Transfer(0.5) {
+			20.02 ± 0.03 tx/µs
+			3.273ms ± 5µs	(scheduling: 167µs ± 1µs, execution: 479µs ± 4µs)
+		}
+		Fibonacci(10) {
+			19.17 ± 2.45 tx/µs
+			3.418ms ± 387µs	(scheduling: 33µs ± 1µs, execution: 1.426ms ± 32µs)
+		}
+		Fibonacci(15) {
+			4.06 ± 0.00 tx/µs
+			16.126ms ± 5µs	(scheduling: 36µs ± 0ns, execution: 14.391ms ± 1µs)
+		}
+		Fibonacci(20) {
+			0.40 ± 0.00 tx/µs
+			164.104ms ± 1.252ms	(scheduling: 41µs ± 0ns, execution: 162.138ms ± 1.25ms)
+		}
+		PreviousDHashMap(7, 64, 1024; 0.2, 0.2, 0.2, 0.2) {
+			1.69 ± 0.01 tx/µs
+			38.742ms ± 232µs	(scheduling: 545µs ± 2µs, execution: 4.182ms ± 85µs)
+		}
+		PieceDHashMap(7, 64, 1024; 0.2, 0.2, 0.2, 0.2) {
+			0.20 ± 0.00 tx/µs
+			324.722ms ± 656µs	(scheduling: 972µs ± 7µs, execution: 7.764ms ± 54µs)
+		}
+	}
+}
+Done. Took 384.05s
+

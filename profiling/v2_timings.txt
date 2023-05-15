@@ -1,0 +1,113 @@
+Requests:
+Time waiting for the first backlog: 8 µs
+Scheduler 0: schedule first chunk = 20 µs
+Scheduler 1: schedule first chunk = 16 µs
+Total time schedule first backlog = 64 µs
+
+Find Buckets:
+Time waiting for the second backlog: 85 µs
+Scheduler 0: schedule second chunk = 15 µs
+Scheduler 1: schedule second chunk = 21 µs
+Total time schedule second backlog = 60 µs
+
+Inserts
+Time waiting for the third backlog: 52 µs
+Scheduler 0: schedule third chunk = 15 µs
+Scheduler 0: schedule third chunk = 16 µs
+Scheduler 0: schedule third chunk = 13 µs
+Scheduler 0: schedule third chunk = 8 µs
+Scheduler 0: schedule third chunk = 6 µs
+Scheduler 0: schedule third chunk = 4 µs
+
+Scheduler 1: schedule third chunk = 26 µs
+Scheduler 1: schedule third chunk = 19 µs
+Scheduler 1: schedule third chunk = 16 µs
+Scheduler 1: schedule third chunk = 20 µs
+Scheduler 1: schedule third chunk = 20 µs
+Scheduler 1: schedule third chunk = 5 µs
+Total time schedule third backlog = 367 µs
+
+
+// First round robin (requests)
+Time waiting for first schedule: 25 µs
+Executor 0: execute first chunk: 9 µs
+Executor 1: execute first chunk: 14 µs
+Total time execute first schedule = 54 µs
+
+Time waiting for second schedule: 3 µs
+Executor 0: execute second chunk: 5 µs
+Executor 1: execute second chunk: 10 µs
+Total time execute second schedule = 50 µs
+Total first execute round = 111  µs
+
+// Second round robin (find buckets)
+Time waiting for first schedule: 28 µs
+Executor 0: execute first chunk: 4 µs
+Executor 1: execute first chunk: 4 µs
+Total time execute first schedule = 36 µs
+
+Time waiting for second schedule: 5 µs
+Executor 0: execute second chunk: 5 µs
+Executor 1: execute second chunk: 6 µs
+Total time execute second schedule = 43 µs
+
+// Third round robin (insesrt)
+Time waiting for first schedule: 30 µs
+Executor 0: execute first chunk: 00000 µs
+Executor 1: execute first chunk: 00000 µs
+Total time execute first schedule = 00000 µs
+
+Time waiting for second schedule: 11 µs
+Executor 0: execute second chunk: 00000 µs
+Executor 1: execute second chunk: 00000 µs
+Total time execute second schedule = 00000 µs
+//----
+Time waiting for first schedule: 10 µs
+Executor 0: execute first chunk: 00000 µs
+Executor 1: execute first chunk: 00000 µs
+Total time execute first schedule = 00000 µs
+
+Time waiting for second schedule: 6 µs
+Executor 0: execute second chunk: 00000 µs
+Executor 1: execute second chunk: 00000 µs
+Total time execute second schedule = 00000 µs
+//----
+Time waiting for first schedule: 5 µs
+Executor 0: execute first chunk: 00000 µs
+Executor 1: execute first chunk: 00000 µs
+Total time execute first schedule = 00000 µs
+
+Time waiting for second schedule: 3 µs
+Executor 0: execute second chunk: 00000 µs
+Executor 1: execute second chunk: 00000 µs
+Total time execute second schedule = 00000 µs
+//----
+Time waiting for first schedule: 2 µs
+Executor 0: execute first chunk: 00000 µs
+Executor 1: execute first chunk: 00000 µs
+Total time execute first schedule = 00000 µs
+
+Time waiting for second schedule: 2 µs
+Executor 0: execute second chunk: 00000 µs
+Executor 1: execute second chunk: 00000 µs
+Total time execute second schedule = 00000 µs
+//----
+Time waiting for first schedule: 2 µs
+Executor 0: execute first chunk: 00000 µs
+Executor 1: execute first chunk: 00000 µs
+Total time execute first schedule = 00000 µs
+
+Time waiting for second schedule: 2 µs
+Executor 0: execute second chunk: 00000 µs
+Executor 1: execute second chunk: 00000 µs
+Total time execute second schedule = 00000 µs
+//----
+Time waiting for first schedule: 2 µs
+Executor 0: execute first chunk: 00000 µs
+Executor 1: execute first chunk: 00000 µs
+Total time execute first schedule = 00000 µs
+
+Time waiting for second schedule: 2 µs
+Executor 0: execute second chunk: 00000 µs
+Executor 1: execute second chunk: 00000 µs
+Total time execute second schedule = 00000 µs

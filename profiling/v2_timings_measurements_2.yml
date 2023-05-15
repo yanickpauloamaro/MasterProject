@@ -1,0 +1,234 @@
+4450520 ns: rayon start
+4689020 ns: first closure starts
+4694270 ns: Scheduling closure starts
+4696513 ns: Scheduling waits for first backlog
+4698260 ns: second closure starts
+4699477 ns: Scheduling receives backlog
+4702988 ns: Execution closure starts
+4705360 ns: Start scheduling backlog
+4708354 ns: Executor pool start outer loop
+4713373 ns: Executor pool start round robin
+4715856 ns: Scheduler 0 starts scheduling
+4716376 ns: Executor pool waits for input from scheduler 0
+4720693 ns: Scheduler 1 starts scheduling
+4735399 ns: Scheduler 0 sends schedule
+4737224 ns: Scheduler 1 sends schedule
+4741123 ns: Executor pool receive schedule from scheduler 0
+4744839 ns: Done scheduling, marking end of output
+4746014 ns: Executor pool: execution start
+4748935 ns: Done scheduling, extending backlog
+4753312 ns: Executor 0 starts executing
+4754839 ns: Executor 1 starts executing
+4762851 ns: Executor 0 finished executing
+4755461 ns: Done scheduling, backlog size: 0
+4769246 ns: Executor 1 finished executing
+4769780 ns: Scheduling waits for next backlog
+4786767 ns: Executor pool: execution end
+4792229 ns: Executor pool done with this schedule
+4795705 ns: Executor pool waits for input from scheduler 1
+4798928 ns: Executor pool receive schedule from scheduler 1
+4801795 ns: Executor pool: execution start
+4804707 ns: Executor 0 starts executing
+4810397 ns: Executor 0 finished executing
+4815522 ns: Executor 1 starts executing
+4825522 ns: Executor 1 finished executing
+4841525 ns: Executor pool: execution end
+4845291 ns: Executor pool done with this schedule
+4848402 ns: Executor pool round robin ends, sending new tx or exiting
+4852655 ns: Executor pool start round robin
+4854905 ns: Scheduling receives backlog
+4855403 ns: Executor pool waits for input from scheduler 0
+4857981 ns: Start scheduling backlog
+4863349 ns: Scheduler 0 starts scheduling
+4867372 ns: Scheduler 1 starts scheduling
+4878368 ns: Scheduler 0 sends schedule
+4884286 ns: Executor pool receive schedule from scheduler 0
+4886454 ns: Executor pool: execution start
+4888708 ns: Executor 0 starts executing
+4890492 ns: Executor 1 starts executing
+4893065 ns: Executor 0 finished executing
+4895484 ns: Executor 1 finished executing
+4888759 ns: Scheduler 1 sends schedule
+4904406 ns: Done scheduling, marking end of output
+4907710 ns: Done scheduling, extending backlog
+4909399 ns: Executor pool: execution end
+4911514 ns: Done scheduling, backlog size: 0
+4916561 ns: Executor pool done with this schedule
+4917044 ns: Scheduling waits for next backlog
+4920471 ns: Executor pool waits for input from scheduler 1
+4925998 ns: Executor pool receive schedule from scheduler 1
+4927995 ns: Executor pool: execution start
+4930691 ns: Executor 0 starts executing
+4934181 ns: Executor 1 starts executing
+4935988 ns: Executor 0 finished executing
+4940378 ns: Executor 1 finished executing
+4954517 ns: Executor pool: execution end
+4959725 ns: Executor pool done with this schedule
+4962855 ns: Executor pool round robin ends, sending new tx or exiting
+4966684 ns: Executor pool start round robin
+4969541 ns: Executor pool waits for input from scheduler 0
+4969977 ns: Scheduling receives backlog
+4974498 ns: Start scheduling backlog
+4978895 ns: Scheduler 0 starts scheduling
+4982987 ns: Scheduler 1 starts scheduling
+4994102 ns: Scheduler 0 sends schedule
+4999544 ns: Executor pool receive schedule from scheduler 0
+5002621 ns: Executor pool: execution start
+5005044 ns: Executor 0 starts executing
+5006598 ns: Executor 1 starts executing
+5007859 ns: Executor 0 finished executing
+5009910 ns: Executor 1 finished executing
+5009207 ns: Scheduler 1 sends schedule
+5016182 ns: Executor pool: execution end
+5025458 ns: Executor pool done with this schedule
+5023270 ns: Done scheduling, marking end of output
+5032373 ns: Done scheduling, extending backlog
+5028686 ns: Executor pool waits for input from scheduler 1
+5039792 ns: Executor pool receive schedule from scheduler 1
+5036365 ns: Done scheduling, backlog size: 49
+5045797 ns: Start scheduling backlog
+5042979 ns: Executor pool: execution start
+5050900 ns: Executor 0 starts executing
+5049124 ns: Scheduler 0 starts scheduling
+5052805 ns: Scheduler 1 starts scheduling
+5053750 ns: Executor 0 finished executing
+5055177 ns: Executor 1 starts executing
+5074695 ns: Executor 1 finished executing
+5065773 ns: Scheduler 0 sends schedule
+5079582 ns: Executor pool: execution end
+5082196 ns: Executor pool done with this schedule
+5072209 ns: Scheduler 1 sends schedule
+5084340 ns: Executor pool round robin ends, sending new tx or exiting
+5093386 ns: Executor pool start round robin
+5090822 ns: Done scheduling, marking end of output
+5100369 ns: Done scheduling, extending backlog
+5096492 ns: Executor pool waits for input from scheduler 0
+5107228 ns: Executor pool receive schedule from scheduler 0
+5103613 ns: Done scheduling, backlog size: 31
+5113131 ns: Start scheduling backlog
+5110466 ns: Executor pool: execution start
+5118081 ns: Executor 0 starts executing
+5116185 ns: Scheduler 0 starts scheduling
+5119679 ns: Scheduler 1 starts scheduling
+5130055 ns: Scheduler 0 sends schedule
+5120553 ns: Executor 0 finished executing
+5136229 ns: Scheduler 1 sends schedule
+5122062 ns: Executor 1 starts executing
+5141949 ns: Done scheduling, marking end of output
+5142767 ns: Executor 1 finished executing
+5145384 ns: Done scheduling, extending backlog
+5150737 ns: Executor pool: execution end
+5151296 ns: Done scheduling, backlog size: 18
+5154125 ns: Executor pool done with this schedule
+5157298 ns: Start scheduling backlog
+5160591 ns: Executor pool waits for input from scheduler 1
+5164374 ns: Scheduler 0 starts scheduling
+5166634 ns: Executor pool receive schedule from scheduler 1
+5173125 ns: Executor pool: execution start
+5167141 ns: Scheduler 1 starts scheduling
+5173346 ns: Scheduler 0 sends schedule
+5187153 ns: Scheduler 1 sends schedule
+5176293 ns: Executor 0 starts executing
+5194488 ns: Executor 0 finished executing
+5177997 ns: Executor 1 starts executing
+5202106 ns: Executor 1 finished executing
+5192471 ns: Done scheduling, marking end of output
+5207608 ns: Executor pool: execution end
+5207792 ns: Done scheduling, extending backlog
+5210864 ns: Executor pool done with this schedule
+5214642 ns: Done scheduling, backlog size: 7
+5216244 ns: Executor pool round robin ends, sending new tx or exiting
+5219326 ns: Start scheduling backlog
+5221505 ns: Executor pool start round robin
+5225737 ns: Scheduler 0 starts scheduling
+5226822 ns: Executor pool waits for input from scheduler 0
+5232061 ns: Scheduler 0 sends schedule
+5232125 ns: Executor pool receive schedule from scheduler 0
+5237378 ns: Executor pool: execution start
+5228017 ns: Scheduler 1 starts scheduling
+5240532 ns: Executor 0 starts executing
+5249856 ns: Executor 0 finished executing
+5242083 ns: Executor 1 starts executing
+5256239 ns: Executor 1 finished executing
+5247837 ns: Scheduler 1 sends schedule
+5261148 ns: Executor pool: execution end
+5263745 ns: Executor pool done with this schedule
+5265768 ns: Executor pool waits for input from scheduler 1
+5266827 ns: Done scheduling, marking end of output
+5268782 ns: Executor pool receive schedule from scheduler 1
+5271839 ns: Done scheduling, extending backlog
+5275006 ns: Executor pool: execution start
+5278204 ns: Done scheduling, backlog size: 3
+5281138 ns: Executor 0 starts executing
+5283607 ns: Start scheduling backlog
+5289895 ns: Scheduler 0 starts scheduling
+5291624 ns: Scheduler 1 starts scheduling
+5297529 ns: Scheduler 1 sends schedule
+5287075 ns: Executor 0 finished executing
+5283874 ns: Executor 1 starts executing
+5310005 ns: Executor 1 finished executing
+5294195 ns: Scheduler 0 sends schedule
+5315240 ns: Executor pool: execution end
+5318264 ns: Executor pool done with this schedule
+5320148 ns: Executor pool round robin ends, sending new tx or exiting
+5316671 ns: Done scheduling, marking end of output
+5325949 ns: Done scheduling, extending backlog
+5322116 ns: Executor pool start round robin
+5331721 ns: Executor pool waits for input from scheduler 0
+5329244 ns: Done scheduling, backlog size: 0
+5337523 ns: Scheduling waits for next backlog
+5333790 ns: Executor pool receive schedule from scheduler 0
+5342141 ns: Executor pool: execution start
+5344710 ns: Executor 0 starts executing
+5346963 ns: Executor 0 finished executing
+5348127 ns: Executor 1 starts executing
+5352673 ns: Executor 1 finished executing
+5357221 ns: Executor pool: execution end
+5359296 ns: Executor pool done with this schedule
+5361238 ns: Executor pool waits for input from scheduler 1
+5363264 ns: Executor pool receive schedule from scheduler 1
+5365187 ns: Executor pool: execution start
+5367183 ns: Executor 0 starts executing
+5369475 ns: Executor 0 finished executing
+5369872 ns: Executor 1 starts executing
+5377094 ns: Executor 1 finished executing
+5382428 ns: Executor pool: execution end
+5385581 ns: Executor pool done with this schedule
+5388521 ns: Executor pool round robin ends, sending new tx or exiting
+5391362 ns: Executor pool start round robin
+5394201 ns: Executor pool waits for input from scheduler 0
+5396240 ns: Executor pool receive schedule from scheduler 0
+5398166 ns: Executor pool: execution start
+5400236 ns: Executor 0 starts executing
+5402277 ns: Executor 0 finished executing
+5402390 ns: Executor 1 starts executing
+5407457 ns: Executor 1 finished executing
+5411122 ns: Executor pool: execution end
+5413153 ns: Executor pool done with this schedule
+5415133 ns: Executor pool waits for input from scheduler 1
+5417108 ns: Executor pool receive schedule from scheduler 1
+5419025 ns: Executor pool: execution start
+5420974 ns: Executor 0 starts executing
+5422980 ns: Executor 0 finished executing
+5424975 ns: Executor pool: execution end
+5426837 ns: Executor pool done with this schedule
+5428703 ns: Executor pool round robin ends, sending new tx or exiting
+5430547 ns: Executor pool start round robin
+5432462 ns: Executor pool waits for input from scheduler 0
+5434455 ns: Executor pool receive schedule from scheduler 0
+5436992 ns: Executor pool: execution start
+5438919 ns: Executor 0 starts executing
+5441002 ns: Executor 0 finished executing
+5442928 ns: Executor pool: execution end
+5444769 ns: Executor pool done with this schedule
+5446712 ns: Executor pool waits for input from scheduler 1
+5448622 ns: Executor pool receive schedule from scheduler 1
+5450484 ns: Executor pool: execution start
+5452395 ns: Executor 0 starts executing
+5454338 ns: Executor 0 finished executing
+5456282 ns: Executor pool: execution end
+5458165 ns: Executor pool done with this schedule
+5460030 ns: Executor pool round robin ends, sending new tx or exiting
+5465096 ns: End of execution closure
+5473756 ns: End of scheduling closure
+5484726 ns: rayon end
