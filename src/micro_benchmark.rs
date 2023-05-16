@@ -20,7 +20,7 @@ use crate::key_value::KeyValueOperation;
 use crate::parallel_vm::ParallelVmImmediate;
 use crate::sequential_vm::SequentialVM;
 use crate::utils::mean_ci;
-use crate::vm_utils::AddressSet;
+use crate::vm_utils::{AddressSet, Assignment, Scheduling};
 use crate::wip::Word;
 
 //region NUMA latency ------------------------------------------------------------------------------
@@ -449,6 +449,7 @@ pub fn profile_schedule_chunk(batch_size: usize, iter: usize, chunk_fraction: us
                 function: AtomicFunction::Transfer,
                 tx_index,
                 addresses: [pair.0, pair.1],
+                // addresses: [tx_index as StaticAddress, 1 + tx_index as StaticAddress], // Transfer loop
                 params: [2],
             }
             // Transaction {
@@ -476,6 +477,10 @@ pub fn profile_schedule_chunk(batch_size: usize, iter: usize, chunk_fraction: us
     let mut experiment_duration = Duration::from_nanos(0);
     let mut experiment_init_duration = Duration::from_nanos(0);
     let mut experiment_scheduling_duration = Duration::from_nanos(0);
+
+    let mut assign_duration = Duration::from_nanos(0);
+    let mut assign_init_duration = Duration::from_nanos(0);
+    let mut assign_scheduling_duration = Duration::from_nanos(0);
 
     let computation = |(scheduler_index, chunk): (usize, Vec<Transaction<2, 1>>)| {
         let a = Instant::now();
@@ -678,35 +683,82 @@ pub fn profile_schedule_chunk(batch_size: usize, iter: usize, chunk_fraction: us
         (scheduled, postponed, init_duration, scheduling.elapsed())
     };
 
+    let assign = |transactions: Vec<Transaction<2, 1>>| {
+        let a = Instant::now();
+        let chunk_size = batch_size / chunk_fraction;
+        let mut address_map: HashMap<StaticAddress, Assignment, BuildHasherDefault<AHasher>> =
+            HashMap::with_capacity_and_hasher(2 * addresses_per_tx * chunk_size, BuildHasherDefault::default());
+        let mut read_only: Vec<usize> = vec!();
+        let mut exclusive: Vec<usize> = vec!();
+        let mut scheduled: Vec<Vec<usize>>= vec![Vec::with_capacity(chunk_size/nb_executors); nb_executors];
+        let mut postponed: Vec<usize> = vec!();
+        let mut new_reads: Vec<StaticAddress> = Vec::with_capacity(addresses_per_tx);
+        let mut new_writes: Vec<StaticAddress> = Vec::with_capacity(addresses_per_tx);
+        // println!("{}", read_only.capacity());
+        // println!("{}", exclusive.capacity());
+        // println!("{}", scheduled.capacity());
+        // println!("{}", postponed.capacity());
+        // println!("{}", new_reads.capacity());
+        // println!("{}", new_writes.capacity());
+        // TODO Check schedule
+        let init_duration = a.elapsed();
+
+        let main_scheduling = Instant::now();
+        Scheduling::schedule_chunk_assign(
+            &transactions,
+            &mut address_map,
+            &mut read_only,
+            &mut exclusive,
+            &mut scheduled,
+            &mut postponed,
+            &mut new_reads,
+            &mut new_writes);
+        let postponed_tx = postponed.iter().map(|index| *transactions.get(*index).unwrap()).collect_vec();
+        (scheduled, postponed_tx, init_duration, main_scheduling.elapsed())
+    };
+
     batch.truncate(batch_size/chunk_fraction);
 
     for _ in 0..iter {
         let mut b = batch.clone();
         let a = Instant::now();
-        let (_, _, init, main_loop) = computation((0, b));
+        let (_, postponed, init, main_loop) = computation((0, b));
+        // println!("{:?} txs were postponed", postponed.len());
         schedule_duration += a.elapsed();
         schedule_init_duration += init;
         schedule_main_loop_duration += main_loop;
 
-        let mut b = batch.clone();
-        let a = Instant::now();
-        let _ = sequential.execute(b);
-        sequential_duration += a.elapsed();
+        // let mut b = batch.clone();
+        // let a = Instant::now();
+        // let _ = sequential.execute(b);
+        // sequential_duration += a.elapsed();
+        //
+        // let mut b = batch.clone();
+        // let a = Instant::now();
+        // let _ = parallel.vm.execute_round(b);
+        // parallel_duration += a.elapsed();
 
         let mut b = batch.clone();
         let a = Instant::now();
-        let _ = parallel.vm.execute_round(b);
-        parallel_duration += a.elapsed();
-
-        let mut b = batch.clone();
-        let a = Instant::now();
-        let (_, _, init, experiment_scheduling) = experiment((0, b));
+        let (_, postponed, init, experiment_scheduling) = experiment((0, b));
+        // println!("{:?} txs were postponed", postponed.len());
         experiment_duration += a.elapsed();
         experiment_init_duration += init;
         experiment_scheduling_duration += experiment_scheduling;
+
+        let mut b = batch.clone();
+        let a = Instant::now();
+        let (scheduled, postponed, init, assign_scheduling) = assign(b);
+        // for (worker_index, worker) in scheduled.iter().enumerate() {
+        //     println!("worker {} was assigned {:?} tx", worker_index, worker);
+        // }
+        // println!("{:?} txs were postponed", postponed.len());
+        assign_duration += a.elapsed();
+        assign_init_duration += init;
+        assign_scheduling_duration += assign_scheduling;
     }
 
-    println!("For a chunk of {} tx", batch.len());
+    println!("For a chunk of {} tx among {} executors", batch.len(), nb_executors);
     println!("\tschedule_chunk latency = {:?} (init = {:?}, rest = {:?})", schedule_duration / (iter as u32),
              schedule_init_duration / (iter as u32),
              schedule_main_loop_duration / (iter as u32));
@@ -715,11 +767,16 @@ pub fn profile_schedule_chunk(batch_size: usize, iter: usize, chunk_fraction: us
              experiment_init_duration / (iter as u32),
              experiment_scheduling_duration / (iter as u32));
 
-    let avg_sequential = sequential_duration / (iter as u32);
-    println!("\tsequential exec latency = {:?} -> full batch should take {:?}", avg_sequential, avg_sequential * (chunk_fraction as u32));
+    println!("\t**scheduling/assign = {:?} (init = {:?}, rest = {:?})",
+             assign_duration / (iter as u32),
+             assign_init_duration / (iter as u32),
+             assign_scheduling_duration / (iter as u32));
 
-    let avg_parallel = parallel_duration / (iter as u32);
-    println!("\tparallel exec latency = {:?} -> full batch should take {:?}", avg_parallel, avg_parallel * (chunk_fraction as u32));
+    // let avg_sequential = sequential_duration / (iter as u32);
+    // println!("\tsequential exec latency = {:?} -> full batch should take {:?}", avg_sequential, avg_sequential * (chunk_fraction as u32));
+    //
+    // let avg_parallel = parallel_duration / (iter as u32);
+    // println!("\tparallel exec latency = {:?} -> full batch should take {:?}", avg_parallel, avg_parallel * (chunk_fraction as u32));
     println!();
 }
 //endregion

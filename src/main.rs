@@ -11,8 +11,11 @@ extern crate tokio;
 use futures::future::BoxFuture;
 use itertools::Itertools;
 // use voracious_radix_sort::RadixSort;
-use std::collections::{BTreeMap, BTreeSet, HashSet};
+// use std::collections::{BTreeMap, BTreeSet, HashSet};
+use std::collections::{HashSet};
 use std::{fs, mem};
+use std::collections::btree_map::BTreeMap;
+use std::collections::btree_set::BTreeSet;
 use std::ops::{Add, Div, Mul, Sub};
 use std::sync::mpsc::{channel, Receiver};
 use std::sync::{Arc, Mutex};
@@ -92,7 +95,13 @@ fn main() -> Result<()> {
     //
     // println!("======================================================================================");
     // println!("======================================================================================");
-    // micro_benchmark::profile_schedule_chunk(65536, 100, 8, 4, 0.5); // <<<<<<
+    // 16 schedulers seems good (not too slow but also few enough schedulers that it shouldn't increase the number of schedule to much)
+    micro_benchmark::profile_schedule_chunk(65536, 1, 8, 4, 0.5); // <<<<<<
+    // micro_benchmark::profile_schedule_chunk(65536, 1, 8, 8, 0.5); // <<<<<<
+    // micro_benchmark::profile_schedule_chunk(65536, 1, 16, 16, 0.5); // <<<<<<
+    // micro_benchmark::profile_schedule_chunk(65536, 1, 24, 24, 0.5); // <<<<<<
+    // micro_benchmark::profile_schedule_chunk(65536, 1, 30, 30, 0.5); // <<<<<<
+    // micro_benchmark::profile_schedule_chunk(65536, 1, 8, 4, 0.5); // <<<<<<
     // // micro_benchmark::profile_schedule_chunk(65536, 1, 16, 4, 0.0);
     // // micro_benchmark::profile_schedule_chunk(65536, 1, 32, 4, 0.0);
     // micro_benchmark::profile_schedule_chunk(65536, 100, 8, 24, 0.0); // <<<<<<
@@ -107,7 +116,7 @@ fn main() -> Result<()> {
     //     // println!("New version");
     //     TestBench::benchmark("benchmark_config.json")
     // }).await.expect("Task panicked")?;
-    TestBench::benchmark("benchmark_config.json")?;
+    // TestBench::benchmark("benchmark_config.json")?;
 
     // let from_power = 2;
     // // let to_power = 18;
@@ -359,8 +368,8 @@ async fn wip_main() -> Result<()>{
     ).par_iter().map(|tx| T { from: tx.from, to: tx.to}).collect();
     println!("Took {:?}", a.elapsed());
 
-    let nb_schedulers = 8;
-    let nb_executors = 1;
+    let nb_schedulers = 4;
+    let nb_executors = 4;
     // println!();
     //
     // let small_batch_size = 2048;

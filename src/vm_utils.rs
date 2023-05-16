@@ -22,7 +22,7 @@ use thincollections::thin_set::ThinSet;
 // use tokio::time::Instant;
 
 use crate::config::RunParameter;
-use crate::contract::{AccessPattern, AccessType, AtomicFunction, FunctionResult, StaticAddress, Transaction};
+use crate::contract::{AccessPattern, AccessType, AtomicFunction, FunctionResult, StaticAddress, Transaction, TransactionType};
 use crate::contract::FunctionResult::Another;
 use crate::key_value::KeyValueOperation;
 use crate::parallel_vm::Job;
@@ -125,6 +125,11 @@ impl VmUtils {
     // }
 }
 
+pub enum Assignment {
+    Read,
+    Write(usize)
+}
+
 pub struct Scheduling;
 type Map = HashMap<StaticAddress, AccessType, BuildHasherDefault<AHasher>>;
 impl Scheduling {
@@ -168,173 +173,204 @@ impl Scheduling {
         (scheduled, postponed)
     }
 
-    // pub fn schedule_chunk_new<const A: usize, const P: usize>(
-    //     mut chunk: &mut Vec<Transaction<A, P>>,
-    //     mut scheduled: &mut Vec<Transaction<A, P>>,
-    //     mut postponed: &mut Vec<Transaction<A, P>>,
-    //     mut address_map: &mut Map,
-    //     // a: Instant,
-    // )
-    // {
-    //
-    //     assert!(!chunk.is_empty());
-    //     if chunk.len() == 1 {
-    //         scheduled.push(chunk.pop().unwrap());
-    //         return;
-    //     }
-    //
-    //     let mut remainder = 0;
-    //
-    //     let mut some_reads = false;
-    //     let mut some_writes = false;
-    //
-    //     let mut read_locked = false;
-    //     let mut write_locked = false;
-    //
-    //     let can_read = |addr: StaticAddress, map: &mut Map| {
-    //         let entry = map.entry(addr).or_insert(AccessType::Read);
-    //         *entry == AccessType::Read
-    //     };
-    //     let can_write = |addr: StaticAddress, map: &mut Map| {
-    //         let entry = map.entry(addr).or_insert(AccessType::TryWrite);
-    //         if *entry == AccessType::TryWrite {
-    //             *entry = AccessType::Write;
-    //             true
-    //         } else {
-    //             false
-    //         }
-    //     };
-    //
-    //     // let init_duration = a.elapsed();
-    //     // let mut base_case_duration = Duration::from_secs(0);
-    //     // let mut reads_duration = Duration::from_secs(0);
-    //     // let mut writes_duration = Duration::from_secs(0);
-    //
-    //     'backlog: for tx in chunk.drain(0..) {
-    //         remainder += 1;
-    //         // let base_case_start = Instant::now();
-    //         let (possible_reads, possible_writes) = tx.accesses();
-    //         let reads = possible_reads.as_ref().map_or([].as_slice(), |inside| inside.as_slice());
-    //         let writes = possible_writes.as_ref().map_or([].as_slice(), |inside| inside.as_slice());
-    //
-    //         // Tx without any memory accesses ------------------------------------------------------
-    //         if reads.is_empty() && writes.is_empty() {
-    //             scheduled.push(tx);
-    //             continue 'backlog;
-    //         }
-    //
-    //         // Only reads are allowed --------------------------------------------------------------
-    //         if read_locked {
-    //             if writes.is_empty() { scheduled.push(tx); }
-    //             else { postponed.push(tx); }
-    //             continue 'backlog;
-    //         }
-    //
-    //         // All transactions with accesses will be postponed ------------------------------------
-    //         if write_locked {
-    //             postponed.push(tx);
-    //             continue 'backlog;
-    //         }
-    //         // base_case_duration += base_case_start.elapsed();
-    //
-    //         // NB: A tx might be postponed after having some of its addresses added to the address set
-    //         // It is probably too expensive to rollback those changes. TODO Check
-    //         // Start with reads because they are less problematic if the tx is postponed
-    //         // Process reads -----------------------------------------------------------------------
-    //         // let read_start = Instant::now();
-    //         'reads: for read in reads {
-    //             match read {
-    //                 AccessPattern::Address(addr) => {
-    //                     some_reads = true;
-    //                     if !can_read(*addr, &mut address_map) {
-    //                         postponed.push(tx);
-    //                         // reads_duration += read_start.elapsed();
-    //                         continue 'backlog;
-    //                     }
-    //                 },
-    //                 AccessPattern::Range(from, to) => {
-    //                     some_reads = true;
-    //                     assert!(from < to);
-    //                     'range: for addr in (*from)..(*to) {
-    //                         if !can_read(addr, &mut address_map) {
-    //                             postponed.push(tx);
-    //                             // reads_duration += read_start.elapsed();
-    //                             continue 'backlog;
-    //                         }
-    //                     }
-    //                 },
-    //                 AccessPattern::All => {
-    //                     if some_writes {
-    //                         postponed.push(tx);
-    //                     } else {
-    //                         scheduled.push(tx);
-    //                         read_locked = true;
-    //                     }
-    //                     // Read-all transactions can't have any other accesses, can proceed with the next tx
-    //                     // reads_duration += read_start.elapsed();
-    //                     continue 'backlog;
-    //                 },
-    //                 AccessPattern::Done => {
-    //                     // reads_duration += read_start.elapsed();
-    //                     break 'reads;
-    //                 }
-    //             }
-    //         }
-    //         // reads_duration += read_start.elapsed();
-    //
-    //         // Process writes ----------------------------------------------------------------------
-    //         // let writes_start = Instant::now();
-    //         'writes: for write in writes {
-    //             match write {
-    //                 AccessPattern::Address(addr) => {
-    //                     some_writes = true;
-    //                     if !can_write(*addr, &mut address_map) {
-    //                         postponed.push(tx);
-    //                         // writes_duration += writes_start.elapsed();
-    //                         continue 'backlog;
-    //                     }
-    //                 },
-    //                 AccessPattern::Range(from, to) => {
-    //                     some_writes = true;
-    //                     assert!(from < to);
-    //                     'range: for addr in (*from)..(*to) {
-    //                         if !can_write(addr, &mut address_map) {
-    //                             postponed.push(tx);
-    //                             // writes_duration += writes_start.elapsed();
-    //                             continue 'backlog;
-    //                         }
-    //                     }
-    //                 },
-    //                 AccessPattern::All => {
-    //                     if some_reads || some_writes {
-    //                         postponed.push(tx);
-    //                     } else {
-    //                         scheduled.push(tx);
-    //                         write_locked = true;
-    //                     }
-    //
-    //                     // Write-all transactions can't have any other accesses, can proceed with the next tx
-    //                     continue 'backlog;
-    //                 },
-    //                 AccessPattern::Done => {
-    //                     // writes_duration += writes_start.elapsed();
-    //                     break 'writes;
-    //                 }
-    //             }
-    //         }
-    //         // writes_duration += writes_start.elapsed();
-    //
-    //         // Transaction can be executed in parallel
-    //         scheduled.push(tx);
-    //     }
-    //
-    //     // let total = a.elapsed();
-    //     // println!("Scheduled {:?}", scheduled);
-    //     // println!("Scheduled: {}, postponed: {}, took {:?}", scheduled.len(), postponed.len(), total);
-    //     // total, (init, base_case, reads, writes)
-    //     // println!("\ttook {:.3?} \t({:?} µs, {:?} µs, {:?} µs, {:?} µs)", total, init_duration.as_micros(), base_case_duration.as_micros(), reads_duration.as_micros(), writes_duration.as_micros());
-    //     // (scheduled, postponed)
-    // }
+    pub fn schedule_chunk_assign<const A: usize, const P: usize>(
+        transactions: &Vec<Transaction<A, P>>,
+        address_map: &mut HashMap<StaticAddress, Assignment, BuildHasherDefault<AHasher>>,
+        read_only: &mut Vec<usize>,
+        exclusive: &mut Vec<usize>,
+        scheduled: &mut Vec<Vec<usize>>,
+        postponed: &mut Vec<usize>,
+        new_reads: &mut Vec<StaticAddress>,
+        new_writes: &mut Vec<StaticAddress>,
+    )
+    {
+        let mut round_robin = 0;
+        let nb_workers = scheduled.len();
+
+        'backlog: for (tx_index, tx) in transactions.iter().enumerate() {
+
+            match tx.tpe() {
+                TransactionType::ReadOnly => {
+                    read_only.push(tx_index);
+                    continue;
+                },
+                TransactionType:: Exclusive => {
+                    exclusive.push(tx_index);
+                    continue;
+                },
+                TransactionType::Writes => { }
+            }
+
+
+            let (possible_reads, possible_writes) = tx.accesses();
+            let reads = possible_reads.as_ref().map_or([].as_slice(), |inside| inside.as_slice());
+            let writes = possible_writes.as_ref().map_or([].as_slice(), |inside| inside.as_slice());
+
+            new_reads.truncate(0);
+            'reads: for pattern in reads {
+                if let AccessPattern::Done = pattern {
+                    // No more reads, start processing writes
+                    break 'reads;
+                }
+
+                // In this version, AccessPattern::All would mean TransactionType is Exclusive
+                // So the tx would have already been scheduled by now
+
+                for addr in pattern.addresses() {
+                    match address_map.get(&addr) {
+                        None => {
+                            // This is a new read, will need to insert in address map
+                            new_reads.push(addr);
+                        },
+                        Some(Assignment::Read) => {
+                            // This address was already read by another tx, nothing to do
+                        },
+                        Some(Assignment::Write(_w_i)) => {
+                            // Another tx already wrote to this address, can't read concurrently
+                            /* TODO Technically if this tx doesn't access addresses assigned to workers
+                                other than _w_i (for both reads and writes), then it could be assigned
+                                to _w_i. Would need to check for conflict once all other txs have been
+                                scheduled
+                             */
+                            postponed.push(tx_index);
+                            continue 'backlog;
+                        },
+                    }
+                }
+            }
+
+            let mut assigned_worker = None;
+
+            new_writes.truncate(0);
+            'writes: for pattern in writes {
+                if let AccessPattern::Done = pattern {
+                    // No more writes
+                    break 'writes;
+                }
+
+                // In this version, AccessPattern::All would mean TransactionType is Exclusive
+                // So the tx would have already been scheduled by now
+
+                for addr in pattern.addresses() {
+                    match address_map.get(&addr) {
+                        /* Cases (1) and (2):
+                            This tx writes some addresses that are new and come that were already written
+                            and are therefore assigned to some worker w_i.
+                            Assigning this tx to w_i is risky because it might have a cascading effect
+                            and lead to a worst case schedule transactions all overlap each other.
+                            For example in the case of a loop in account transfer:
+                            transactions: A->B, B->C, C->D, D->E, E->F, F->A
+
+                            If we don't prevent assignment to propagate we would get the schedule:
+                            w_0: A->B, B->C, C->D, D->E, E->F, F->A
+                            postponed: none
+                            which does not allow any parallelism
+
+                            But if we prevent it, we get:
+                            w_0: A->B,
+                            w_1: C->D,
+                            w_2: E->F,
+                            postponed: B->C, D->E, F->A
+                            -----
+                            w_0: B->C,
+                            w_1: D->E,
+                            w_2: F->A,
+                            postponed: none
+                         */
+                        None if assigned_worker.is_some() => {
+                            // This is a new write, but this tx is already assigned.
+                            // c.f. case (1)
+                            postponed.push(tx_index);
+                            continue 'backlog;
+
+                            /* TODO just for dev, this indeed assign all txs to a single worker in the case
+                                of a transaction loop
+
+                                new_writes.push(addr);
+                             */
+                        },
+                        Some(Assignment::Write(_w_i)) if !new_writes.is_empty() => {
+                            // This address has already been written to, but can't be assigned to this worker
+                            // c.f. case (2)
+                            postponed.push(tx_index);
+                            continue 'backlog;
+
+                            /* TODO just for dev, this indeed assign all txs to a single worker in the case
+                                of a transaction loop
+
+                            let assigned = assigned_worker.get_or_insert(*_w_i);
+                            if assigned != _w_i {
+                                // This tx accesses addresses written by different workers, it
+                                // can't be added to this schedule
+                                postponed.push(tx_index);
+                                continue 'backlog;
+                            }
+                            */
+                        }
+                        None => {
+                            // This is a new write, will need to insert in address map
+                            new_writes.push(addr);
+                        },
+                        Some(Assignment::Read) => {
+                            // Another tx already read this address, can't write concurrently
+                            /* TODO Technically if the tx that read this addr are all assigned to
+                                the same worker, it might be possible to assign this tx to it
+                                worker as well. Would need to include info about the reader(s) in the
+                                assignment. Could check at the end if there are any other conflicts
+                                (e.g. writes/reads to an address assigned to someone else
+                             */
+                            postponed.push(tx_index);
+                            continue 'backlog;
+                        },
+                        Some(Assignment::Write(w_i)) => {
+                            // This also assigns the tx to w_i if it wasn't already assigned
+                            let assigned = assigned_worker.get_or_insert(*w_i);
+                            if assigned != w_i {
+                                // This tx accesses addresses written by different workers, it
+                                // can't be added to this schedule
+                                postponed.push(tx_index);
+                                continue 'backlog;
+                            }
+                            // None => now assign to w_i
+                            // w_i => ok
+                            // w_j => conflict
+                        }
+                    }
+                }
+            }
+
+            let worker_index = match assigned_worker {
+                Some(w_i) => w_i,
+                None => {
+                    // All writes access new addresses, assign a new worker (round robin)
+                    /* TODO Could try to assign to the worker with the smallest backlog
+                        This would mean putting all txs that can be assigned to any worker in a separate
+                        list and so that, at the end, they can be assigned to worker based on workload
+                     */
+                    let w_i = round_robin;
+                    if round_robin == nb_workers - 1 {
+                        round_robin = 0;
+                    } else {
+                        round_robin += 1;
+                    }
+                    w_i
+                }
+            };
+
+            // This tx can be added to the schedule
+            scheduled[worker_index].push(tx_index);
+
+            // Don't forget to update the address map
+            for addr in new_reads.drain(..) {
+                address_map.insert(addr, Assignment::Read);
+            }
+            for addr in new_writes.drain(..) {
+                address_map.insert(addr, Assignment::Write(worker_index));
+            }
+        }
+
+        // todo!("return something?")
+    }
 
     pub fn schedule_chunk_new<const A: usize, const P: usize>(
         transactions: &Arc<Vec<Transaction<A, P>>>,

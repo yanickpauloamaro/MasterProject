@@ -2,6 +2,8 @@ use std::cell::Cell;
 use std::fmt::Debug;
 use std::marker::PhantomData;
 use std::mem;
+use std::ops::Range;
+use rayon::range::Iter;
 
 use crate::{auction, d_hash_map, key_value};
 use crate::auction::SimpleAuction;
@@ -32,12 +34,26 @@ impl AccessType {
     }
 }
 
-#[derive(Eq, PartialEq, Clone, Copy)]
+#[derive(Eq, PartialEq, Clone, Copy, Debug)]
 pub enum AccessPattern {
     Address(StaticAddress),
     Range(StaticAddress, StaticAddress),
     All,
     Done
+}
+
+impl AccessPattern {
+    pub fn addresses(&self) -> Range<StaticAddress> {
+        match self {
+            AccessPattern::Address(addr) => {
+                *addr..(*addr+1)
+            },
+            AccessPattern::Range(from, to) => {
+                *from..*to
+            },
+            other => panic!("Access patter {:?} can't be iterated on", other)
+        }
+    }
 }
 
 #[derive(Eq, PartialEq, Clone, Copy)]
@@ -57,6 +73,11 @@ pub struct Transaction<const ADDRESS_COUNT: usize, const PARAM_COUNT: usize> {
     pub params: [FunctionParameter; PARAM_COUNT],
 }
 
+pub enum TransactionType {
+    ReadOnly,
+    Exclusive,
+    Writes
+}
 impl<const ADDRESS_COUNT: usize, const PARAM_COUNT: usize> Transaction<ADDRESS_COUNT, PARAM_COUNT> {
     // TODO Add AccessType inside AccessPattern so that only 1 array need to be returned
     pub fn mixed_accesses(&self) -> Option<[Access; ADDRESS_COUNT]> {
@@ -133,6 +154,28 @@ impl<const ADDRESS_COUNT: usize, const PARAM_COUNT: usize> Transaction<ADDRESS_C
                         accesses[1] = Access::Address(bucket_location, AccessType::Read);
                         Some(accesses)
                     }
+                }
+            },
+            _ => todo!()
+        }
+    }
+
+    pub fn tpe(&self) -> TransactionType {
+
+        match self.function {
+            AtomicFunction::Transfer => TransactionType::Writes,
+            AtomicFunction::TransferDecrement | AtomicFunction::TransferIncrement => TransactionType::Writes,
+            AtomicFunction::Fibonacci => TransactionType::ReadOnly,
+            AtomicFunction::DHashMap(_) => TransactionType::Exclusive,
+            AtomicFunction::PieceDHashMap(op) => {
+                use d_hash_map::PiecedOperation::*;
+                match op {
+                    InsertComputeHash | RemoveComputeHash | GetComputeHash | HasComputeHash => TransactionType::ReadOnly,
+                    InsertFindBucket | RemoveFindBucket | GetFindBucket | HasFindBucket => TransactionType::ReadOnly,
+                    InsertComputeAndFind | RemoveComputeAndFind | GetComputeAndFind | HasComputeAndFind => TransactionType::ReadOnly,
+                    Insert | Remove => TransactionType::Writes,
+                    Resize => TransactionType::Exclusive,
+                    Get | Has => TransactionType::ReadOnly
                 }
             },
             _ => todo!()
