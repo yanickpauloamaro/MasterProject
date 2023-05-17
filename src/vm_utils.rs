@@ -13,12 +13,13 @@ use std::time::{Instant, Duration, SystemTime, UNIX_EPOCH};
 use std::vec::Drain;
 
 use ahash::AHasher;
-use anyhow::anyhow;
+use anyhow::{anyhow, Context};
 use core_affinity::CoreId;
 use crossbeam::channel::{Receiver, Sender, unbounded};
 use itertools::Itertools;
 use serde::{Deserialize, Serialize};
 use thincollections::thin_set::ThinSet;
+use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
 // use tokio::time::Instant;
 
 use crate::config::RunParameter;
@@ -174,28 +175,24 @@ impl Scheduling {
     }
 
     pub fn schedule_chunk_assign<const A: usize, const P: usize>(
-        transactions: &Vec<Transaction<A, P>>,
         address_map: &mut HashMap<StaticAddress, Assignment, BuildHasherDefault<AHasher>>,
-        read_only: &mut Vec<usize>,
-        exclusive: &mut Vec<usize>,
-        scheduled: &mut Vec<Vec<usize>>,
-        postponed: &mut Vec<usize>,
         new_reads: &mut Vec<StaticAddress>,
         new_writes: &mut Vec<StaticAddress>,
+        schedule: &mut Schedule<A, P>
     )
     {
         let mut round_robin = 0;
-        let nb_workers = scheduled.len();
+        let nb_workers = schedule.assignments.len();
 
-        'backlog: for (tx_index, tx) in transactions.iter().enumerate() {
+        'backlog: for (tx_index, tx) in schedule.transactions.iter().enumerate() {
 
             match tx.tpe() {
                 TransactionType::ReadOnly => {
-                    read_only.push(tx_index);
+                    schedule.read_only.push(tx_index);
                     continue;
                 },
                 TransactionType:: Exclusive => {
-                    exclusive.push(tx_index);
+                    schedule.exclusive.push(tx_index);
                     continue;
                 },
                 TransactionType::Writes => { }
@@ -232,7 +229,7 @@ impl Scheduling {
                                 to _w_i. Would need to check for conflict once all other txs have been
                                 scheduled
                              */
-                            postponed.push(tx_index);
+                            schedule.postponed.push(tx_index);
                             continue 'backlog;
                         },
                     }
@@ -280,7 +277,7 @@ impl Scheduling {
                         None if assigned_worker.is_some() => {
                             // This is a new write, but this tx is already assigned.
                             // c.f. case (1)
-                            postponed.push(tx_index);
+                            schedule.postponed.push(tx_index);
                             continue 'backlog;
 
                             /* TODO just for dev, this indeed assign all txs to a single worker in the case
@@ -292,19 +289,19 @@ impl Scheduling {
                         Some(Assignment::Write(_w_i)) if !new_writes.is_empty() => {
                             // This address has already been written to, but can't be assigned to this worker
                             // c.f. case (2)
-                            postponed.push(tx_index);
+                            schedule.postponed.push(tx_index);
                             continue 'backlog;
 
                             /* TODO just for dev, this indeed assign all txs to a single worker in the case
                                 of a transaction loop
 
-                            let assigned = assigned_worker.get_or_insert(*_w_i);
-                            if assigned != _w_i {
-                                // This tx accesses addresses written by different workers, it
-                                // can't be added to this schedule
-                                postponed.push(tx_index);
-                                continue 'backlog;
-                            }
+                                let assigned = assigned_worker.get_or_insert(*_w_i);
+                                if assigned != _w_i {
+                                    // This tx accesses addresses written by different workers, it
+                                    // can't be added to this schedule
+                                    postponed.push(tx_index);
+                                    continue 'backlog;
+                                }
                             */
                         }
                         None => {
@@ -319,21 +316,21 @@ impl Scheduling {
                                 assignment. Could check at the end if there are any other conflicts
                                 (e.g. writes/reads to an address assigned to someone else
                              */
-                            postponed.push(tx_index);
+                            schedule.postponed.push(tx_index);
                             continue 'backlog;
                         },
                         Some(Assignment::Write(w_i)) => {
+                            // None => now assign to w_i
+                            // w_i => ok
+                            // w_j => conflict
                             // This also assigns the tx to w_i if it wasn't already assigned
                             let assigned = assigned_worker.get_or_insert(*w_i);
                             if assigned != w_i {
                                 // This tx accesses addresses written by different workers, it
                                 // can't be added to this schedule
-                                postponed.push(tx_index);
+                                schedule.postponed.push(tx_index);
                                 continue 'backlog;
                             }
-                            // None => now assign to w_i
-                            // w_i => ok
-                            // w_j => conflict
                         }
                     }
                 }
@@ -358,7 +355,7 @@ impl Scheduling {
             };
 
             // This tx can be added to the schedule
-            scheduled[worker_index].push(tx_index);
+            schedule.assignments[worker_index].push(tx_index);
 
             // Don't forget to update the address map
             for addr in new_reads.drain(..) {
@@ -795,6 +792,7 @@ impl<const A: usize, const P: usize> VmResult<A, P> {
     }
 }
 
+//region coordinator ===============================================================================
 pub struct Coordinator<const A: usize, const P: usize> {
     nb_schedulers: usize,
     to_schedulers: Vec<Sender<SchedulerInput<A, P>>>,
@@ -1258,35 +1256,286 @@ impl<const A: usize, const P: usize> Coordinator<A, P> {
         (vec!(), vec!())
     }
 }
+//endregion coordinator
 
+#[derive(Clone, Debug)]
+enum Status {
+    Ready,
+    StartReadOnly,
+    Start(usize),   // which schedule to execute
+    Commit,
+    Done
+}
 pub struct CoordinatorMixed<const A: usize, const P: usize> {
     scheduler: SchedulingCore<A, P>,
     executor: ExecutionCore<A, P>,
     storage: VmStorage,
 }
+
+#[derive(Debug)]
+pub struct Schedule<const A: usize, const P: usize> {
+    pub transactions: Vec<Transaction<A, P>>,
+    pub read_only: Vec<usize>,
+    pub exclusive: Vec<usize>,
+    pub assignments: Vec<Vec<usize>>,
+    pub postponed: Vec<usize>,
+}
+impl<const A: usize, const P: usize> Schedule<A, P> {
+    pub fn new(chunk_size: usize, nb_executors: usize) -> Self {
+        Self::with_transactions(Vec::with_capacity(chunk_size), nb_executors)
+    }
+
+    pub fn with_transactions(transactions: Vec<Transaction<A, P>>, nb_executors: usize) -> Self {
+        let chunk_size = transactions.len();
+        Self {
+            transactions,
+            read_only: Vec::with_capacity(chunk_size),
+            exclusive: Vec::with_capacity(chunk_size),
+            assignments: vec![Vec::with_capacity(chunk_size); nb_executors],
+            postponed: Vec::with_capacity(chunk_size),
+        }
+    }
+}
+
 impl<const A: usize, const P: usize> CoordinatorMixed<A, P> {
     pub fn new(batch_size: usize, storage_size: usize, nb_schedulers: usize, nb_executors: usize) -> Self {
+        // TODO For now, assume nb_schedulers == nb_executors
+
+        // Used to send the input from vm.execute
+        let mut initial_scheduler_input = Vec::with_capacity(nb_schedulers);
+
+        // scheduler[i].input = (send /*clone*/, receive);
+        let mut scheduler_inputs = Vec::with_capacity(nb_schedulers);
+
+        // scheduler[i].output = (send /*subscribe*/, receive);
+        let mut scheduler_outputs = Vec::with_capacity(nb_schedulers);
+
+        // coordinator.start_signal = (send /*subscribe*/, receive);
+        let mut coordinator_start_signal = tokio::sync::broadcast::channel::<Status>(1);
+
+        // coordinator.ready_signal = (send /*clone*/, receive);
+        let mut coordinator_ready_signal = tokio::sync::mpsc::channel::<Status>(nb_executors);
+
+        // Send results back to vm.execute
+        let mut executor_outputs = tokio::sync::mpsc::unbounded_channel::<(usize, FunctionResult<A, P>)>();
+
+        let mut schedulers_send_empty_struct = Vec::with_capacity(nb_executors);
+        let mut executors_receive_empty_struct = Vec::with_capacity(nb_executors);
+
+        for i in 0..nb_schedulers {
+            let scheduler_i_input = tokio::sync::mpsc::channel(nb_executors);
+            let scheduler_i_output = tokio::sync::broadcast::channel(1);
+            let (send_empty_struct, receive_empty_struct) = tokio::sync::mpsc::channel(1);
+
+            initial_scheduler_input.push(scheduler_i_input.0.clone());
+            schedulers_send_empty_struct.push(send_empty_struct);
+            executors_receive_empty_struct.push(receive_empty_struct);
+
+            scheduler_inputs.push(scheduler_i_input);
+            scheduler_outputs.push(scheduler_i_output);
+        }
+
+        let executor_handles = (0..nb_executors).map(|i| {
+            let receive_schedule = scheduler_outputs.iter().map(|(sender, _)| {
+                sender.subscribe()
+            }).collect_vec();
+
+            let receive_start_signal = coordinator_start_signal.0.subscribe();
+            let send_ready_signal = coordinator_ready_signal.0.clone();
+            // Receive empty struct to write new transactions into
+            let receive_reserved = executors_receive_empty_struct.pop().unwrap();
+            // TODO For now only send output to a single scheduler => (nb_executor <= nb_schedulers)
+            let send_new_txs = scheduler_inputs[i].0.clone();
+            let send_results = executor_outputs.0.clone();
+
+            tokio::spawn(async move {
+                /*
+                // Executor j
+                // Receive all schedules
+
+                /* if is_leader:
+                    if all schedules are empty:
+                        TODO When all schedules are empty, we know that all transactions have been executed
+                            to completion. Need a way to stop and be ready for the next call to execute
+                            - drop schedule (as if your had executed it)
+                            - don't send new_tx, the schedulers will receive one from vm.execute
+                            - Drop new_tx (Could send new_tx to vm so that it can be reused)
+                    else
+                        execute all exclusive transactions
+                        choose which nonempty schedule to execute
+                        send StartReadOnly/Start(s) to all executors
+                 */
+
+                // Receive start signal (if receive Done go to 'done)
+                // Execute read_only transactions
+                // Send ready signal
+
+                /* if is_leader:
+                    choose next nonempty schedule to execute
+                    send StartReadOnly/Start(s) to all executors
+                 */
+
+                // Receive start signal (if receive Commit go to 'commit)
+                // Execute schedule 0
+                // Send ready signal
+
+                /* if is_leader:
+                    choose next nonempty schedule to execute
+                    send StartReadOnly/Start(s) to all executors
+                 */
+
+                // Receive start signal (if receive Commit go to 'commit)
+                // Execute schedule 1
+                // Send ready signal
+                // ...
+                // Receive start signal (if receive Commit go to 'commit)
+                // Execute last schedule
+
+                // 'commit:
+                //      drop schedules (so they can be reused later)
+                //      Send transaction results
+                //      Send new transactions to schedule j
+                //      continue 'main_loop;
+
+                // 'done:
+                //      drop schedules (so they can be reused later)
+                //      Send transaction results
+                //      Drop new transactions (assert that they are empty!)
+
+                 */
+
+                todo!()
+            })
+        });
+
+        let scheduler_handles = scheduler_inputs
+            .into_iter()
+            .zip(scheduler_outputs.into_iter())
+            .enumerate()
+            .map(|(i, (input, output))| {
+
+                let mut receive_input: tokio::sync::mpsc::Receiver<Schedule<A, P>> = input.1;
+                let send_empty_struct = schedulers_send_empty_struct.pop().unwrap();
+                let broadcast_output = output.0;
+
+                let chunk_size = batch_size/nb_schedulers;
+
+                let mut previous = Arc::new(Schedule::new(chunk_size, nb_executors));
+                let mut current = Arc::new(Schedule::new(chunk_size, nb_executors));;
+
+                let mut address_map: HashMap<StaticAddress, Assignment, BuildHasherDefault<AHasher>> = HashMap::with_capacity_and_hasher(
+                    2 * A * batch_size, BuildHasherDefault::default()
+                );
+                let mut new_reads: Vec<StaticAddress> = Vec::with_capacity(batch_size);
+                let mut new_writes: Vec<StaticAddress> = Vec::with_capacity(batch_size);
+
+                tokio::spawn(async move {
+                    // Scheduler i initialization
+                    'receive: while let Some(mut to_schedule) = receive_input.recv().await {
+                        /*
+                            to_schedule: Schedule, transactions to schedule (the rest has been reset)
+                            current: Arc<Schedule> might still be referenced by some executor
+                            previous: Arc<Schedule> not referenced by anyone
+                            empty <- previous.take.clear()
+                            previous = current
+                            current = Arc::new(to_schedule);
+                            broadcast current
+                            send empty to e_i so it can write its results
+                         */
+
+                        // Add postponed transaction to the backlog
+                        for index in current.postponed.iter() {
+                            let postponed_tx = current.transactions[*index].clone();
+                            to_schedule.transactions.push(postponed_tx);
+                        }
+
+                        // Schedule the transactions
+                        Scheduling::schedule_chunk_assign(
+                            &mut address_map,
+                            &mut new_reads,
+                            &mut new_writes,
+                            &mut to_schedule,
+                        );
+
+                        // Previous is guaranteed to have been dropped by all executors
+                        // -> can be reused to store transactions generated by executors
+                        let mut empty = Arc::try_unwrap(previous)
+                            .map_err(|err| anyhow!("Failed to take previous schedule out of Arc"))?;
+                            // .map_err(|err| Err())
+                            // .context("Failed to take previous schedule out of Arc")?;
+                        // Prepare executor output, clear the schedule information
+                        empty.transactions.truncate(0);
+                        empty.read_only.truncate(0);
+                        empty.exclusive.truncate(0);
+                        empty.assignments.iter_mut().for_each(|assignment| assignment.truncate(0));
+                        empty.postponed.truncate(0);
+
+                        // Keep reference to current so that it can be reused later
+                        previous = current;
+                        current = Arc::new(to_schedule);
+
+                        // Send schedule to all executors
+                        broadcast_output.send(current.clone()).
+                            context("Failed to broadcast schedule")?;
+
+                        // Send empty struct to executor i so that it has somewhere to write its new transaction
+                        send_empty_struct.send(empty).await.
+                            context("Failed to send empty struct to executor")?;
+                    }
+
+                    anyhow::Ok(())
+                })
+        }).collect_vec();
+
         todo!()
     }
 
-    pub fn execute(&mut self, mut batch: Vec<Transaction<A, P>>) -> anyhow::Result<VmResult<A, P>> {
+    pub async fn execute(&mut self, mut batch: Vec<Transaction<A, P>>) -> anyhow::Result<VmResult<A, P>> {
 
-        /* Mixed Version
-        *   Create backlog with content of batch
-        *
-        *   Loop until executed batch_len tx: (<=> backlog is empty)
-        *       Split backlog among N mixed_schedulers (send empty if not enough tx)
-        *       Wait to receive schedules
-        *       For schedule 1 to N:
-        *           1) Sequentially execute Exclusive tx (self.executor)
-        *           2) Split Read-only schedule among N mixed_executors
-        *               Wait to receive results (add to backlog)
-        *           3) Split Parallel schedule among N mixed_executors
-        *               Wait to receive results (add to backlog)
-        *   NB: If Coordinator is included in N, execute you own chunk after sending work to other cores
-        */
+        // TODO Propagate async to TestBench
+        // TODO Store fields in self
+        let mut executor_outputs: Option<UnboundedReceiver<(usize, FunctionResult<A, P>)>> = None;
+        let batch_size = batch.len();
 
-        todo!()
+        // TODO Send initial batch to schedulers
+
+        if let Some(mut receive_results) = executor_outputs.take() {
+            let handle = tokio::spawn(async move {
+                let mut nb_executed = 0;
+                let mut results = vec![FunctionResult::Error; batch.len()];
+
+                while nb_executed < batch_size {
+                    match receive_results.recv().await {
+                        Some((index, res)) => {
+                            results[index] = res;
+                            nb_executed += 1;
+                        },
+                        None => {
+                            return Err(anyhow!("Failed to receive executor outputs"));
+                        }
+                    }
+                }
+
+                Ok((receive_results, results))
+            });
+
+            let (receiver, results) = handle.await.unwrap()?;
+
+            // Put the receiver back for next execution
+            executor_outputs = Some(receiver);
+
+            // TODO Find a way to receive durations from schedulers and executors (... could do this in terminate...)
+            let mut vm_result = VmResult::new(
+                results,
+                None,//Some(scheduling_duration),
+                None,//Some(execution_duration),
+            );
+            Ok(vm_result)
+        } else {
+            Err(anyhow!("Unable to take channel receiver"))
+        }
+
+        // todo!()
     }
 
     pub fn init_storage(&mut self, init: Box<dyn Fn(&mut Vec<Word>)>) {
@@ -1297,6 +1546,7 @@ impl<const A: usize, const P: usize> CoordinatorMixed<A, P> {
         todo!()
     }
 }
+
 //region VM Types ==================================================================================
 #[derive(Debug, Serialize, Deserialize, Copy, Clone, PartialEq)]
 pub enum VmType {

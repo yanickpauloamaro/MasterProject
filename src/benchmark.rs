@@ -322,7 +322,7 @@ impl<const A: usize, const P: usize> VmWrapper<A, P> {
                 vm.execute_immediate(batch)
             },
             VmWrapper::Collect(vm) => { vm.execute(batch, false) },
-            VmWrapper::Mixed(vm) => { vm.execute(batch) },
+            // VmWrapper::Mixed(vm) => { vm.execute(batch) },
             _ => todo!()
         }
     }

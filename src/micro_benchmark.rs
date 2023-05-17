@@ -20,7 +20,7 @@ use crate::key_value::KeyValueOperation;
 use crate::parallel_vm::ParallelVmImmediate;
 use crate::sequential_vm::SequentialVM;
 use crate::utils::mean_ci;
-use crate::vm_utils::{AddressSet, Assignment, Scheduling};
+use crate::vm_utils::{AddressSet, Assignment, Schedule, Scheduling};
 use crate::wip::Word;
 
 //region NUMA latency ------------------------------------------------------------------------------
@@ -688,12 +688,15 @@ pub fn profile_schedule_chunk(batch_size: usize, iter: usize, chunk_fraction: us
         let chunk_size = batch_size / chunk_fraction;
         let mut address_map: HashMap<StaticAddress, Assignment, BuildHasherDefault<AHasher>> =
             HashMap::with_capacity_and_hasher(2 * addresses_per_tx * chunk_size, BuildHasherDefault::default());
-        let mut read_only: Vec<usize> = vec!();
-        let mut exclusive: Vec<usize> = vec!();
-        let mut scheduled: Vec<Vec<usize>>= vec![Vec::with_capacity(chunk_size/nb_executors); nb_executors];
-        let mut postponed: Vec<usize> = vec!();
         let mut new_reads: Vec<StaticAddress> = Vec::with_capacity(addresses_per_tx);
         let mut new_writes: Vec<StaticAddress> = Vec::with_capacity(addresses_per_tx);
+        // let mut read_only: Vec<usize> = vec!();
+        // let mut exclusive: Vec<usize> = vec!();
+        // let mut scheduled: Vec<Vec<usize>>= vec![Vec::with_capacity(chunk_size/nb_executors); nb_executors];
+        // let mut postponed: Vec<usize> = vec!();
+
+        let mut to_schedule = Schedule::<2, 1>::with_transactions(transactions, nb_executors);
+
         // println!("{}", read_only.capacity());
         // println!("{}", exclusive.capacity());
         // println!("{}", scheduled.capacity());
@@ -705,16 +708,20 @@ pub fn profile_schedule_chunk(batch_size: usize, iter: usize, chunk_fraction: us
 
         let main_scheduling = Instant::now();
         Scheduling::schedule_chunk_assign(
-            &transactions,
             &mut address_map,
-            &mut read_only,
-            &mut exclusive,
-            &mut scheduled,
-            &mut postponed,
             &mut new_reads,
-            &mut new_writes);
-        let postponed_tx = postponed.iter().map(|index| *transactions.get(*index).unwrap()).collect_vec();
-        (scheduled, postponed_tx, init_duration, main_scheduling.elapsed())
+            &mut new_writes,
+            &mut to_schedule,
+            // &mut read_only,
+            // &mut exclusive,
+            // &mut scheduled,
+            // &mut postponed,
+            // &transactions,
+        );
+        let postponed_tx = to_schedule.postponed.iter()
+            .map(|index| *to_schedule.transactions.get(*index).unwrap())
+            .collect_vec();
+        (to_schedule, postponed_tx, init_duration, main_scheduling.elapsed())
     };
 
     batch.truncate(batch_size/chunk_fraction);

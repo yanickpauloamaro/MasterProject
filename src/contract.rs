@@ -43,6 +43,7 @@ pub enum AccessPattern {
 }
 
 impl AccessPattern {
+    #[inline]
     pub fn addresses(&self) -> Range<StaticAddress> {
         match self {
             AccessPattern::Address(addr) => {
