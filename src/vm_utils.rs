@@ -356,6 +356,7 @@ impl Scheduling {
 
             // This tx can be added to the schedule
             schedule.assignments[worker_index].push(tx_index);
+            schedule.nb_assigned_tx += 1;
 
             // Don't forget to update the address map
             for addr in new_reads.drain(..) {
@@ -1258,9 +1259,11 @@ impl<const A: usize, const P: usize> Coordinator<A, P> {
 }
 //endregion coordinator
 
+// TODO Rename this struct
 #[derive(Clone, Debug)]
 enum Status {
     Ready,
+
     StartReadOnly,
     Start(usize),   // which schedule to execute
     Commit,
@@ -1278,6 +1281,7 @@ pub struct Schedule<const A: usize, const P: usize> {
     pub read_only: Vec<usize>,
     pub exclusive: Vec<usize>,
     pub assignments: Vec<Vec<usize>>,
+    pub nb_assigned_tx: usize,
     pub postponed: Vec<usize>,
 }
 impl<const A: usize, const P: usize> Schedule<A, P> {
@@ -1292,8 +1296,22 @@ impl<const A: usize, const P: usize> Schedule<A, P> {
             read_only: Vec::with_capacity(chunk_size),
             exclusive: Vec::with_capacity(chunk_size),
             assignments: vec![Vec::with_capacity(chunk_size); nb_executors],
+            nb_assigned_tx: 0,
             postponed: Vec::with_capacity(chunk_size),
         }
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.transactions.is_empty()
+    }
+
+    pub fn clear(&mut self) {
+        self.transactions.truncate(0);
+        self.read_only.truncate(0);
+        self.exclusive.truncate(0);
+        self.assignments.iter_mut().for_each(|assignment| assignment.truncate(0));
+        self.nb_assigned_tx = 0;
+        self.postponed.truncate(0);
     }
 }
 
@@ -1312,9 +1330,11 @@ impl<const A: usize, const P: usize> CoordinatorMixed<A, P> {
 
         // coordinator.start_signal = (send /*subscribe*/, receive);
         let mut coordinator_start_signal = tokio::sync::broadcast::channel::<Status>(1);
+        // let (send_start_signal, mut receive_start_signal) = tokio::sync::broadcast::channel::<Status>(1);
 
         // coordinator.ready_signal = (send /*clone*/, receive);
-        let mut coordinator_ready_signal = tokio::sync::mpsc::channel::<Status>(nb_executors);
+        // let mut coordinator_ready_signal = tokio::sync::mpsc::channel::<Status>(nb_executors);
+        let (send_ready_signal, mut receive_ready_signal) = tokio::sync::mpsc::channel::<Status>(nb_executors);
 
         // Send results back to vm.execute
         let mut executor_outputs = tokio::sync::mpsc::unbounded_channel::<(usize, FunctionResult<A, P>)>();
@@ -1324,7 +1344,7 @@ impl<const A: usize, const P: usize> CoordinatorMixed<A, P> {
 
         for i in 0..nb_schedulers {
             let scheduler_i_input = tokio::sync::mpsc::channel(nb_executors);
-            let scheduler_i_output = tokio::sync::broadcast::channel(1);
+            let scheduler_i_output = tokio::sync::broadcast::channel::<Arc<Schedule<A, P>>>(1);
             let (send_empty_struct, receive_empty_struct) = tokio::sync::mpsc::channel(1);
 
             initial_scheduler_input.push(scheduler_i_input.0.clone());
@@ -1335,77 +1355,191 @@ impl<const A: usize, const P: usize> CoordinatorMixed<A, P> {
             scheduler_outputs.push(scheduler_i_output);
         }
 
+        let mut coordinator = vec![receive_ready_signal];
+
         let executor_handles = (0..nb_executors).map(|i| {
-            let receive_schedule = scheduler_outputs.iter().map(|(sender, _)| {
+            let mut receive_schedule = scheduler_outputs.iter().map(|(sender, _)| {
                 sender.subscribe()
             }).collect_vec();
 
-            let receive_start_signal = coordinator_start_signal.0.subscribe();
-            let send_ready_signal = coordinator_ready_signal.0.clone();
+            let coordinator_send_start_signal = coordinator_start_signal.0.clone();
+            let mut coordinator_receive_ready_signal = coordinator.pop();
+
+            let mut receive_start_signal = coordinator_start_signal.0.subscribe();
+            let send_ready_signal = send_ready_signal.clone();
+
             // Receive empty struct to write new transactions into
-            let receive_reserved = executors_receive_empty_struct.pop().unwrap();
+            let mut receive_reserved = executors_receive_empty_struct.pop().unwrap();
+
             // TODO For now only send output to a single scheduler => (nb_executor <= nb_schedulers)
             let send_new_txs = scheduler_inputs[i].0.clone();
+
+            // TODO Change into a vec of either results or new_txs so new_txs can be reused for the next vm.execute?
             let send_results = executor_outputs.0.clone();
+            let mut results: Vec<(usize, FunctionResult<A, P>)> = Vec::with_capacity(batch_size);
 
-            tokio::spawn(async move {
-                /*
-                // Executor j
-                // Receive all schedules
+            let mut schedules = Vec::with_capacity(nb_schedulers);
+            let mut non_empty_schedules: Vec<Status> = Vec::with_capacity(nb_schedulers + 1);
 
-                /* if is_leader:
-                    if all schedules are empty:
-                        TODO When all schedules are empty, we know that all transactions have been executed
-                            to completion. Need a way to stop and be ready for the next call to execute
-                            - drop schedule (as if your had executed it)
-                            - don't send new_tx, the schedulers will receive one from vm.execute
-                            - Drop new_tx (Could send new_tx to vm so that it can be reused)
-                    else
-                        execute all exclusive transactions
-                        choose which nonempty schedule to execute
-                        send StartReadOnly/Start(s) to all executors
-                 */
+            if let Some(mut receive_ready_signals) = coordinator_receive_ready_signal {
+                // Spawn Coordinator
+                tokio::spawn(async move {
+                    // Executor 0 (Coordinator)
+                    let executor_index = i;
+                    let send_start_signal = coordinator_send_start_signal;
 
-                // Receive start signal (if receive Done go to 'done)
-                // Execute read_only transactions
-                // Send ready signal
+                    // Coordinator doesn't need to receive start signals or receive ready signals
+                    drop(receive_start_signal);
+                    drop(send_ready_signal);
 
-                /* if is_leader:
-                    choose next nonempty schedule to execute
-                    send StartReadOnly/Start(s) to all executors
-                 */
+                    'main_loop: loop {
+                        let mut done = true;
+                        let mut has_exclusive = false;
+                        let mut has_read_only = false;
+                        let mut committed = false;
 
-                // Receive start signal (if receive Commit go to 'commit)
-                // Execute schedule 0
-                // Send ready signal
+                        // Receive all schedules -------------------------------------------------------
+                        for (index, mut receiver) in receive_schedule.iter_mut().enumerate() {
+                            // TODO Add graceful termination
+                            let schedule = receiver.recv().await
+                                .context(format!("Failed to receive schedule from scheduler {}", index))?;
+                            // If any schedule is non empty we are not done
+                            if !schedule.is_empty() {
+                                done = false;
+                                has_read_only = has_read_only || !schedule.read_only.is_empty();
+                                has_exclusive = has_exclusive || !schedule.exclusive.is_empty();
+                                if schedule.nb_assigned_tx != 0 {
+                                    non_empty_schedules.push(Status::Start(index));
+                                }
+                            }
 
-                /* if is_leader:
-                    choose next nonempty schedule to execute
-                    send StartReadOnly/Start(s) to all executors
-                 */
+                            // TODO technically, could drop empty schedules here
+                            schedules.push(schedule);
+                        }
 
-                // Receive start signal (if receive Commit go to 'commit)
-                // Execute schedule 1
-                // Send ready signal
-                // ...
-                // Receive start signal (if receive Commit go to 'commit)
-                // Execute last schedule
+                        // Receive an empty schedule to write new transactions into
+                        let mut empty_output = receive_reserved.recv().await.ok_or(
+                            anyhow!("Failed to receive empty struct from scheduler {}", i)
+                        )?;
 
-                // 'commit:
-                //      drop schedules (so they can be reused later)
-                //      Send transaction results
-                //      Send new transactions to schedule j
-                //      continue 'main_loop;
+                        if has_exclusive {
+                            // We received all schedules and we know all other executors are waiting
+                            // => execute exclusive txs
+                            // TODO execution
+                        }
 
-                // 'done:
-                //      drop schedules (so they can be reused later)
-                //      Send transaction results
-                //      Drop new transactions (assert that they are empty!)
+                        if has_read_only {
+                            non_empty_schedules.push(Status::StartReadOnly);
+                        }
 
-                 */
+                        if !non_empty_schedules.is_empty() {
+                            let last_schedule = non_empty_schedules.pop().unwrap();
 
-                todo!()
-            })
+                            // We can start executing the different schedules --------------------------
+                            for schedule in non_empty_schedules.drain(..) {
+                                // Send start signal for this schedule
+                                send_start_signal.send(schedule)
+                                    .context("Coordinator: Failed to broadcast start signal")?;
+
+                                // Execute schedule
+                                // TODO execution
+
+                                // Wait for ready signals
+                                // The coordinator does not send a ready signal
+                                let expected_nb_signals = nb_executors - 1;
+                                let mut nb_signals_received = 0;
+
+                                while nb_signals_received < expected_nb_signals {
+                                    receive_ready_signals.recv().await.ok_or(
+                                        anyhow!("Coordinator: Failed to receive ready signal")
+                                    )?;
+                                    nb_signals_received += 1;
+                                }
+                            }
+
+                            // Send start signal for last schedule
+                            send_start_signal.send(last_schedule)
+                                .context("Coordinator: Failed to broadcast start signal")?;
+
+                            // Send commit signal early so executors can commit immediately after executing
+                            // The goal is to enable schedulers to start as soon as possible
+                            send_start_signal.send(Status::Commit)
+                                .context("Coordinator: Failed to broadcast commit signal")?;
+                            committed = true;
+
+                            // Execute schedule
+                            // TODO execution
+                        };
+
+                        // The last schedule has been executed, we can commit the results
+                        // No need for synchronization now, there won't be any execution until after the
+                        // schedulers are done ans synchronize with the coordinator
+                        if done {
+                            // No transaction was executed (exclusive, read_only and assignments are empty)
+                            // Send Done signal to other executors
+                            send_start_signal.send(Status::Done)
+                                .context("Coordinator: Failed to broadcast Done signal")?;
+
+                            // Drop empty new_txs TODO send to vm (so it can be reused later)
+                            drop(empty_output);
+                        } else {
+                            if !committed {
+                                // Send commit signal to other executors
+                                // This case should only happen when there were only exclusive transactions to execute
+                                send_start_signal.send(Status::Commit)
+                                    .context("Coordinator: Failed to broadcast commit signal")?;
+                            }
+
+                            // Send new_txs to scheduler j
+                            /* Want to avoid using send.await because this task still has work to do
+                                and we don't want to be switched out.
+                               Also, the channel should never be out of capacity because we are the
+                               only tasks sending on it and we are woken up only after the receiver
+                               receives the message
+                             */
+                            send_new_txs.try_send(empty_output).context("Failed to send new transactions to scheduler")?;
+                            // send_new_txs.send(empty_output).await?;
+                        }
+
+                        // drop schedules (so they can be reused later)
+                        for schedule in schedules.drain(..) {
+                            drop(schedule);
+                        }
+
+                        // Send transaction results TODO Send them all at the end?
+                        for (tx_index, res) in results.drain(..) {
+                            send_results.send((tx_index, res))?;
+                        }
+
+                        continue 'main_loop;
+                    }
+
+                    anyhow::Ok(())
+                })
+            } else {
+                // Spawn executor
+                tokio::spawn(async move {
+                    // Executor i
+                    let executor_index = i;
+
+                    'main_loop: loop {
+                        // Receive schedules
+                        // Receive empty output
+                        'execution_loop: loop {
+                            // Receive signal
+                            // if commit || done, break 'execution_loop
+                            // NB: Should only receive done during the first iteration
+                        }
+
+                        // if commit, send new_txs to schedulers
+                        // else drop new_txs/send them to vm
+                        // Drop schedules
+                        // Send transactions results (if any)
+                    }
+
+                    anyhow::Ok(())
+                })
+            }
         });
 
         let scheduler_handles = scheduler_inputs
@@ -1461,26 +1595,25 @@ impl<const A: usize, const P: usize> CoordinatorMixed<A, P> {
                         // -> can be reused to store transactions generated by executors
                         let mut empty = Arc::try_unwrap(previous)
                             .map_err(|err| anyhow!("Failed to take previous schedule out of Arc"))?;
-                            // .map_err(|err| Err())
-                            // .context("Failed to take previous schedule out of Arc")?;
+
                         // Prepare executor output, clear the schedule information
-                        empty.transactions.truncate(0);
-                        empty.read_only.truncate(0);
-                        empty.exclusive.truncate(0);
-                        empty.assignments.iter_mut().for_each(|assignment| assignment.truncate(0));
-                        empty.postponed.truncate(0);
+                        empty.clear();
 
                         // Keep reference to current so that it can be reused later
                         previous = current;
                         current = Arc::new(to_schedule);
 
                         // Send schedule to all executors
-                        broadcast_output.send(current.clone()).
-                            context("Failed to broadcast schedule")?;
+                        broadcast_output.send(current.clone())
+                            .context("Failed to broadcast schedule")?;
 
                         // Send empty struct to executor i so that it has somewhere to write its new transaction
-                        send_empty_struct.send(empty).await.
-                            context("Failed to send empty struct to executor")?;
+                        // Try to avoid send.await because we are going to wait soon. No point being
+                        //  having tokio de-schedule and reschedule this task just to wait immediately
+                        send_empty_struct.try_send(empty)
+                            .context("Failed to send empty struct to executor")?;
+                        // send_empty_struct.send(empty).await.
+                        //     context("Failed to send empty struct to executor")?;
                     }
 
                     anyhow::Ok(())
