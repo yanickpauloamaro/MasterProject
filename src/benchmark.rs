@@ -312,7 +312,7 @@ impl<const A: usize, const P: usize> VmWrapper<A, P> {
         }
     }
 
-    pub fn execute(&mut self, batch: Vec<Transaction<A, P>>) -> Result<VmResult<A, P>>{
+    pub async fn execute(&mut self, batch: Vec<Transaction<A, P>>) -> Result<VmResult<A, P>> {
         match self {
             VmWrapper::Sequential(vm) => { vm.execute_with_results(batch) },
             VmWrapper::ParallelCollect(vm) => { vm.execute(batch) },
@@ -322,12 +322,12 @@ impl<const A: usize, const P: usize> VmWrapper<A, P> {
                 vm.execute_immediate(batch)
             },
             VmWrapper::Collect(vm) => { vm.execute(batch, false) },
-            // VmWrapper::Mixed(vm) => { vm.execute(batch) },
+            VmWrapper::Mixed(vm) => { vm.execute(batch).await },
             _ => todo!()
         }
     }
 
-    pub fn terminate(&mut self) -> (Vec<Duration>, Vec<Duration>) {
+    pub async fn terminate(&mut self) -> (Vec<Duration>, Vec<Duration>) {
         match self {
             VmWrapper::Sequential(vm) => {
                 // DHashMap::println::<P>(&vm.storage);
@@ -354,7 +354,7 @@ impl<const A: usize, const P: usize> VmWrapper<A, P> {
             },
             VmWrapper::Mixed(vm) => {
                 // DHashMap::print_total_size::<P>(&vm.storage.content);
-                vm.terminate()
+                vm.terminate().await
             },
             _ => (vec!(), vec!())
         }
@@ -365,7 +365,7 @@ impl<const A: usize, const P: usize> VmWrapper<A, P> {
 //region TestBench =================================================================================
 pub struct TestBench;
 impl TestBench {
-    pub fn benchmark(path: &str) -> Result<Vec<BenchmarkResult>> {
+    pub async fn benchmark(path: &str) -> Result<Vec<BenchmarkResult>> {
         let config = BenchmarkConfig::new(path)
             .context("Unable to create benchmark config")?;
 
@@ -401,7 +401,7 @@ impl TestBench {
                                 config.seed,
                             );
 
-                            results.push(TestBench::run(parameter));
+                            results.push(TestBench::run(parameter).await);
                         }
                     }
                     if verbose { println!("\t}}"); }
@@ -416,7 +416,7 @@ impl TestBench {
         Ok(results)
     }
 
-    fn run(params: RunParameter) -> BenchmarkResult {
+    async fn run(params: RunParameter) -> BenchmarkResult {
 
         // TODO Add error handling
         let parsed = Self::parser(params.workload.as_str());
@@ -424,23 +424,23 @@ impl TestBench {
         match parsed {
             Ok(("", (Fib::NAME, args))) => {
                 let workload = Fib::new_boxed(&params, args);
-                TestBench::dispatch(params, workload)
+                TestBench::dispatch(params, workload).await
             },
             Ok(("", (Transfer::NAME, args))) => {
                 let workload = Transfer::new_boxed(&params, args);
-                TestBench::dispatch(params, workload)
+                TestBench::dispatch(params, workload).await
             },
             Ok(("", (TransferPieces::NAME, args))) => {
                 let workload = TransferPieces::new_boxed(&params, args);
-                TestBench::dispatch(params, workload)
+                TestBench::dispatch(params, workload).await
             },
             Ok(("", (KeyValueWorkload::NAME, args))) => {
                 let workload = KeyValueWorkload::new_boxed(&params, args);
-                TestBench::dispatch(params, workload)
+                TestBench::dispatch(params, workload).await
             },
             Ok(("", (AuctionWorkload::NAME, args))) => {
                 let workload = AuctionWorkload::new_boxed(&params, args);
-                TestBench::dispatch(params, workload)
+                TestBench::dispatch(params, workload).await
             },
             Ok(("", (name, args))) if name == DHashMapWorkload::NAME ||
                     name == DHashMapWorkload::PIECED ||
@@ -450,10 +450,10 @@ impl TestBench {
                 if let Ok((other_args, value_size)) = parse_result {
                     let workload = DHashMapWorkload::new_boxed(&params, other_args, value_size, name);
                     match value_size {
-                        1 => TestBench::dispatch::<5, 2>(params, workload),
-                        7 => TestBench::dispatch::<5, 8>(params, workload),   // 1 cache line
-                        15 => TestBench::dispatch::<5, 16>(params, workload), // 2 cache lines
-                        23 => TestBench::dispatch::<5, 24>(params, workload), // 3 cache lines
+                        1 => TestBench::dispatch::<5, 2>(params, workload).await,
+                        7 => TestBench::dispatch::<5, 8>(params, workload).await,   // 1 cache line
+                        15 => TestBench::dispatch::<5, 16>(params, workload).await, // 2 cache lines
+                        23 => TestBench::dispatch::<5, 24>(params, workload).await, // 3 cache lines
                         other => panic!("DHashMapWorkload not implemented for values of size {}", other)
                     }
                 } else {
@@ -463,10 +463,10 @@ impl TestBench {
 
             Ok(("", (TransferTest::NAME, args))) => {
                 let workload = TransferTest::new_boxed(&params, args);
-                TestBench::dispatch(params, workload)
+                TestBench::dispatch(params, workload).await
             },
             other => {
-                panic!("Unknown workload: {:?}", other);
+                panic!("Unknown workload: {:?}", other)
             }
         }
     }
@@ -475,15 +475,15 @@ impl TestBench {
         (alpha1, delimited(char('('), take_until(")"), char(')'))).parse(input)
     }
 
-    fn dispatch<const A: usize, const P: usize>(params: RunParameter, mut workload: Box<dyn ApplicationWorkload<A, P>>) -> BenchmarkResult {
+    async fn dispatch<const A: usize, const P: usize>(params: RunParameter, mut workload: Box<dyn ApplicationWorkload<A, P>>) -> BenchmarkResult {
 
         println!("\t\t{} {{", params.workload);
 
         let result = match params.vm_type {
-            VmType::Sequential => TestBench::bench_with_parameter_new(params, workload),
+            VmType::Sequential => TestBench::bench_with_parameter_new(params, workload).await,
             // VmType::ParallelCollect | VmType::ParallelImmediate if params.with_details => TestBench::bench_with_parameter_and_details(params),
             VmType::ParallelCollect | VmType::ParallelImmediate | VmType::Immediate | VmType::Collect | VmType::Mixed
-                => TestBench::bench_with_parameter_new_and_details(params, workload),
+                => TestBench::bench_with_parameter_new_and_details(params, workload).await,
             _ => TestBench::bench_with_parameter(params)
         };
 
@@ -545,7 +545,7 @@ impl TestBench {
         return BenchmarkResult::from_latency(run, latency_reps);
     }
 
-    fn bench_with_parameter_new<const A: usize, const P: usize>(mut params: RunParameter, mut workload: Box<dyn ApplicationWorkload<A, P>>) -> BenchmarkResult {
+    async fn bench_with_parameter_new<const A: usize, const P: usize>(mut params: RunParameter, mut workload: Box<dyn ApplicationWorkload<A, P>>) -> BenchmarkResult {
 
         params.storage_size = workload.storage_size(&params);
         let mut vm = VmWrapper::new(&params);
@@ -561,7 +561,7 @@ impl TestBench {
         for _ in 0..params.warmup {
             let batch = batch.clone();
             vm.init_vm_storage(workload.initialisation(&params, &mut rng));
-            let _vm_output = vm.execute(batch);
+            let _vm_output = vm.execute(batch).await;
         }
 
         for _ in 0..params.repetitions {
@@ -570,18 +570,18 @@ impl TestBench {
             vm.init_vm_storage(workload.initialisation(&params, &mut rng));
 
             let start = Instant::now();
-            let _vm_output = vm.execute(batch);
+            let _vm_output = vm.execute(batch).await;
             let duration = start.elapsed();
 
             latency_reps.push(duration);
         }
 
-        vm.terminate();
+        vm.terminate().await;
 
         return BenchmarkResult::from_latency(params, latency_reps);
     }
 
-    fn bench_with_parameter_new_and_details<const A: usize, const P: usize>(mut params: RunParameter, mut workload: Box<dyn ApplicationWorkload<A, P>>) -> BenchmarkResult {
+    async fn bench_with_parameter_new_and_details<const A: usize, const P: usize>(mut params: RunParameter, mut workload: Box<dyn ApplicationWorkload<A, P>>) -> BenchmarkResult {
 
         params.storage_size = workload.storage_size(&params);
         let mut vm = VmWrapper::new(&params);
@@ -605,7 +605,7 @@ impl TestBench {
         for _ in 0..params.warmup {
             let batch = batch.clone();
             vm.init_vm_storage(workload.initialisation(&params, &mut rng));
-            let _vm_output = vm.execute(batch);
+            let _vm_output = vm.execute(batch).await;
         }
 
         for _ in 0..params.repetitions {
@@ -622,7 +622,7 @@ impl TestBench {
             // execution_latency.push(execution);
 
             let start = Instant::now();
-            let result = vm.execute(batch).unwrap();
+            let result = vm.execute(batch).await.unwrap();
             let duration = start.elapsed();
             // eprintln!("Done one iteration=======================");
             latency_reps.push(duration);
@@ -646,7 +646,7 @@ impl TestBench {
             }
         }
 
-        let _ = vm.terminate();
+        let _ = vm.terminate().await;
         let wait = if coordinator_wait.is_empty() { None } else {
             println!("\t\t\twaiting for schedules: {}", mean_ci_str(&coordinator_wait));
             Some(coordinator_wait)

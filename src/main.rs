@@ -67,9 +67,9 @@ struct T {
     to: A,
 }
 
-// #[tokio::main]
-// async fn main() -> Result<()> {
-fn main() -> Result<()> {
+#[tokio::main]
+async fn main() -> Result<()> {
+// fn main() -> Result<()> {
 
     let total = Instant::now();
 
@@ -96,7 +96,7 @@ fn main() -> Result<()> {
     // println!("======================================================================================");
     // println!("======================================================================================");
     // 16 schedulers seems good (not too slow but also few enough schedulers that it shouldn't increase the number of schedule to much)
-    micro_benchmark::profile_schedule_chunk(65536, 1, 8, 4, 0.5); // <<<<<<
+    // micro_benchmark::profile_schedule_chunk(65536, 1, 8, 4, 0.5); // <<<<<<
     // micro_benchmark::profile_schedule_chunk(65536, 1, 8, 8, 0.5); // <<<<<<
     // micro_benchmark::profile_schedule_chunk(65536, 1, 16, 16, 0.5); // <<<<<<
     // micro_benchmark::profile_schedule_chunk(65536, 1, 24, 24, 0.5); // <<<<<<
@@ -116,7 +116,7 @@ fn main() -> Result<()> {
     //     // println!("New version");
     //     TestBench::benchmark("benchmark_config.json")
     // }).await.expect("Task panicked")?;
-    // TestBench::benchmark("benchmark_config.json")?;
+    TestBench::benchmark("benchmark_config.json").await?;
 
     // let from_power = 2;
     // // let to_power = 18;

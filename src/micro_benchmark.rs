@@ -51,7 +51,7 @@ const CACHE_LINE_SIZE: u8 = 64;
 
 //region Measurements ------------------------------------------------------------------------------
 #[derive(Clone)]
-struct Measurement {
+pub struct Measurement {
     execution_core: usize,
     memory_core: usize,
     array_size_bytes: usize,
