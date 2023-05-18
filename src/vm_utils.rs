@@ -3,7 +3,7 @@ use std::cmp::{max, min};
 use std::collections::HashMap;
 use std::fmt::format;
 use std::hash::BuildHasherDefault;
-use std::{cmp, mem};
+use std::{cmp, iter, mem};
 use std::ops::Range;
 use std::slice::Iter;
 use std::sync::{Arc, Mutex};
@@ -15,11 +15,13 @@ use std::vec::Drain;
 use ahash::AHasher;
 use anyhow::{anyhow, Context};
 use core_affinity::CoreId;
-use crossbeam::channel::{Receiver, Sender, unbounded};
+use crossbeam::channel::{Receiver, Sender as CrossSender, unbounded};
+use futures::AsyncReadExt;
 use itertools::Itertools;
 use serde::{Deserialize, Serialize};
 use thincollections::thin_set::ThinSet;
-use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
+use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender, Sender as TokioSender};
+use tokio::task::{JoinHandle as TokioHandle, spawn_blocking};
 // use tokio::time::Instant;
 
 use crate::config::RunParameter;
@@ -56,7 +58,7 @@ impl VmUtils {
     #[inline]
     pub fn split<const A: usize, const P: usize>(
         backlog: &mut Vec<Transaction<A, P>>,
-        recipients: &Vec<Sender<Vec<Transaction<A, P>>>>,
+        recipients: &Vec<CrossSender<Vec<Transaction<A, P>>>>,
         name: &str,
     ) -> (Duration, Duration) {
         let chunk_size = (backlog.len() / recipients.len()) + 1;
@@ -81,7 +83,7 @@ impl VmUtils {
     }
 
     // fn executor_pool<const A: usize, const P: usize>(
-    //     to_executors: &Vec<Sender<Vec<Transaction<A, P>>>>,
+    //     to_executors: &Vec<CrossSender<Vec<Transaction<A, P>>>>,
     //     from_executors: &Vec<Receiver<Vec<FunctionResult<A, P>>>>,
     //     schedule: &mut SchedulerOutput<A, P>,
     //     backlog: &mut Vec<usize>,
@@ -541,6 +543,88 @@ impl Scheduling {
     }
 }
 
+struct Execution;
+impl Execution {
+    #[inline]
+    pub fn execute_tx<const A: usize, const P: usize>(
+        schedule: &Arc<Schedule<A, P>>,
+        index_in_schedule: usize,
+        results: &mut Vec<(usize, FunctionResult<A, P>)>,
+        new_transactions: &mut Vec<Transaction<A, P>>,
+        storage: SharedStorage
+    ) {
+        let tx = schedule.transactions[index_in_schedule].clone();
+        let tx_index = tx.tx_index;
+        let function = tx.function;
+        unsafe {
+            match function.execute(tx, storage) {
+                Another(generated_tx) => {
+                    new_transactions.push(generated_tx)
+                },
+                res => {
+                    // TODO would it be better to send the results directly?
+                    results.push((tx_index, res))
+                }
+            }
+        }
+    }
+
+    #[inline]
+    pub fn execute_read_only<const A: usize, const P: usize>(
+        schedules: &Vec<Arc<Schedule<A, P>>>,
+        executor_index: usize,
+        nb_executors: usize,
+        results: &mut Vec<(usize, FunctionResult<A, P>)>,
+        new_transactions: &mut Vec<Transaction<A, P>>,
+        storage: SharedStorage
+    ) {
+
+        let read_only_indices = schedules.iter()
+            .enumerate()
+            .flat_map(|(schedule_index, schedule)| {
+                schedule.read_only.iter()
+                    .map(move |index_in_schedule| (schedule_index, *index_in_schedule))
+            });
+
+        let assigned = read_only_indices
+            .dropping(executor_index)
+            .step_by(nb_executors);
+        for (schedule_index, index_in_schedule) in assigned {
+            let schedule = &schedules[schedule_index];
+            Execution::execute_tx(
+                schedule,
+                index_in_schedule,
+                results,
+                new_transactions,
+                storage.clone()
+            )
+        }
+    }
+
+    #[inline]
+    pub fn execute_assigned<const A: usize, const P: usize>(
+        schedules: &Vec<Arc<Schedule<A, P>>>,
+        executor_index: usize,
+        schedule_index: usize,
+        results: &mut Vec<(usize, FunctionResult<A, P>)>,
+        new_transactions: &mut Vec<Transaction<A, P>>,
+        storage: SharedStorage
+    ) {
+        let schedule = &schedules[schedule_index];
+        let assigned = &schedule.assignments[executor_index];
+
+        for index_in_schedule in assigned {
+            Execution::execute_tx(
+                schedule,
+                *index_in_schedule,
+                results,
+                new_transactions,
+                storage
+            )
+        }
+    }
+}
+
 #[derive(Debug)]
 pub struct SchedulerInput<const A: usize, const P: usize> {
     pub transactions: Arc<Vec<Transaction<A, P>>>,
@@ -556,7 +640,7 @@ pub struct SchedulingCore<const A: usize, const P: usize> {
     address_map: RefCell<Map>,
     postponed: RefCell<Vec<usize>>,
     backlog: RefCell<Vec<usize>>,
-    output: Sender<SchedulerOutput<A, P>>,
+    output: CrossSender<SchedulerOutput<A, P>>,
     duration: Arc<Mutex<Duration>>
 }
 // enum SchedulerOutput{
@@ -569,7 +653,7 @@ impl<const A: usize, const P: usize> SchedulingCore<A, P> {
         scheduler_index: usize,
         chunk_size: usize,
         input: Receiver<SchedulerInput<A, P>>,
-        output: Sender<SchedulerOutput<A, P>>,
+        output: CrossSender<SchedulerOutput<A, P>>,
         duration: Arc<Mutex<Duration>>
     ) -> JoinHandle<anyhow::Result<()>> {
         std::thread::spawn(move || {
@@ -663,7 +747,7 @@ pub struct ExecutorInput<const A: usize, const P: usize> {
 pub struct ExecutionCore<const A: usize, const P: usize> {
     pub executor_index: usize,
     pub shared_storage: SharedStorage,
-    pub output: Sender<Vec<FunctionResult<A, P>>>,
+    pub output: CrossSender<Vec<FunctionResult<A, P>>>,
     pub duration: Arc<Mutex<Duration>>,
     pub new_txs: Arc<Mutex<Vec<Transaction<A, P>>>>
 }
@@ -672,7 +756,7 @@ impl<const A: usize, const P: usize> ExecutionCore<A, P> {
     pub fn spawn(
         executor_index: usize,
         input: Receiver<ExecutorInput<A, P>>,
-        output: Sender<Vec<FunctionResult<A, P>>>,
+        output: CrossSender<Vec<FunctionResult<A, P>>>,
         shared_storage: SharedStorage,
         duration: Arc<Mutex<Duration>>,
         new_txs: Arc<Mutex<Vec<Transaction<A, P>>>>
@@ -796,7 +880,7 @@ impl<const A: usize, const P: usize> VmResult<A, P> {
 //region coordinator ===============================================================================
 pub struct Coordinator<const A: usize, const P: usize> {
     nb_schedulers: usize,
-    to_schedulers: Vec<Sender<SchedulerInput<A, P>>>,
+    to_schedulers: Vec<CrossSender<SchedulerInput<A, P>>>,
     from_schedulers: Vec<Receiver<SchedulerOutput<A, P>>>,
     scheduler_handles: Vec<JoinHandle<anyhow::Result<()>>>,
     local_scheduler: Option<SchedulingCore<A, P>>,
@@ -804,7 +888,7 @@ pub struct Coordinator<const A: usize, const P: usize> {
     scheduler_durations: Vec<Arc<Mutex<Duration>>>,
 
     nb_executors: usize,
-    to_executors: Vec<Sender<ExecutorInput<A, P>>>,
+    to_executors: Vec<CrossSender<ExecutorInput<A, P>>>,
     from_executors: Vec<Receiver<Vec<FunctionResult<A, P>>>>,
     executor_handles: Vec<JoinHandle<anyhow::Result<()>>>,
     local_executor: Option<(ExecutionCore<A, P>, Receiver<Vec<Transaction<A, P>>>)>,
@@ -1259,9 +1343,8 @@ impl<const A: usize, const P: usize> Coordinator<A, P> {
 }
 //endregion coordinator
 
-// TODO Rename this struct
 #[derive(Clone, Debug)]
-enum Status {
+enum Signal {
     Ready,
 
     StartReadOnly,
@@ -1270,8 +1353,12 @@ enum Status {
     Done
 }
 pub struct CoordinatorMixed<const A: usize, const P: usize> {
-    scheduler: SchedulingCore<A, P>,
-    executor: ExecutionCore<A, P>,
+    nb_schedulers: usize,
+    scheduler_handles: Vec<TokioHandle<anyhow::Result<()>>>,
+    scheduler_inputs: Vec<TokioSender<Schedule<A, P>>>,
+    nb_executors: usize,
+    executor_handles: Vec<TokioHandle<anyhow::Result<()>>>,
+    executor_outputs: Option<UnboundedReceiver<(usize, FunctionResult<A, P>)>>,
     storage: VmStorage,
 }
 
@@ -1317,33 +1404,37 @@ impl<const A: usize, const P: usize> Schedule<A, P> {
 
 impl<const A: usize, const P: usize> CoordinatorMixed<A, P> {
     pub fn new(batch_size: usize, storage_size: usize, nb_schedulers: usize, nb_executors: usize) -> Self {
+
+        let storage = VmStorage::new(storage_size);
+
         // TODO For now, assume nb_schedulers == nb_executors
+        assert_eq!(nb_schedulers, nb_executors);
 
         // Used to send the input from vm.execute
         let mut initial_scheduler_input = Vec::with_capacity(nb_schedulers);
+        // Used to send results back to vm.execute
+        let mut executor_outputs = tokio::sync::mpsc::unbounded_channel::<(usize, FunctionResult<A, P>)>();
 
+        // Scheduler stuff -------------------------------------------------------------------------
         // scheduler[i].input = (send /*clone*/, receive);
         let mut scheduler_inputs = Vec::with_capacity(nb_schedulers);
 
         // scheduler[i].output = (send /*subscribe*/, receive);
         let mut scheduler_outputs = Vec::with_capacity(nb_schedulers);
 
+        // Coordinator stuff -----------------------------------------------------------------------
         // coordinator.start_signal = (send /*subscribe*/, receive);
-        let mut coordinator_start_signal = tokio::sync::broadcast::channel::<Status>(1);
-        // let (send_start_signal, mut receive_start_signal) = tokio::sync::broadcast::channel::<Status>(1);
+        let mut coordinator_start_signal = tokio::sync::broadcast::channel::<Signal>(1);
 
         // coordinator.ready_signal = (send /*clone*/, receive);
-        // let mut coordinator_ready_signal = tokio::sync::mpsc::channel::<Status>(nb_executors);
-        let (send_ready_signal, mut receive_ready_signal) = tokio::sync::mpsc::channel::<Status>(nb_executors);
+        let (send_ready_signal, mut receive_ready_signal) = tokio::sync::mpsc::channel::<Signal>(nb_executors);
 
-        // Send results back to vm.execute
-        let mut executor_outputs = tokio::sync::mpsc::unbounded_channel::<(usize, FunctionResult<A, P>)>();
-
+        // Executor stuff --------------------------------------------------------------------------
         let mut schedulers_send_empty_struct = Vec::with_capacity(nb_executors);
         let mut executors_receive_empty_struct = Vec::with_capacity(nb_executors);
 
         for i in 0..nb_schedulers {
-            let scheduler_i_input = tokio::sync::mpsc::channel(nb_executors);
+            let scheduler_i_input = tokio::sync::mpsc::channel::<Schedule<A, P>>(nb_executors);
             let scheduler_i_output = tokio::sync::broadcast::channel::<Arc<Schedule<A, P>>>(1);
             let (send_empty_struct, receive_empty_struct) = tokio::sync::mpsc::channel(1);
 
@@ -1362,6 +1453,8 @@ impl<const A: usize, const P: usize> CoordinatorMixed<A, P> {
                 sender.subscribe()
             }).collect_vec();
 
+            let shared_storage = storage.get_shared();
+
             let coordinator_send_start_signal = coordinator_start_signal.0.clone();
             let mut coordinator_receive_ready_signal = coordinator.pop();
 
@@ -1379,7 +1472,7 @@ impl<const A: usize, const P: usize> CoordinatorMixed<A, P> {
             let mut results: Vec<(usize, FunctionResult<A, P>)> = Vec::with_capacity(batch_size);
 
             let mut schedules = Vec::with_capacity(nb_schedulers);
-            let mut non_empty_schedules: Vec<Status> = Vec::with_capacity(nb_schedulers + 1);
+            let mut non_empty_schedules: Vec<Signal> = Vec::with_capacity(nb_schedulers + 1);
 
             if let Some(mut receive_ready_signals) = coordinator_receive_ready_signal {
                 // Spawn Coordinator
@@ -1388,8 +1481,9 @@ impl<const A: usize, const P: usize> CoordinatorMixed<A, P> {
                     let executor_index = i;
                     let send_start_signal = coordinator_send_start_signal;
 
-                    // Coordinator doesn't need to receive start signals or receive ready signals
+                    // The coordinator doesn't receive start signals, it sends them
                     drop(receive_start_signal);
+                    // The coordinator doesn't send ready signals, it receives them
                     drop(send_ready_signal);
 
                     'main_loop: loop {
@@ -1409,16 +1503,19 @@ impl<const A: usize, const P: usize> CoordinatorMixed<A, P> {
                                 has_read_only = has_read_only || !schedule.read_only.is_empty();
                                 has_exclusive = has_exclusive || !schedule.exclusive.is_empty();
                                 if schedule.nb_assigned_tx != 0 {
-                                    non_empty_schedules.push(Status::Start(index));
+                                    non_empty_schedules.push(Signal::Start(index));
                                 }
                             }
 
-                            // TODO technically, could drop empty schedules here
+                            /* TODO technically, could drop empty schedules here (just make sure the
+                                other executors also drop them, otherwise the indices won't match)
+                             */
                             schedules.push(schedule);
                         }
 
                         // Receive an empty schedule to write new transactions into
-                        let mut empty_output = receive_reserved.recv().await.ok_or(
+                        // TODO Rename this
+                        let mut empty_output: Schedule<A, P> = receive_reserved.recv().await.ok_or(
                             anyhow!("Failed to receive empty struct from scheduler {}", i)
                         )?;
 
@@ -1429,23 +1526,44 @@ impl<const A: usize, const P: usize> CoordinatorMixed<A, P> {
                         }
 
                         if has_read_only {
-                            non_empty_schedules.push(Status::StartReadOnly);
+                            non_empty_schedules.push(Signal::StartReadOnly);
                         }
 
                         if !non_empty_schedules.is_empty() {
-                            let last_schedule = non_empty_schedules.pop().unwrap();
+                            let last_signal = non_empty_schedules.pop().unwrap();
 
                             // We can start executing the different schedules --------------------------
-                            for schedule in non_empty_schedules.drain(..) {
+                            for signal in non_empty_schedules.drain(..) {
                                 // Send start signal for this schedule
-                                send_start_signal.send(schedule)
+                                send_start_signal.send(signal.clone())
                                     .context("Coordinator: Failed to broadcast start signal")?;
 
                                 // Execute schedule
-                                // TODO execution
+                                match signal {
+                                    Signal::StartReadOnly => {
+                                        Execution::execute_read_only(
+                                            &schedules,
+                                            executor_index,
+                                            nb_executors,
+                                            &mut results,
+                                            &mut &mut empty_output.transactions,
+                                            shared_storage
+                                        );
+                                    },
+                                    Signal::Start(schedule_index) => {
+                                        Execution::execute_assigned(
+                                            &schedules,
+                                            executor_index,
+                                            schedule_index,
+                                            &mut results,
+                                            &mut empty_output.transactions,
+                                            shared_storage
+                                        );
+                                    }
+                                    _ => return Err(anyhow!("Unexpected signal for coordinator"))
+                                }
 
-                                // Wait for ready signals
-                                // The coordinator does not send a ready signal
+                                // Wait for ready signals (the coordinator does not send a ready signal)
                                 let expected_nb_signals = nb_executors - 1;
                                 let mut nb_signals_received = 0;
 
@@ -1458,17 +1576,39 @@ impl<const A: usize, const P: usize> CoordinatorMixed<A, P> {
                             }
 
                             // Send start signal for last schedule
-                            send_start_signal.send(last_schedule)
+                            send_start_signal.send(last_signal.clone())
                                 .context("Coordinator: Failed to broadcast start signal")?;
 
                             // Send commit signal early so executors can commit immediately after executing
                             // The goal is to enable schedulers to start as soon as possible
-                            send_start_signal.send(Status::Commit)
+                            send_start_signal.send(Signal::Commit)
                                 .context("Coordinator: Failed to broadcast commit signal")?;
                             committed = true;
 
                             // Execute schedule
-                            // TODO execution
+                            match last_signal {
+                                Signal::StartReadOnly => {
+                                    Execution::execute_read_only(
+                                        &schedules,
+                                        executor_index,
+                                        nb_executors,
+                                        &mut results,
+                                        &mut &mut empty_output.transactions,
+                                        shared_storage
+                                    );
+                                },
+                                Signal::Start(schedule_index) => {
+                                    Execution::execute_assigned(
+                                        &schedules,
+                                        executor_index,
+                                        schedule_index,
+                                        &mut results,
+                                        &mut empty_output.transactions,
+                                        shared_storage
+                                    );
+                                },
+                                _ => return Err(anyhow!("Unexpected signal for coordinator"))
+                            }
                         };
 
                         // The last schedule has been executed, we can commit the results
@@ -1477,7 +1617,7 @@ impl<const A: usize, const P: usize> CoordinatorMixed<A, P> {
                         if done {
                             // No transaction was executed (exclusive, read_only and assignments are empty)
                             // Send Done signal to other executors
-                            send_start_signal.send(Status::Done)
+                            send_start_signal.send(Signal::Done)
                                 .context("Coordinator: Failed to broadcast Done signal")?;
 
                             // Drop empty new_txs TODO send to vm (so it can be reused later)
@@ -1486,7 +1626,7 @@ impl<const A: usize, const P: usize> CoordinatorMixed<A, P> {
                             if !committed {
                                 // Send commit signal to other executors
                                 // This case should only happen when there were only exclusive transactions to execute
-                                send_start_signal.send(Status::Commit)
+                                send_start_signal.send(Signal::Commit)
                                     .context("Coordinator: Failed to broadcast commit signal")?;
                             }
 
@@ -1522,25 +1662,143 @@ impl<const A: usize, const P: usize> CoordinatorMixed<A, P> {
                     // Executor i
                     let executor_index = i;
 
+                    // Executors can't send start signals, they only receive them
+                    drop(coordinator_send_start_signal);
+
                     'main_loop: loop {
-                        // Receive schedules
-                        // Receive empty output
-                        'execution_loop: loop {
-                            // Receive signal
-                            // if commit || done, break 'execution_loop
-                            // NB: Should only receive done during the first iteration
+                        // Receive all schedules -------------------------------------------------------
+                        for (index, mut receiver) in receive_schedule.iter_mut().enumerate() {
+                            // TODO Add graceful termination
+                            let schedule = receiver.recv().await
+                                .context(format!("Failed to receive schedule from scheduler {}", index))?;
+
+                            /* TODO technically, could drop empty schedules here (just make sure the
+                                coordinator also drop them, otherwise the indices won't match)
+                             */
+                            schedules.push(schedule);
                         }
 
-                        // if commit, send new_txs to schedulers
-                        // else drop new_txs/send them to vm
-                        // Drop schedules
-                        // Send transactions results (if any)
+                        // Receive an empty schedule to write new transactions into
+                        // TODO Rename this
+                        let mut empty_output = receive_reserved.recv().await.ok_or(
+                            anyhow!("Failed to receive empty struct from scheduler {}", i)
+                        )?;
+
+                        'execution_loop: loop {
+                            // Receive signal from coordinator
+                            match receive_start_signal.recv().await {
+                                Ok(Signal::StartReadOnly) => {
+                                    Execution::execute_read_only(
+                                        &schedules,
+                                        executor_index,
+                                        nb_executors,
+                                        &mut results,
+                                        &mut &mut empty_output.transactions,
+                                        shared_storage
+                                    );
+                                    /* TODO: ensure that read only transactions are spread evenly:
+                                        option 1: Have schedulers split ro txs among executors in round
+                                            robin, each starting at its own index (i.e. scheduler i
+                                            assigns txs to i, i+1, i+2, ...). If they all started at 0,
+                                            only the first few executors would have work to do when
+                                            the number of transactions is low.
+                                        option 2: Have the coordinator put all ro txs into a single
+                                            array. It is then easy for executors to pick their own range
+                                        > option 3: Have executors execute only transactions that match
+                                            their index i.e. executor i executes the j-th ro tx if
+                                            j % nb_executors == i.
+                                            If nb_executors is a power of two, x % nb_executors can be
+                                            computed as x & (nb_executors - 1)
+                                     */
+                                    // Execute schedule
+                                    // let read_only_indices = schedules.iter()
+                                    //     .enumerate()
+                                    //     .flat_map(|(schedule_index, schedule)| {
+                                    //         schedule.read_only.iter()
+                                    //             .map(move |index_in_schedule| (schedule_index, *index_in_schedule))
+                                    //     });
+                                    //
+                                    // for (schedule_index, index_in_schedule) in read_only_indices.dropping(i).step_by(nb_executors) {
+                                    //     // let tx = schedules[schedule_index].transactions[*index_in_schedule].clone();
+                                    //     // let tx_index = tx.tx_index;
+                                    //     // let function = tx.function;
+                                    //     let storage: SharedStorage = todo!();
+                                    //     // unsafe {
+                                    //     //     match function.execute(tx, storage) {
+                                    //     //         Another(generated_tx) => {
+                                    //     //             empty_output.transactions.push(generated_tx)
+                                    //     //         },
+                                    //     //         res => {
+                                    //     //             // TODO would it be better to send the results directly?
+                                    //     //             results.push((tx_index, res))
+                                    //     //         }
+                                    //     //     }
+                                    //     // }
+                                    //     Execution::execute_tx(
+                                    //         &schedules[schedule_index].transactions,
+                                    //         index_in_schedule,
+                                    //         &mut results,
+                                    //         &mut empty_output.transactions,
+                                    //         storage
+                                    //     )
+                                    // }
+                                },
+                                Ok(Signal::Start(schedule_index)) => {
+                                    // Execute schedule
+                                    Execution::execute_assigned(
+                                        &schedules,
+                                        executor_index,
+                                        schedule_index,
+                                        &mut results,
+                                        &mut empty_output.transactions,
+                                        shared_storage
+                                    );
+                                    // let storage: SharedStorage = todo!();
+                                    // let schedule = &schedules[schedule_index];
+                                    // for index_in_schedule in schedule.assignments[i].iter() {
+                                    //     Execution::execute_tx(
+                                    //         &schedule.transactions,
+                                    //         *index_in_schedule,
+                                    //         &mut results,
+                                    //         &mut empty_output.transactions,
+                                    //         storage
+                                    //     )
+                                    // }
+                                },
+                                Ok(Signal::Commit) => {
+                                    // Send new_txs to scheduler j, use try_send to avoid being unscheduled
+                                    send_new_txs.try_send(empty_output).context("Failed to send new transactions to scheduler")?;
+                                    break 'execution_loop
+                                },
+                                Ok(Signal::Done) => {
+                                    // NB: Should only receive done during the first iteration
+                                    // Drop empty new_txs TODO send to vm (so it can be reused later)
+                                    drop(empty_output);
+                                    break 'execution_loop
+                                },
+                                other => {
+                                    return Err(anyhow!("Executor: Received an unexpected signal: {:?}", other))
+                                }
+                            };
+                        }
+
+                        // drop schedules (so they can be reused later)
+                        for schedule in schedules.drain(..) {
+                            drop(schedule);
+                        }
+
+                        // Send transaction results (if any) TODO Send them all at the end?
+                        for (tx_index, res) in results.drain(..) {
+                            send_results.send((tx_index, res))?;
+                        }
+
+                        continue 'main_loop;
                     }
 
                     anyhow::Ok(())
                 })
             }
-        });
+        }).collect_vec();
 
         let scheduler_handles = scheduler_inputs
             .into_iter()
@@ -1555,7 +1813,7 @@ impl<const A: usize, const P: usize> CoordinatorMixed<A, P> {
                 let chunk_size = batch_size/nb_schedulers;
 
                 let mut previous = Arc::new(Schedule::new(chunk_size, nb_executors));
-                let mut current = Arc::new(Schedule::new(chunk_size, nb_executors));;
+                let mut current = Arc::new(Schedule::new(chunk_size, nb_executors));
 
                 let mut address_map: HashMap<StaticAddress, Assignment, BuildHasherDefault<AHasher>> = HashMap::with_capacity_and_hasher(
                     2 * A * batch_size, BuildHasherDefault::default()
@@ -1563,6 +1821,7 @@ impl<const A: usize, const P: usize> CoordinatorMixed<A, P> {
                 let mut new_reads: Vec<StaticAddress> = Vec::with_capacity(batch_size);
                 let mut new_writes: Vec<StaticAddress> = Vec::with_capacity(batch_size);
 
+                // Spawn scheduler
                 tokio::spawn(async move {
                     // Scheduler i initialization
                     'receive: while let Some(mut to_schedule) = receive_input.recv().await {
@@ -1609,7 +1868,7 @@ impl<const A: usize, const P: usize> CoordinatorMixed<A, P> {
 
                         // Send empty struct to executor i so that it has somewhere to write its new transaction
                         // Try to avoid send.await because we are going to wait soon. No point being
-                        //  having tokio de-schedule and reschedule this task just to wait immediately
+                        //  unscheduled then rescheduled by the runtime if we are immediately going to wait anyway
                         send_empty_struct.try_send(empty)
                             .context("Failed to send empty struct to executor")?;
                         // send_empty_struct.send(empty).await.
@@ -1620,22 +1879,36 @@ impl<const A: usize, const P: usize> CoordinatorMixed<A, P> {
                 })
         }).collect_vec();
 
-        todo!()
+        Self {
+            nb_schedulers,
+            scheduler_handles,
+            scheduler_inputs: initial_scheduler_input,
+            nb_executors,
+            executor_handles,
+            executor_outputs: Some(executor_outputs.1),
+            storage,
+        }
     }
 
     pub async fn execute(&mut self, mut batch: Vec<Transaction<A, P>>) -> anyhow::Result<VmResult<A, P>> {
 
         // TODO Propagate async to TestBench
-        // TODO Store fields in self
-        let mut executor_outputs: Option<UnboundedReceiver<(usize, FunctionResult<A, P>)>> = None;
         let batch_size = batch.len();
+        let chunk_size = batch_size/self.nb_schedulers;
 
-        // TODO Send initial batch to schedulers
-
-        if let Some(mut receive_results) = executor_outputs.take() {
+        batch.into_iter()
+            .chunks(chunk_size).into_iter()
+            .zip(self.scheduler_inputs.iter())
+            .try_for_each(|(chunk, sender)| {
+                let backlog = Schedule::with_transactions(chunk.collect_vec(), self.nb_executors);
+                sender.try_send(backlog)
+                    .context("Failed to send initial backlog")
+        })?;
+        
+        if let Some(mut receive_results) = self.executor_outputs.take() {
             let handle = tokio::spawn(async move {
                 let mut nb_executed = 0;
-                let mut results = vec![FunctionResult::Error; batch.len()];
+                let mut results = vec![FunctionResult::Error; batch_size];
 
                 while nb_executed < batch_size {
                     match receive_results.recv().await {
@@ -1655,7 +1928,7 @@ impl<const A: usize, const P: usize> CoordinatorMixed<A, P> {
             let (receiver, results) = handle.await.unwrap()?;
 
             // Put the receiver back for next execution
-            executor_outputs = Some(receiver);
+            self.executor_outputs = Some(receiver);
 
             // TODO Find a way to receive durations from schedulers and executors (... could do this in terminate...)
             let mut vm_result = VmResult::new(
@@ -1667,8 +1940,6 @@ impl<const A: usize, const P: usize> CoordinatorMixed<A, P> {
         } else {
             Err(anyhow!("Unable to take channel receiver"))
         }
-
-        // todo!()
     }
 
     pub fn init_storage(&mut self, init: Box<dyn Fn(&mut Vec<Word>)>) {
