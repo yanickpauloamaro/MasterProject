@@ -1,3 +1,4 @@
+let title = 'Collect: Transfer(0.0)';
 let data = [
     ['2 sch',	14.477,	10.738,	10.448,	10.577,	10.762,	10.948,	11.187,	11.87,	11.797],
     ['3 sch',	13.668,	9.325, 	9.489,	9.154,	9.366,	9.578,	9.881,	10.985,	10.52],
@@ -34,6 +35,10 @@ dimensions.forEach((el, i) => {
 })
 
 option = {
+  title: {
+    text: title,
+    left: 'center',
+  },
   legend: [
     { orient: 'vertical', type: 'scroll', data: top_legend,    top: '25%', right: '0%'},
     { orient: 'vertical', type: 'scroll', data: bottom_legend, bottom: '25%', right: '0%'}

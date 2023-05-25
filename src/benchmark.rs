@@ -68,6 +68,7 @@ pub fn benchmarking(path: &str) -> Result<()> {
                             config.repetitions,
                             config.warmup,
                             config.seed,
+                            config.graph
                         );
 
                         let result = if vm_type.new() {
@@ -79,7 +80,6 @@ pub fn benchmarking(path: &str) -> Result<()> {
                         } else {
                             bench_with_parameter(parameter)
                         };
-
                         println!("\t\t{} {{", workload);
 
                         println!("\t\t\t{:.2} ± {:.2} tx/µs", result.throughput_micro, result.throughput_ci);
@@ -318,8 +318,8 @@ impl<const A: usize, const P: usize> VmWrapper<A, P> {
             VmWrapper::ParallelCollect(vm) => { vm.execute(batch) },
             VmWrapper::ParallelImmediate(vm) => { vm.execute(batch) },
             VmWrapper::Immediate(vm) => {
-                // vm.execute(batch, true)
-                vm.execute_immediate(batch)
+                vm.execute(batch, true)
+                // vm.execute_immediate(batch)
             },
             VmWrapper::Collect(vm) => { vm.execute(batch, false) },
             VmWrapper::Mixed(vm) => { vm.execute(batch).await },
@@ -369,6 +369,10 @@ impl TestBench {
         let config = BenchmarkConfig::new(path)
             .context("Unable to create benchmark config")?;
 
+        if config.graph {
+            return Self::graph_benchmark(path).await;
+        }
+
         let mut results = vec!();
 
         let verbose = true;
@@ -399,6 +403,7 @@ impl TestBench {
                                 config.repetitions,
                                 config.warmup,
                                 config.seed,
+                                config.graph
                             );
 
                             results.push(TestBench::run(parameter).await);
@@ -412,6 +417,98 @@ impl TestBench {
 
         println!("Done. Took {:.2?}", benchmark_start.elapsed());
         println!();
+
+        Ok(results)
+    }
+
+    pub async fn graph_benchmark(path: &str) -> Result<Vec<BenchmarkResult>> {
+        let config = BenchmarkConfig::new(path)
+            .context("Unable to create benchmark config")?;
+
+        let mut results = vec!();
+        let format_latency = |latency: &Duration| {
+            format!("{:.3}", latency.as_secs_f64()*1000.0)
+        };
+
+        eprintln!("Benchmarking... ");
+        let benchmark_start = Instant::now();
+        print!("let dimensions = ['...'");
+        for nb in config.nb_executors.iter() {
+            print!(", '{} exec'", nb);
+        }
+        println!("];");
+        for workload in config.workloads.iter() {
+            println!("Workload: {} ====================================================", workload);
+            for batch_size in config.batch_sizes.iter() {
+                let storage_size = 100 * batch_size;
+                let baseline_vm = VmType::Sequential;
+
+                let parameter = RunParameter::new(
+                    baseline_vm,
+                    1,
+                    1,
+                    *batch_size,
+                    storage_size,
+                    workload.clone(),
+                    config.repetitions,
+                    config.warmup,
+                    config.seed,
+                    config.graph,
+                );
+
+                let baseline = TestBench::run(parameter).await;
+                let baseline_latency = format_latency(&baseline.latency);
+                results.push(baseline);
+                for vm_type in config.vm_types.iter() {
+                    println!("let title = '{:?}: {}'; // --------------------", vm_type, workload);
+                    println!("let sequential_latency = {};", baseline_latency);
+                    println!("let data = [");
+                    for nb_schedulers in config.nb_schedulers.iter() {
+                        print!("\t[{} sch", nb_schedulers);
+                        for nb_executors in config.nb_executors.iter() {
+                            let parameter = RunParameter::new(
+                                *vm_type,
+                                *nb_schedulers,
+                                *nb_executors,
+                                *batch_size,
+                                storage_size,
+                                workload.clone(),
+                                config.repetitions,
+                                config.warmup,
+                                config.seed,
+                                config.graph
+                            );
+                            let res = TestBench::run(parameter).await;
+                            print!(", {}", format_latency(&res.latency));
+                            results.push(res);
+                        }
+                        println!("],");
+                    }
+                    println!("];")
+                }
+            }
+            println!();
+        }
+
+        println!("Done. Took {:.2?}", benchmark_start.elapsed());
+        println!();
+
+        // println!("==================================================================================");
+        // println!("==================================================================================");
+        // println!("==================================================================================");
+        // for res in results.iter() {
+        //     println!("{:?}: {} {{", res.parameters.vm_type, res.parameters.workload);
+        //     println!("\t{:.2} ± {:.2} tx/µs", res.throughput_micro, res.throughput_ci);
+        //     print!("\t{:?} ± {:?}", res.latency, res.latency_ci);
+        //
+        //     // Print details
+        //     if let Some((scheduling, execution)) = &res.latency_breakdown {
+        //         // print!("\t({}, {})", scheduling, execution);
+        //         print!("\t(scheduling: {}, execution: {})", scheduling, execution);
+        //     }
+        //     println!();
+        //     println!("}}");
+        // }
 
         Ok(results)
     }
@@ -477,7 +574,9 @@ impl TestBench {
 
     async fn dispatch<const A: usize, const P: usize>(params: RunParameter, mut workload: Box<dyn ApplicationWorkload<A, P>>) -> BenchmarkResult {
 
-        println!("\t\t{} {{", params.workload);
+        if !params.graph {
+            println!("\t\t{} {{", params.workload);
+        }
 
         let result = match params.vm_type {
             VmType::Sequential => TestBench::bench_with_parameter_new(params, workload).await,
@@ -487,16 +586,18 @@ impl TestBench {
             _ => TestBench::bench_with_parameter(params)
         };
 
-        println!("\t\t\t{:.2} ± {:.2} tx/µs", result.throughput_micro, result.throughput_ci);
-        print!("\t\t\t{:?} ± {:?}", result.latency, result.latency_ci);
+        if !result.parameters.graph {
+            println!("\t\t\t{:.2} ± {:.2} tx/µs", result.throughput_micro, result.throughput_ci);
+            print!("\t\t\t{:?} ± {:?}", result.latency, result.latency_ci);
 
-        // Print details
-        if let Some((scheduling, execution)) = &result.latency_breakdown {
-            // print!("\t({}, {})", scheduling, execution);
-            print!("\t(scheduling: {}, execution: {})", scheduling, execution);
+            // Print details
+            if let Some((scheduling, execution)) = &result.latency_breakdown {
+                // print!("\t({}, {})", scheduling, execution);
+                print!("\t(scheduling: {}, execution: {})", scheduling, execution);
+            }
+            println!();
+            println!("\t\t}}");
         }
-        println!();
-        println!("\t\t}}");
 
         result
     }

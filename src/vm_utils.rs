@@ -3,7 +3,7 @@ use std::cmp::{max, min};
 use std::collections::HashMap;
 use std::fmt::{format, Formatter};
 use std::hash::BuildHasherDefault;
-use std::{cmp, fmt, iter, mem};
+use std::{cmp, fmt, iter, mem, thread};
 use std::ops::Range;
 use std::slice::Iter;
 use std::sync::{Arc, Mutex};
@@ -17,6 +17,7 @@ use anyhow::{anyhow, Context};
 use core_affinity::CoreId;
 use crossbeam::channel::{Receiver, Sender as CrossSender, unbounded};
 use futures::AsyncReadExt;
+use futures::executor::block_on;
 use itertools::Itertools;
 use serde::{Deserialize, Serialize};
 use thincollections::thin_set::ThinSet;
@@ -43,7 +44,7 @@ impl VmUtils {
     pub fn timestamp(str: &str) {
         let since_unix = SystemTime::now().duration_since(UNIX_EPOCH).unwrap();
         // eprintln!("{:.9?}: {}", since_unix, str);
-        eprintln!("{}", str);
+        // eprintln!("{}", str);
     }
 
     #[inline]
@@ -199,7 +200,11 @@ impl Scheduling {
                     schedule.exclusive.push(tx_index);
                     continue;
                 },
-                TransactionType::Writes => { }
+                TransactionType::Writes => {
+                    // // TODO Testing ultra basic scheduling
+                    // schedule.exclusive.push(tx_index);
+                    // continue
+                }
             }
 
 
@@ -587,6 +592,9 @@ impl Execution {
                 schedule.read_only.iter()
                     .map(move |index_in_schedule| (schedule_index, *index_in_schedule))
             });
+        // println!("Executor {}/{}: {:?}", executor_index, nb_executors, read_only_indices.clone()
+        //     .dropping(executor_index)
+        //     .step_by(nb_executors).collect_vec());
 
         let assigned = read_only_indices
             .dropping(executor_index)
@@ -816,6 +824,7 @@ impl<const A: usize, const P: usize> ExecutionCore<A, P> {
     pub fn spawn(
         executor_index: usize,
         input: Receiver<ExecutorInput<A, P>>,
+        // TODO Use tokio channels instead
         output: CrossSender<Vec<FunctionResult<A, P>>>,
         shared_storage: SharedStorage,
         duration: Arc<Mutex<Duration>>,
@@ -1087,6 +1096,7 @@ impl<const A: usize, const P: usize> Coordinator<A, P> {
             // let mut __exec = Duration::from_secs(0);
             // let mut __wait = Duration::from_secs(0);
             // let mut __sending = Duration::from_secs(0);
+            // eprintln!("-------------------------------------------");
             VmUtils::timestamp(format!("Coordinator: Start of loop (executed {} / {})", nb_executed, nb_to_execute).as_str());
             // For scheduler 1 to S: ---------------------------------------------------------------
             for (scheduler_index, scheduler) in self.from_schedulers.iter().enumerate() {
@@ -1128,7 +1138,8 @@ impl<const A: usize, const P: usize> Coordinator<A, P> {
                 // let __wait_start = Instant::now();
                 if let Ok(mut scheduler_output) = scheduler.recv() {
                     // println!("Schedule from {}: {:?}", scheduler_index, schedule);
-                    // __coordinator_wait_duration += __wait_start.elapsed();
+                    // __coordinator_wait_duration +=
+                    // eprintln!("Scheduler {}: Schedule {:?}", scheduler_index, scheduler_output.scheduled.len());
                     // Wait for schedule i (if empty skip) -----------------------------------------
                     if scheduler_output.scheduled.is_empty() {
                         // println!("\tReceived empty schedule, scheduler completed one backlog");
@@ -1295,6 +1306,7 @@ impl<const A: usize, const P: usize> Coordinator<A, P> {
 
                     // TODO have executors send the results to a separate mpsc channel and only send new txs to the coordinator
                     // Receive result from other executors -----------------------------------------
+                    // let mut generated = Vec::with_capacity(schedule_size);
                     for (executor_index, executor) in self.from_executors.iter().enumerate() {
                         // eprintln!("Coordinator: Waiting for results from executor {}", executor_index);
                         if let Ok(mut res) = executor.recv() {
@@ -1304,6 +1316,7 @@ impl<const A: usize, const P: usize> Coordinator<A, P> {
 
                             let mut new_txs = self.executor_new_txs.get(executor_index).unwrap().lock().unwrap();
                             // backlog.append(&mut *new_txs);
+                            // generated.append(&mut new_txs);
 
                             if !new_txs.is_empty() {
                                 VmUtils::timestamp("Coordinator sending backlog to schedulers ==============");
@@ -1324,6 +1337,15 @@ impl<const A: usize, const P: usize> Coordinator<A, P> {
                                     };
                                     recipient.send(input).expect(format!("Failed to send transactions to scheduler {}", index).as_str());
                                 }
+                                // -------------
+                                // let input = SchedulerInput{
+                                //     transactions: Arc::new(new_txs.clone()),
+                                //     range: 0..new_txs.len(),
+                                // };
+                                // self.outstanding_backlogs[executor_index] += 1;
+                                // self.to_schedulers[executor_index].send(input).expect(
+                                //     format!("Failed to send transactions to scheduler {}", executor_index).as_str());
+                                // -----------
 
                                 new_txs.truncate(0);
                             }
@@ -1333,6 +1355,16 @@ impl<const A: usize, const P: usize> Coordinator<A, P> {
                         // Done with this executor
                     }
 
+                    // if !generated.is_empty() {
+                    //     let len = generated.len();
+                    //     let input = SchedulerInput{
+                    //         transactions: Arc::new(generated),
+                    //         range: 0..len,
+                    //     };
+                    //     self.outstanding_backlogs[scheduler_index] += 1;
+                    //     self.to_schedulers[scheduler_index].send(input).expect(
+                    //         format!("Failed to send transactions to scheduler {}", scheduler_index).as_str());
+                    // }
                     // __execution_rounds += 1;
                     // Done with this schedule (could reuse vec)
                     // assert!(scheduler_output.is_empty());
@@ -1459,6 +1491,15 @@ impl<const A: usize, const P: usize> Schedule<A, P> {
         self.nb_assigned_tx = 0;
         self.postponed.truncate(0);
     }
+
+    pub fn is_valid(&self) -> bool {
+        let total_scheduled = self.exclusive.len() +
+            self.read_only.len() +
+            self.nb_assigned_tx +
+            self.postponed.len();
+
+        total_scheduled == self.transactions.len()
+    }
 }
 
 impl<const A: usize, const P: usize> fmt::Display for Schedule<A, P> {
@@ -1476,12 +1517,13 @@ impl<const A: usize, const P: usize> fmt::Display for Schedule<A, P> {
 
 pub struct CoordinatorMixed<const A: usize, const P: usize> {
     nb_schedulers: usize,
-    scheduler_handles: Vec<TokioHandle<anyhow::Result<()>>>,
+    // TODO Use std threads instead
+    scheduler_handles: Vec<JoinHandle<anyhow::Result<()>>>,
     scheduler_inputs: Vec<TokioSender<Schedule<A, P>>>,
     terminate_schedulers: tokio::sync::broadcast::Sender<()>,
 
     nb_executors: usize,
-    executor_handles: Vec<TokioHandle<anyhow::Result<()>>>,
+    executor_handles: Vec<JoinHandle<anyhow::Result<()>>>,
     executor_outputs: Option<UnboundedReceiver<(usize, FunctionResult<A, P>)>>,
     terminate_executors: tokio::sync::broadcast::Sender<()>,
 
@@ -1490,7 +1532,7 @@ pub struct CoordinatorMixed<const A: usize, const P: usize> {
 
 impl<const A: usize, const P: usize> CoordinatorMixed<A, P> {
     pub fn new(batch_size: usize, storage_size: usize, nb_schedulers: usize, nb_executors: usize) -> Self {
-
+        let nb_executors = nb_schedulers;
         let storage = VmStorage::new(storage_size);
 
         let (send_terminate_signal, _receive_terminate_signal) = tokio::sync::broadcast::channel::<()>(1);
@@ -1581,30 +1623,38 @@ impl<const A: usize, const P: usize> CoordinatorMixed<A, P> {
             if let Some(mut receive_ready_signals) = coordinator_receive_ready_signal {
                 // Spawn Coordinator
                 VmUtils::timestamp("Spawning coordinator");
-                tokio::spawn(async move {
-                    // Executor 0 (Coordinator)
-                    let executor_index = i;
-                    let send_start_signal = coordinator_send_start_signal;
-                    VmUtils::timestamp("Coordinator: dropping recv_start_signal");
-                    // The coordinator doesn't receive start signals, it sends them
-                    drop(receive_start_signal);
-                    VmUtils::timestamp("Coordinator: dropping send_ready_signal");
-                    // The coordinator doesn't send ready signals, it receives them
-                    drop(send_ready_signal);
+                thread::spawn(move ||
+                    {
+                        let pinned = core_affinity::set_for_current(CoreId{ id: i });
+                        if !pinned {
+                            return Err(anyhow!("Unable to pin to scheduler core to CPU #{}", i));
+                        }
 
-                    'main_loop: loop {
-                        VmUtils::timestamp("Coordinator: start main loop");
-                        let mut done = true;
-                        let mut has_exclusive = false;
-                        let mut has_read_only = false;
-                        let mut committed = false;
+                        block_on(async {
+                            // Executor 0 (Coordinator)
+                            let executor_index = i;
+                            let send_start_signal = coordinator_send_start_signal;
+                            VmUtils::timestamp("Coordinator: dropping recv_start_signal");
+                            // The coordinator doesn't receive start signals, it sends them
+                            drop(receive_start_signal);
+                            VmUtils::timestamp("Coordinator: dropping send_ready_signal");
+                            // The coordinator doesn't send ready signals, it receives them
+                            drop(send_ready_signal);
 
-                        // Receive all schedules -------------------------------------------------------
-                        for (index, mut receiver) in receive_schedule.iter_mut().enumerate() {
-                            VmUtils::timestamp(format!("Coordinator: waiting for schedule {}", index).as_str());
-                            let schedule = tokio::select! {
+                            let mut nb_executed = 0;
+                            'main_loop: loop {
+                                VmUtils::timestamp("Coordinator: start main loop");
+                                let mut done = true;
+                                let mut has_exclusive = false;
+                                let mut has_read_only = false;
+                                let mut committed = false;
+
+                                // Receive all schedules -------------------------------------------------------
+                                for (index, mut receiver) in receive_schedule.iter_mut().enumerate() {
+                                    VmUtils::timestamp(format!("Coordinator: waiting for schedule {}", index).as_str());
+                                    let schedule = tokio::select! {
                                 received = receiver.recv() => {
-                                    if received.is_err() { VmUtils::timestamp("!!!! Coordinator: failed to receive schedule"); }
+                                    if received.is_err() { VmUtils::timestamp(format!("!!!! Coordinator: failed to receive schedule {:?}", received).as_str()); }
                                     received.map_err(|err| anyhow!("Failed to receive schedule from scheduler {}", index))?
                                 },
                                 terminate = receive_terminate_signal.recv() => {
@@ -1613,315 +1663,355 @@ impl<const A: usize, const P: usize> CoordinatorMixed<A, P> {
                                 },
                             };
 
-                            // If any schedule is non empty we are not done
-                            if !schedule.is_empty() {
-                                done = false;
-                                has_read_only = has_read_only || !schedule.read_only.is_empty();
-                                has_exclusive = has_exclusive || !schedule.exclusive.is_empty();
-                                if schedule.nb_assigned_tx != 0 {
-                                    non_empty_schedules.push(ScheduleType::Scheduled(index));
+                                    // If any schedule is non empty we are not done
+                                    if !schedule.is_empty() {
+                                        done = false;
+                                        has_read_only = has_read_only || !schedule.read_only.is_empty();
+                                        has_exclusive = has_exclusive || !schedule.exclusive.is_empty();
+                                        if schedule.nb_assigned_tx != 0 {
+                                            non_empty_schedules.push(ScheduleType::Scheduled(index));
+                                        }
+                                        // if schedule.transactions.len() == schedule.postponed.len() {
+                                        //     panic!("All transactions were postponed !!!\n{:#?}", schedule);
+                                        // }
+                                        VmUtils::timestamp(format!("\tCoordinator received non-empty schedule: {} ", schedule).as_str());
+                                    }
+
+                                    /* TODO technically, could drop empty schedules here (just make sure the
+                                        other executors also drop them, otherwise the indices won't match)
+                                     */
+                                    schedules.push(schedule);
                                 }
-                                if schedule.transactions.len() == schedule.postponed.len() {
-                                    panic!("All transactions were postponed !!!\n{:#?}", schedule);
+
+                                if has_read_only {
+                                    non_empty_schedules.push(ScheduleType::ReadOnly);
                                 }
-                                eprintln!("\tCoordinator received non-empty schedule: {} ", schedule);
-                            }
 
-                            /* TODO technically, could drop empty schedules here (just make sure the
-                                other executors also drop them, otherwise the indices won't match)
-                             */
-                            schedules.push(schedule);
-                        }
-
-                        if has_read_only {
-                            non_empty_schedules.push(ScheduleType::ReadOnly);
-                        }
-
-                        // Receive an empty schedule to write new transactions into
-                        // TODO Rename this
-                        // let mut empty_output: Schedule<A, P> = receive_reserved.recv().await.ok_or(
-                        //     anyhow!("Failed to receive empty struct from scheduler {}", i)
-                        // )?;
-                        VmUtils::timestamp("Coordinator: receiving empty output");
-                        let mut tmp = receive_reserved.recv().await.ok_or(
-                            anyhow!("Coordinator: Failed to receive empty struct from scheduler {}", i)
-                        );
-
-                        if tmp.is_err() { VmUtils::timestamp(format!("!!!! Coordinator: failed to receive empty output {:?}", tmp).as_str()); }
-                        let mut empty_output: Schedule<A, P> = tmp?;
-
-                        if done {
-                            // No transaction to execute (exclusive, read_only and assignments are empty)
-                            // Send Done signal to other executors
-                            VmUtils::timestamp("Coordinator: sending DONE signal");
-                            let tmp = send_start_signal.send(CoordinatorSignal::Done)
-                                .context("Coordinator: Failed to broadcast Done signal -----------------");
-                            if tmp.is_err() { VmUtils::timestamp(format!("!!!! Coordinator: failed to send DONE signal {:?}", tmp).as_str()); }
-                            tmp?;
-
-                            // Drop empty new_txs TODO send to vm (so it can be reused later)
-                            drop(empty_output);
-                        } else {
-                            // Execute the received schedules --------------------------------------
-                            if has_exclusive {
-                                VmUtils::timestamp("Coordinator: executing exclusive txs");
-                                // We received all schedules and we know all other executors are waiting
-                                Execution::execute_exclusive(
-                                    &schedules,
-                                    &mut results,
-                                    &mut empty_output.transactions,
-                                    shared_storage
+                                // Receive an empty schedule to write new transactions into
+                                // TODO Rename this
+                                // let mut empty_output: Schedule<A, P> = receive_reserved.recv().await.ok_or(
+                                //     anyhow!("Failed to receive empty struct from scheduler {}", i)
+                                // )?;
+                                VmUtils::timestamp("Coordinator: receiving empty output");
+                                let mut tmp = receive_reserved.recv().await.ok_or(
+                                    anyhow!("Coordinator: Failed to receive empty struct from scheduler {}", i)
                                 );
-                            }
+                                if tmp.is_err() { VmUtils::timestamp(format!("!!!! Coordinator: failed to receive empty output {:?}", tmp).as_str()); }
+                                let mut empty_output: Schedule<A, P> = tmp?;
 
-                            if !non_empty_schedules.is_empty() {
-                                let last_schedule_type = non_empty_schedules.pop().unwrap();
-
-                                // We now need to execute the the parallel schedules ---------------
-                                for schedule_type in non_empty_schedules.drain(..) {
-                                    let signal = CoordinatorSignal::Execute(schedule_type.clone());
-                                    VmUtils::timestamp(format!("Coordinator: sending start signal {:?}", signal).as_str());
-                                    // Send start signal for this schedule
-                                    // send_start_signal.send(signal.clone())
-                                    //     .context("Coordinator: Failed to broadcast start signal")?;
-                                    let tmp = send_start_signal
-                                        .send(signal)
-                                        .context("Coordinator: Failed to broadcast start signal");
-                                    if tmp.is_err() { VmUtils::timestamp(format!("!!!! Coordinator: failed to send start signal {:?}", tmp).as_str()); }
+                                VmUtils::timestamp(
+                                    format!("SYNCHRONIZATION POINT: Coordinator received {} schedules and its local output ---------------------", schedules.len()).as_str()
+                                );
+                                if done {
+                                    // No transaction to execute (exclusive, read_only and assignments are empty)
+                                    // Send Done signal to other executors
+                                    VmUtils::timestamp("Coordinator: sending DONE signal");
+                                    let tmp = send_start_signal.send(CoordinatorSignal::Done)
+                                        .context("Coordinator: Failed to broadcast Done signal -----------------");
+                                    assert!(results.is_empty());
+                                    if tmp.is_err() { VmUtils::timestamp(format!("!!!! Coordinator: failed to send DONE signal {:?}", tmp).as_str()); }
                                     tmp?;
 
-                                    Execution::execute_schedule(
-                                        &schedules,
-                                        executor_index,
-                                        nb_executors,
-                                        schedule_type,
-                                        &mut results,
-                                        &mut empty_output.transactions,
-                                        shared_storage,
-                                        "Coordinator"
-                                    );
+                                    // Drop empty new_txs TODO send to vm (so it can be reused later)
+                                    VmUtils::timestamp("Coordinator: dropping empty input");
+                                    drop(empty_output);
 
-                                    // Wait for ready signals (the coordinator does not send a ready signal)
-                                    let expected_nb_signals = nb_executors - 1;
-                                    let mut nb_signals_received = 0;
-
-                                    VmUtils::timestamp("Coordinator: waiting for ready signals");
-                                    while nb_signals_received < expected_nb_signals {
-                                        let tmp = receive_ready_signals.recv().await.ok_or(
-                                            anyhow!("Coordinator: Failed to receive ready signal")
+                                    VmUtils::timestamp(format!("Coordinator executed {} txs", nb_executed).as_str());
+                                    nb_executed = 0;
+                                } else {
+                                    // Execute the received schedules --------------------------------------
+                                    if has_exclusive {
+                                        VmUtils::timestamp("Coordinator: executing exclusive txs");
+                                        // We received all schedules and we know all other executors are waiting
+                                        Execution::execute_exclusive(
+                                            &schedules,
+                                            &mut results,
+                                            &mut empty_output.transactions,
+                                            shared_storage
                                         );
-                                        if tmp.is_err() { VmUtils::timestamp(format!("!!!! Coordinator: failed to receive signals {:?}", tmp).as_str()); }
-                                        tmp?;
-                                        nb_signals_received += 1;
                                     }
+
+                                    if !non_empty_schedules.is_empty() {
+                                        let last_schedule_type = non_empty_schedules.pop().unwrap();
+
+                                        // We now need to execute the the parallel schedules ---------------
+                                        for schedule_type in non_empty_schedules.drain(..) {
+                                            let signal = CoordinatorSignal::Execute(schedule_type.clone());
+                                            VmUtils::timestamp(
+                                                format!("SYNCHRONIZATION POINT: Coordinator sends signal {:?} to executors ---------------------", signal).as_str()
+                                            );
+                                            VmUtils::timestamp(format!("Coordinator: sending start signal {:?}", signal).as_str());
+                                            // Send start signal for this schedule
+                                            // send_start_signal.send(signal.clone())
+                                            //     .context("Coordinator: Failed to broadcast start signal")?;
+                                            let tmp = send_start_signal
+                                                .send(signal)
+                                                .context("Coordinator: Failed to broadcast start signal");
+                                            if tmp.is_err() { VmUtils::timestamp(format!("!!!! Coordinator: failed to send start signal {:?}", tmp).as_str()); }
+                                            tmp?;
+
+                                            Execution::execute_schedule(
+                                                &schedules,
+                                                executor_index,
+                                                nb_executors,
+                                                schedule_type,
+                                                &mut results,
+                                                &mut empty_output.transactions,
+                                                shared_storage,
+                                                "Coordinator"
+                                            );
+
+                                            // Wait for ready signals (the coordinator does not send a ready signal)
+                                            let expected_nb_signals = nb_executors - 1;
+                                            let mut nb_signals_received = 0;
+
+                                            VmUtils::timestamp("Coordinator: waiting for ready signals");
+                                            while nb_signals_received < expected_nb_signals {
+                                                let tmp = receive_ready_signals.recv().await.ok_or(
+                                                    anyhow!("Coordinator: Failed to receive ready signal")
+                                                );
+                                                if tmp.is_err() { VmUtils::timestamp(format!("!!!! Coordinator: failed to receive signals {:?}", tmp).as_str()); }
+                                                tmp?;
+                                                nb_signals_received += 1;
+                                            }
+                                            VmUtils::timestamp(
+                                                format!("SYNCHRONIZATION POINT: Coordinator received {} ready signals ---------------------", nb_signals_received).as_str()
+                                            );
+                                        }
+
+                                        // Execute and commit the last parallel schedule -------------------
+                                        let last_signal = CoordinatorSignal::ExecuteAndCommit(last_schedule_type.clone());
+                                        VmUtils::timestamp(
+                                            format!("SYNCHRONIZATION POINT: Coordinator sends last signal {:?} to executors ---------------------", last_signal).as_str()
+                                        );
+                                        // eprintln!("----------------------------------------------");
+                                        VmUtils::timestamp(format!("Coordinator: sending last start signal {:?}", last_signal).as_str());
+                                        let tmp = send_start_signal
+                                            .send(last_signal)
+                                            .context("Coordinator: Failed to broadcast start signal");
+                                        if tmp.is_err() { VmUtils::timestamp(format!("!!!! Coordinator: failed to send last start signal {:?}", tmp).as_str()); }
+                                        tmp?;
+
+                                        Execution::execute_schedule(
+                                            &schedules,
+                                            executor_index,
+                                            nb_executors,
+                                            last_schedule_type,
+                                            &mut results,
+                                            &mut empty_output.transactions,
+                                            shared_storage,
+                                            "Coordinator"
+                                        );
+
+                                    } else {
+                                        // eprintln!("----------------------------------------------");
+                                        // Send commit signal to other executors
+                                        // This case should only happen when there were only exclusive transactions to execute
+                                        VmUtils::timestamp(
+                                            format!("SYNCHRONIZATION POINT: Coordinator sends COMMIT signal to executors ---------------------").as_str()
+                                        );
+                                        VmUtils::timestamp("Coordinator: sending commit signal");
+                                        let tmp = send_start_signal.send(CoordinatorSignal::Commit)
+                                            .context("Coordinator: Failed to broadcast commit signal");
+                                        if tmp.is_err() { VmUtils::timestamp(format!("!!!! Coordinator: failed to send commit signal {:?}", tmp).as_str()); }
+                                        tmp?;
+                                    }
+
+                                    // Send potential new_txs to scheduler j
+                                    /* Want to avoid using send.await because this task still has work to do
+                                        and we don't want to be switched out.
+                                       Also, the channel should never be out of capacity because we are the
+                                       only tasks sending on it and we are woken up only after the receiver
+                                       receives the message
+                                     */
+                                    VmUtils::timestamp("Coordinator: sending new transactions to schedulers");
+                                    let tmp = send_new_txs.try_send(empty_output)
+                                        .context("Failed to send new transactions to scheduler");
+                                    if tmp.is_err() { VmUtils::timestamp(format!("!!!! Coordinator: failed to send new transactions {:?}", tmp).as_str()); }
+                                    tmp?;
+                                    // send_new_txs.send(empty_output).await?;
                                 }
 
-                                // Execute and commit the last parallel schedule -------------------
-                                let last_signal = CoordinatorSignal::ExecuteAndCommit(last_schedule_type.clone());
-                                VmUtils::timestamp(format!("Coordinator: sending last start signal {:?}", last_signal).as_str());
-                                let tmp = send_start_signal
-                                    .send(last_signal)
-                                    .context("Coordinator: Failed to broadcast start signal");
-                                if tmp.is_err() { VmUtils::timestamp(format!("!!!! Coordinator: failed to send last start signal {:?}", tmp).as_str()); }
-                                tmp?;
+                                /* Either:
+                                    - The last schedule has been executed, we can commit the results and wait
+                                        for the next execution loop.
+                                        No need for synchronization now because no executor will start executing
+                                        until after the schedulers synchronize back to the coordinator
+                                    - We are done, we can send the results
+                                    In both case we need to drop the Arcs to ensure they can be reused later
+                                 */
 
-                                Execution::execute_schedule(
-                                    &schedules,
-                                    executor_index,
-                                    nb_executors,
-                                    last_schedule_type,
-                                    &mut results,
-                                    &mut empty_output.transactions,
-                                    shared_storage,
-                                    "Coordinator"
-                                );
+                                // drop schedules (so they can be reused later)
+                                VmUtils::timestamp("Coordinator: dropping previous schedules");
+                                for schedule in schedules.drain(..) {
+                                    drop(schedule);
+                                }
 
-                            } else {
-                                // Send commit signal to other executors
-                                // This case should only happen when there were only exclusive transactions to execute
-                                VmUtils::timestamp("Coordinator: sending commit signal");
-                                let tmp = send_start_signal.send(CoordinatorSignal::Commit)
-                                    .context("Coordinator: Failed to broadcast commit signal");
-                                if tmp.is_err() { VmUtils::timestamp(format!("!!!! Coordinator: failed to send commit signal {:?}", tmp).as_str()); }
-                                tmp?;
+                                VmUtils::timestamp("Coordinator: sending results to vm");
+                                // Send transaction results TODO Send them all at the end?
+                                for (tx_index, res) in results.drain(..) {
+                                    // eprintln!("SENDING A RESULT");
+                                    nb_executed += 1;
+                                    let tmp = send_results.send((tx_index, res));
+                                    if tmp.is_err() { VmUtils::timestamp(format!("!!!! Coordinator: failed to send results {:?}", tmp).as_str()); }
+                                    tmp?;
+                                }
+
+                                // VmUtils::timestamp("Coordinator: restarting main loop");
+                                continue 'main_loop;
                             }
 
-                            // Send potential new_txs to scheduler j
-                            /* Want to avoid using send.await because this task still has work to do
-                                and we don't want to be switched out.
-                               Also, the channel should never be out of capacity because we are the
-                               only tasks sending on it and we are woken up only after the receiver
-                               receives the message
-                             */
-                            VmUtils::timestamp("Coordinator: sending new transactions to schedulers");
-                            let tmp = send_new_txs.try_send(empty_output)
-                                .context("Failed to send new transactions to scheduler");
-                            if tmp.is_err() { VmUtils::timestamp(format!("!!!! Coordinator: failed to send new transactions {:?}", tmp).as_str()); }
-                            tmp?;
-                            // send_new_txs.send(empty_output).await?;
-                        }
-
-                        /* Either:
-                            - The last schedule has been executed, we can commit the results and wait
-                                for the next execution loop.
-                                No need for synchronization now because no executor will start executing
-                                until after the schedulers synchronize back to the coordinator
-                            - We are done, we can send the results
-                            In both case we need to drop the Arcs to ensure they can be reused later
-                         */
-
-                        // drop schedules (so they can be reused later)
-                        VmUtils::timestamp("Coordinator: dropping previous schedules");
-                        for schedule in schedules.drain(..) {
-                            drop(schedule);
-                        }
-
-                        VmUtils::timestamp("Coordinator: sending results to vm");
-                        // Send transaction results TODO Send them all at the end?
-                        for (tx_index, res) in results.drain(..) {
-                            let tmp = send_results.send((tx_index, res));
-                            if tmp.is_err() { VmUtils::timestamp(format!("!!!! Coordinator: failed to send results {:?}", tmp).as_str()); }
-                            tmp?;
-                        }
-
-                        // VmUtils::timestamp("Coordinator: restarting main loop");
-                        continue 'main_loop;
+                            anyhow::Ok(())
+                        })
                     }
-
-                    anyhow::Ok(())
-                })
+                )
             } else {
                 // Spawn executor
                 VmUtils::timestamp(format!("Spawning executor {}", i).as_str());
-                tokio::spawn(async move {
-                    // Executor i
-                    let executor_index = i;
+                thread::spawn(move || {
+                    let pinned = core_affinity::set_for_current(CoreId{ id: i });
+                    if !pinned {
+                        return Err(anyhow!("Unable to pin to scheduler core to CPU #{}", i));
+                    }
+                    block_on(async {
+                        // Executor i
+                        let executor_index = i;
 
-                    // Executors can't send start signals, they only receive them
-                    VmUtils::timestamp("Executor: dropping send_start_signal");
-                    drop(coordinator_send_start_signal);
+                        // Executors can't send start signals, they only receive them
+                        VmUtils::timestamp("Executor: dropping send_start_signal");
+                        drop(coordinator_send_start_signal);
 
-                    'main_loop: loop {
-                        VmUtils::timestamp("Executor: start main loop");
-                        // Receive all schedules -------------------------------------------------------
-                        for (index, mut receiver) in receive_schedule.iter_mut().enumerate() {
-                            VmUtils::timestamp(format!("Executor: waiting for schedule {}", index).as_str());
-                            let schedule = tokio::select! {
+                        let mut nb_executed = 0;
+
+                        'main_loop: loop {
+                            VmUtils::timestamp(format!("Executor {}: start main loop", executor_index).as_str());
+                            // Receive all schedules -------------------------------------------------------
+                            for (index, mut receiver) in receive_schedule.iter_mut().enumerate() {
+                                VmUtils::timestamp(format!("Executor {}: waiting for schedule {}", executor_index, index).as_str());
+                                let schedule = tokio::select! {
                                 received = receiver.recv() => {
-                                    if received.is_err() { VmUtils::timestamp("!!!! Executor: failed to receive schedule"); }
+                                    if received.is_err() { VmUtils::timestamp(format!("!!!! Executor {}: failed to receive schedule {:?}", executor_index, received).as_str()); }
                                     received.map_err(|err| anyhow!("Failed to receive schedule from scheduler {}", index))?
                                 },
                                 terminate = receive_terminate_signal.recv() => {
-                                    VmUtils::timestamp(format!("Executor: terminated {}", executor_index).as_str());
+                                    VmUtils::timestamp(format!("Executor {}: terminated", executor_index).as_str());
                                     return terminate.map_err(|err| anyhow!("Failed to receive termination signal"));
                                 },
                             };
 
-                            /* TODO technically, could drop empty schedules here (just make sure the
-                                coordinator also drop them, otherwise the indices won't match)
-                             */
-                            schedules.push(schedule);
-                        }
+                                /* TODO technically, could drop empty schedules here (just make sure the
+                                    coordinator also drop them, otherwise the indices won't match)
+                                 */
+                                schedules.push(schedule);
+                            }
 
-                        // Receive an empty schedule to write new transactions into
-                        // TODO Rename this
-                        // let mut empty_output = receive_reserved.recv().await.ok_or(
-                        //     anyhow!("Failed to receive empty struct from scheduler {}", i)
-                        // )?;
-                        VmUtils::timestamp("Executor: receiving empty output");
-                        let mut tmp = receive_reserved.recv().await.ok_or(
-                            anyhow!("Executor: Failed to receive empty struct from scheduler {}", i)
-                        );
+                            // Receive an empty schedule to write new transactions into
+                            // TODO Rename this
+                            // let mut empty_output = receive_reserved.recv().await.ok_or(
+                            //     anyhow!("Failed to receive empty struct from scheduler {}", i)
+                            // )?;
+                            VmUtils::timestamp(format!("Executor {}: receiving empty output", executor_index).as_str());
+                            let mut tmp = receive_reserved.recv().await.ok_or(
+                                anyhow!("Executor: Failed to receive empty struct from scheduler {}", i)
+                            );
 
-                        if tmp.is_err() { VmUtils::timestamp(format!("!!!! Coordinator: failed to receive empty output {:?}", tmp).as_str()); }
-                        let mut empty_output: Schedule<A, P> = tmp?;
+                            if tmp.is_err() { VmUtils::timestamp(format!("!!!! Executor {}: failed to receive empty output {:?}", executor_index, tmp).as_str()); }
+                            let mut empty_output: Schedule<A, P> = tmp?;
 
-                        'execution_loop: loop {
-                            // Receive signal from coordinator
-                            VmUtils::timestamp("Executor: waiting for start signal");
-                            let mut commit = false;
-                            match receive_start_signal.recv().await {
-                                Ok(CoordinatorSignal::Done) => {
-                                    // NB: Should only receive done during the first iteration
-                                    // Drop empty new_txs TODO send to vm (so it can be reused later)
-                                    VmUtils::timestamp("Executor: received Done signal");
-                                    drop(empty_output);
-                                    break 'execution_loop
-                                },
-                                Ok(CoordinatorSignal::Execute(schedule_type)) => {
-                                    VmUtils::timestamp("Executor: received Execute signal");
-                                    Execution::execute_schedule(
-                                        &schedules,
-                                        executor_index,
-                                        nb_executors,
-                                        schedule_type,
-                                        &mut results,
-                                        &mut empty_output.transactions,
-                                        shared_storage,
-                                        "Executor"
-                                    );
-                                    VmUtils::timestamp("Executor: sending ready signal");
-                                    let tmp = send_ready_signal.try_send(ExecutorSignal::Ready);
-                                    if tmp.is_err() { VmUtils::timestamp("Executor: failed to send ready signal"); }
-                                    tmp?;
-                                },
-                                Ok(CoordinatorSignal::ExecuteAndCommit(schedule_type)) => {
-                                    VmUtils::timestamp("Executor: received ExecuteAndCommit signal");
-                                    Execution::execute_schedule(
-                                        &schedules,
-                                        executor_index,
-                                        nb_executors,
-                                        schedule_type,
-                                        &mut results,
-                                        &mut empty_output.transactions,
-                                        shared_storage,
-                                        "Executor"
-                                    );
-                                    VmUtils::timestamp("Executor: sending new transactions to schedulers");
-                                    let tmp = send_new_txs.try_send(empty_output)
-                                        .context("Failed to send new transactions to scheduler");
-                                    if tmp.is_err() { VmUtils::timestamp(format!("!!!! Executor: failed to send new transactions {:?}", tmp).as_str()); }
-                                    tmp?;
-                                    break 'execution_loop
-                                },
-                                Ok(CoordinatorSignal::Commit) => {
-                                    // NB: Should never receive commit during the first iteration
-                                    VmUtils::timestamp("Executor: received Commit signal");
-                                    // Send new_txs to scheduler j, use try_send to avoid being unscheduled
-                                    VmUtils::timestamp("Executor: sending new transactions to schedulers");
-                                    let tmp = send_new_txs.try_send(empty_output)
-                                        .context("Failed to send new transactions to scheduler");
-                                    if tmp.is_err() { VmUtils::timestamp(format!("!!!! Executor: failed to send new transactions {:?}", tmp).as_str()); }
-                                    tmp?;
-                                    break 'execution_loop
-                                }
-                                Err(err) => {
-                                    // TODO getting error Lagged(1) => c.f tokio::sync::broadcast documentation
-                                    VmUtils::timestamp(format!("Executor: failed to receive start signal {:?}", err).as_str());
-                                    return Err(anyhow!("Executor: failed to receive start signal: {:?}", err))
+                            'execution_loop: loop {
+                                // Receive signal from coordinator
+                                VmUtils::timestamp(format!("Executor {}: waiting for start signal", executor_index).as_str());
+                                let mut commit = false;
+                                match receive_start_signal.recv().await {
+                                    Ok(CoordinatorSignal::Done) => {
+                                        assert!(results.is_empty());
+                                        // NB: Should only receive done during the first iteration
+                                        // Drop empty new_txs TODO send to vm (so it can be reused later)
+                                        VmUtils::timestamp(format!("Executor {}: received Done signal", executor_index).as_str());
+                                        VmUtils::timestamp(format!("Executor {}: dropping empty output", executor_index).as_str());
+                                        drop(empty_output);
+                                        VmUtils::timestamp(format!("Executor {} executed {} txs", executor_index, nb_executed).as_str());
+                                        nb_executed = 0;
+                                        break 'execution_loop
+                                    },
+                                    Ok(CoordinatorSignal::Execute(schedule_type)) => {
+                                        VmUtils::timestamp(format!("Executor {}: received Execute signal", executor_index).as_str());
+                                        Execution::execute_schedule(
+                                            &schedules,
+                                            executor_index,
+                                            nb_executors,
+                                            schedule_type,
+                                            &mut results,
+                                            &mut empty_output.transactions,
+                                            shared_storage,
+                                            "Executor"
+                                        );
+                                        VmUtils::timestamp(format!("Executor {}: sending ready signal", executor_index).as_str());
+                                        // let tmp = send_ready_signal.try_send(ExecutorSignal::Ready);
+                                        let tmp = send_ready_signal.send(ExecutorSignal::Ready).await;
+                                        if tmp.is_err() { VmUtils::timestamp(format!("Executor {}: failed to send ready signal", executor_index).as_str()); }
+                                        tmp?;
+                                    },
+                                    Ok(CoordinatorSignal::ExecuteAndCommit(schedule_type)) => {
+                                        VmUtils::timestamp(format!("Executor {}: received ExecuteAndCommit signal", executor_index).as_str());
+                                        Execution::execute_schedule(
+                                            &schedules,
+                                            executor_index,
+                                            nb_executors,
+                                            schedule_type,
+                                            &mut results,
+                                            &mut empty_output.transactions,
+                                            shared_storage,
+                                            "Executor"
+                                        );
+                                        VmUtils::timestamp(format!("Executor {}: sending new transactions to schedulers", executor_index).as_str());
+                                        let tmp = send_new_txs.try_send(empty_output)
+                                            .context("Failed to send new transactions to scheduler");
+                                        if tmp.is_err() { VmUtils::timestamp(format!("!!!! Executor {}: failed to send new transactions {:?}", executor_index, tmp).as_str()); }
+                                        tmp?;
+                                        break 'execution_loop
+                                    },
+                                    Ok(CoordinatorSignal::Commit) => {
+                                        // NB: Should never receive commit during the first iteration
+                                        VmUtils::timestamp(format!("Executor {}: received Commit signal", executor_index).as_str());
+                                        // Send new_txs to scheduler j, use try_send to avoid being unscheduled
+                                        VmUtils::timestamp(format!("Executor {}: sending new transactions to schedulers", executor_index).as_str());
+                                        let tmp = send_new_txs.try_send(empty_output)
+                                            .context("Failed to send new transactions to scheduler");
+                                        if tmp.is_err() { VmUtils::timestamp(format!("!!!! Executor {}: failed to send new transactions {:?}", executor_index, tmp).as_str()); }
+                                        tmp?;
+                                        break 'execution_loop
+                                    }
+                                    Err(err) => {
+                                        // TODO getting error Lagged(1) => c.f tokio::sync::broadcast documentation
+                                        VmUtils::timestamp(format!("Executor {}: failed to receive start signal {:?}", executor_index, err).as_str());
+                                        return Err(anyhow!("Executor: failed to receive start signal: {:?}", err))
+                                    }
                                 }
                             }
+
+                            VmUtils::timestamp(format!("Executor {}: dropping previous schedules", executor_index).as_str());
+                            // drop schedules (so they can be reused later)
+                            for schedule in schedules.drain(..) {
+                                drop(schedule);
+                            }
+
+                            VmUtils::timestamp(format!("Executor {}: sending results to vm", executor_index).as_str());
+                            // Send transaction results (if any) TODO Send them all at the end?
+                            for (tx_index, res) in results.drain(..) {
+                                nb_executed += 1;
+                                // send_results.send((tx_index, res))?;
+                                // eprintln!("SENDING A RESULT");
+                                let tmp = send_results.send((tx_index, res));
+                                if tmp.is_err() { VmUtils::timestamp(format!("!!!! Executor {}: failed to send results {:?}", executor_index, tmp).as_str()); }
+                                tmp?;
+                            }
+
+                            continue 'main_loop;
                         }
 
-                        VmUtils::timestamp("Executor: dropping previous schedules");
-                        // drop schedules (so they can be reused later)
-                        for schedule in schedules.drain(..) {
-                            drop(schedule);
-                        }
-
-                        VmUtils::timestamp("Executor: sending results to vm");
-                        // Send transaction results (if any) TODO Send them all at the end?
-                        for (tx_index, res) in results.drain(..) {
-                            // send_results.send((tx_index, res))?;
-                            let tmp = send_results.send((tx_index, res));
-                            if tmp.is_err() { VmUtils::timestamp(format!("!!!! Executor: failed to send results {:?}", tmp).as_str()); }
-                            tmp?;
-                        }
-
-                        continue 'main_loop;
-                    }
-
-                    anyhow::Ok(())
+                        anyhow::Ok(())
+                    })
                 })
             }
         }).collect_vec();
@@ -1953,12 +2043,17 @@ impl<const A: usize, const P: usize> CoordinatorMixed<A, P> {
 
                 // Spawn scheduler
                 VmUtils::timestamp("Spawning scheduler");
-                tokio::spawn(async move {
-                    // Scheduler i
-                    let scheduler_index = i;
-                    'receive: loop {
-                        VmUtils::timestamp(format!("Scheduler {}: waiting for input", scheduler_index).as_str());
-                        let mut to_schedule = tokio::select! {
+                thread::spawn(move || {
+                    let pinned = core_affinity::set_for_current(CoreId{ id: i });
+                    if !pinned {
+                        return Err(anyhow!("Unable to pin to scheduler core to CPU #{}", i));
+                    }
+                    block_on(async {
+                        // Scheduler i
+                        let scheduler_index = i;
+                        'receive: loop {
+                            VmUtils::timestamp(format!("Scheduler {}: waiting for input", scheduler_index).as_str());
+                            let mut to_schedule = tokio::select! {
                             received = receive_input.recv() => {
                                 if received.is_none() {
                                     VmUtils::timestamp(format!("Scheduler {}: failed to receive input", scheduler_index).as_str());
@@ -1970,75 +2065,90 @@ impl<const A: usize, const P: usize> CoordinatorMixed<A, P> {
                                 return terminate.map_err(|err| anyhow!("Failed to receive termination signal"));
                             },
                         };
-                        /*
-                            to_schedule: Schedule, transactions to schedule (the rest has been reset)
-                            current: Arc<Schedule> might still be referenced by some executor
-                            previous: Arc<Schedule> not referenced by anyone
-                            empty <- previous.take.clear()
-                            previous = current
+                            /*
+                                to_schedule: Schedule, transactions to schedule (the rest has been reset)
+                                current: Arc<Schedule> might still be referenced by some executor
+                                previous: Arc<Schedule> not referenced by anyone
+                                empty <- previous.take.clear()
+                                previous = current
+                                current = Arc::new(to_schedule);
+                                broadcast current
+                                send empty to e_i so it can write its results
+                             */
+
+                            // Add postponed transaction to the backlog
+                            for index in current.postponed.iter() {
+                                let postponed_tx = current.transactions[*index].clone();
+                                to_schedule.transactions.push(postponed_tx);
+                            }
+
+                            // Schedule the transactions
+                            VmUtils::timestamp(format!("Scheduler {}: scheduling backlog", scheduler_index).as_str());
+                            Scheduling::schedule_chunk_assign(
+                                &mut address_map,
+                                &mut new_reads,
+                                &mut new_writes,
+                                &mut to_schedule,
+                            );
+
+                            assert!(to_schedule.is_valid());
+                            // if scheduler_index == 1 {
+                            //     BENCH ON AWS PREVIOUS VERSION ON AWS WITH LESS CORES
+                            //     BENCH NEW VERSION ON AWS (FIRST NOT AS LONG IN CASE IT CRASHES)
+                            //     DEBUG SCHEDULING ERROR (MAX 30 MIN)
+                            //     ---- SUNDAY
+                            //     MAKE NEW NEW VERSION WHICH CAN DO BOTH SCHEDULING
+                            //     BENCH NEW NEW VERSION
+                            //
+                            //     eprintln!("Schedule: {:?}", to_schedule);
+                            // }
+                            // eprintln!("Scheduler {}: {}", scheduler_index, to_schedule);
+
+
+                            // Previous is guaranteed to have been dropped by all executors
+                            // -> can be reused to store transactions generated by executors
+                            VmUtils::timestamp(format!("Scheduler {}: taking value out of arc", scheduler_index).as_str());
+                            // let mut empty = Arc::try_unwrap(previous)
+                            //     .map_err(|err| anyhow!("Failed to take previous schedule out of Arc"))?;
+                            let tmp = Arc::try_unwrap(previous)
+                                .map_err(|err| anyhow!("Failed to take previous schedule out of Arc"));
+                            if tmp.is_err() {
+                                VmUtils::timestamp(format!("!!!! Scheduler {}: failed to take value out of arc {:?}", scheduler_index, tmp).as_str());
+                            }
+                            let mut empty = tmp?;
+
+                            // Prepare executor output, clear the schedule information
+                            empty.clear();
+
+                            // Keep reference to current so that it can be reused later
+                            previous = current;
                             current = Arc::new(to_schedule);
-                            broadcast current
-                            send empty to e_i so it can write its results
-                         */
 
-                        // Add postponed transaction to the backlog
-                        for index in current.postponed.iter() {
-                            let postponed_tx = current.transactions[*index].clone();
-                            to_schedule.transactions.push(postponed_tx);
+                            // Send schedule to all executors
+                            VmUtils::timestamp(format!("Scheduler {}: sending new schedule to executors", scheduler_index).as_str());
+                            let tmp = broadcast_output.send(current.clone())
+                                .context("Failed to broadcast schedule");
+                            if tmp.is_err() {
+                                VmUtils::timestamp(format!("!!!! Scheduler {}: failed to send schedule {:?}", scheduler_index, tmp).as_str());
+                            }
+                            tmp?;
+
+                            // Send empty struct to executor i so that it has somewhere to write its new transaction
+                            // Try to avoid send.await because we are going to wait soon. No point being
+                            //  unscheduled then rescheduled by the runtime if we are immediately going to wait anyway
+                            VmUtils::timestamp(format!("Scheduler {}: sending empty struct to executor {}", scheduler_index, scheduler_index).as_str());
+                            let tmp = send_empty_struct.try_send(empty)
+                                .context("Failed to send empty struct to executor");
+                            if tmp.is_err() {
+                                VmUtils::timestamp(format!("!!!! Scheduler {}: failed to send empty struct {:?}", scheduler_index, tmp).as_str());
+                            }
+                            tmp?;
+                            // send_empty_struct.send(empty).await.
+                            //     context("Failed to send empty struct to executor")?;
                         }
 
-                        // Schedule the transactions
-                        VmUtils::timestamp(format!("Scheduler {}: scheduling backlog", scheduler_index).as_str());
-                        Scheduling::schedule_chunk_assign(
-                            &mut address_map,
-                            &mut new_reads,
-                            &mut new_writes,
-                            &mut to_schedule,
-                        );
-
-                        // Previous is guaranteed to have been dropped by all executors
-                        // -> can be reused to store transactions generated by executors
-                        VmUtils::timestamp(format!("Scheduler {}: taking value out of arc", scheduler_index).as_str());
-                        // let mut empty = Arc::try_unwrap(previous)
-                        //     .map_err(|err| anyhow!("Failed to take previous schedule out of Arc"))?;
-                        let tmp = Arc::try_unwrap(previous)
-                            .map_err(|err| anyhow!("Failed to take previous schedule out of Arc"));
-                        if tmp.is_err() {
-                            VmUtils::timestamp(format!("!!!! Scheduler {}: failed to take value out of arc {:?}", scheduler_index, tmp).as_str());
-                        }
-                        let mut empty = tmp?;
-
-                        // Prepare executor output, clear the schedule information
-                        empty.clear();
-
-                        // Keep reference to current so that it can be reused later
-                        previous = current;
-                        current = Arc::new(to_schedule);
-
-                        // Send schedule to all executors
-                        VmUtils::timestamp(format!("Scheduler {}: sending new schedule to executors", scheduler_index).as_str());
-                        let tmp = broadcast_output.send(current.clone())
-                            .context("Failed to broadcast schedule");
-                        if tmp.is_err() {
-                            VmUtils::timestamp(format!("!!!! Scheduler {}: failed to send schedule {:?}", scheduler_index, tmp).as_str());
-                        }
-                        tmp?;
-
-                        // Send empty struct to executor i so that it has somewhere to write its new transaction
-                        // Try to avoid send.await because we are going to wait soon. No point being
-                        //  unscheduled then rescheduled by the runtime if we are immediately going to wait anyway
-                        VmUtils::timestamp(format!("Scheduler {}: sending empty struct to executor {}", scheduler_index, scheduler_index).as_str());
-                        let tmp = send_empty_struct.try_send(empty)
-                            .context("Failed to send empty struct to executor");
-                        if tmp.is_err() {
-                            VmUtils::timestamp(format!("!!!! Scheduler {}: failed to send empty struct {:?}", scheduler_index, tmp).as_str());
-                        }
-                        tmp?;
-                        // send_empty_struct.send(empty).await.
-                        //     context("Failed to send empty struct to executor")?;
-                    }
-
-                    anyhow::Ok(())
+                        anyhow::Ok(())
+                    })
                 })
         }).collect_vec();
 
@@ -2061,26 +2171,33 @@ impl<const A: usize, const P: usize> CoordinatorMixed<A, P> {
 
         let batch_size = batch.len();
         let chunk_size = (batch_size/self.nb_schedulers)+1;
+        let mut nb_sent = 0;
+        let mut nb_collected = 0;
         VmUtils::timestamp("================= vm.execute =========================");
         batch.into_iter()
             .chunks(chunk_size).into_iter()
             .zip(self.scheduler_inputs.iter())
             .try_for_each(|(chunk, sender)| {
-                let backlog = Schedule::with_transactions(chunk.collect_vec(), self.nb_executors);
+                let v = chunk.collect_vec();
+                nb_collected += v.len();
+                let backlog = Schedule::with_transactions(v, self.nb_executors);
+                nb_sent += backlog.transactions.len();
                 sender.try_send(backlog)
                     .context("Failed to send initial backlog")
         })?;
 
         if let Some(mut receive_results) = self.executor_outputs.take() {
-            let handle = tokio::spawn(async move {
+            let handle = thread::spawn(move || block_on(async {
                 let mut nb_executed = 0;
                 let mut results = vec![FunctionResult::Error; batch_size];
 
+                VmUtils::timestamp(format!("--- vm.execute: completion: {}/{}", nb_executed, batch_size).as_str());
                 while nb_executed < batch_size {
                     match receive_results.recv().await {
                         Some((index, res)) => {
                             results[index] = res;
                             nb_executed += 1;
+                            VmUtils::timestamp(format!("--- vm.execute: completion: {}/{}", nb_executed, batch_size).as_str());
                         },
                         None => {
                             return Err(anyhow!("Failed to receive executor outputs"));
@@ -2089,13 +2206,15 @@ impl<const A: usize, const P: usize> CoordinatorMixed<A, P> {
                 }
 
                 Ok((receive_results, results))
-            });
+            }));
 
-            let (receiver, results) = handle.await.unwrap()?;
+            let (receiver, results) = handle.join().unwrap()?;
 
             // Put the receiver back for next execution
             self.executor_outputs = Some(receiver);
-
+            // eprintln!("Result: {:?}", results);
+            // panic!("Collected {} txs, sent {} txs, batch_size {} txs", nb_collected, nb_sent, batch_size);
+            VmUtils::timestamp("----------------- vm.execute done -----------------");
             // TODO Find a way to receive durations from schedulers and executors (... could do this in terminate...)
             let mut vm_result = VmResult::new(
                 results,
@@ -2121,8 +2240,8 @@ impl<const A: usize, const P: usize> CoordinatorMixed<A, P> {
 
         for (executor_index, executor) in self.executor_handles.drain(..).enumerate() {
             VmUtils::timestamp(format!("VM: joining executor {}", executor_index).as_str());
-            executor.await
-                .context("Failed to join executor").unwrap()
+            executor.join().expect("Failed to join executor")
+                // .context("Failed to join executor").unwrap();
                 .context("Executor returned with an error").unwrap();
         }
 
@@ -2131,8 +2250,8 @@ impl<const A: usize, const P: usize> CoordinatorMixed<A, P> {
 
         for (scheduler_index, scheduler) in self.scheduler_handles.drain(..).enumerate() {
             VmUtils::timestamp(format!("VM: joining scheduler {}", scheduler_index).as_str());
-            scheduler.await
-                .context("Failed to join scheduler").unwrap()
+            scheduler.join().expect("Failed to join schedulers")
+                // .context("Failed to join scheduler").unwrap()
                 .context("Scheduler returned with an error").unwrap();
         }
 

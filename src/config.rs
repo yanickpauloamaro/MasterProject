@@ -46,6 +46,7 @@ pub struct BenchmarkConfig {
     pub repetitions: u64,   // For 95% confidence interval
     pub warmup: u64,
     pub seed: Option<u64>,
+    pub graph: bool,
 }
 
 impl ConfigFile for BenchmarkConfig {
@@ -66,6 +67,7 @@ impl Default for BenchmarkConfig {
             repetitions: 1,
             warmup: 1,
             seed: Some(42),
+            graph: false,
         }
     }
 }
@@ -81,6 +83,7 @@ pub struct RunParameter {
     pub repetitions: u64,   // For 95% confidence interval
     pub warmup: u64,
     pub seed: Option<u64>,
+    pub graph: bool,
 }
 
 impl RunParameter {
@@ -93,9 +96,10 @@ impl RunParameter {
         workload: String,
         repetitions: u64,
         warmup: u64,
-        seed: Option<u64>
+        seed: Option<u64>,
+        graph: bool,
     ) -> Self {
-        return Self{ vm_type, nb_schedulers, nb_executors, batch_size, storage_size, workload, repetitions, warmup, seed }
+        return Self{ vm_type, nb_schedulers, nb_executors, batch_size, storage_size, workload, repetitions, warmup, seed, graph }
     }
 }
 

@@ -1,20 +1,36 @@
 {
   "vm_types": [
-    "Sequential"
+    "Mixed"
   ],
   "nb_schedulers": [
-    8
+    4
   ],
   "nb_executors": [
-    1
+    2
   ],
   "batch_sizes": [
     65536
   ],
+  "workloads_0": [
+    "PreviousDHashMap(7, 64, 1024; 0.2, 0.2, 0.0, 0.2)"
+  ],
+  "workloads_1": [
+    "PreviousDHashMap(7, 64, 1024; 0.2, 0.2, 0.2, 0.2)", "PieceDHashMap(7, 64, 1024; 0.2, 0.2, 0.2, 0.2)"
+  ],
+  "workloads_2": [
+    "PreviousDHashMap(7, 64, 16; 0.2, 0.2, 0.2, 0.2)"
+  ],
   "workloads": [
-    "Fibonacci(5)", "Transfer(0.0)", "KeyValue(0.2, 0.2, 0.2, 0.2)"
+    "Transfer(0.0)", "Fibonacci(10)", "PieceDHashMap(7, 64, 1024; 0.2, 0.2, 0.2, 0.2)"
+  ],
+  "workloads_4": [
+    "Transfer(0.0)", "Transfer(0.5)",
+    "Fibonacci(10)",
+    "PreviousDHashMap(7, 64, 1024; 0.2, 0.2, 0.2, 0.2)",
+    "PieceDHashMap(7, 64, 1024; 0.2, 0.2, 0.2, 0.2)"
   ],
   "repetitions": 100,
   "warmup": 0,
-  "seed": 10
+  "seed": 10,
+  "graph": false
 }
