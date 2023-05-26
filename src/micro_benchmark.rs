@@ -1,26 +1,35 @@
+use std::cmp::max;
 // use hwloc2::{Topology, TopologyObject, ObjectType, CpuBindFlags};
 use ahash::AHasher;
 use std::collections::HashMap;
 use hashbrown::HashMap as BrownMap;
-use std::fmt::Debug;
+use std::fmt::{Debug, Formatter};
 use std::hash::BuildHasherDefault;
-use std::mem;
+use std::{fmt, mem};
+use std::iter::Chain;
+use std::path::Display;
+use std::slice::Iter;
+use std::sync::Arc;
 use anyhow::anyhow;
 use core_affinity::CoreId;
 use itertools::Itertools;
 use nohash_hasher::{BuildNoHashHasher, NoHashHasher};
 use rand::prelude::{SliceRandom, StdRng};
 use rand::{RngCore, SeedableRng};
+use rand::distributions::{Distribution, WeightedIndex};
 use tokio::time::{Duration, Instant};
 use tabled::{Table, Tabled};
 use thincollections::thin_map::ThinMap;
 use crate::benchmark::WorkloadUtils;
-use crate::contract::{AccessPattern, AccessType, AtomicFunction, SenderAddress, StaticAddress, Transaction};
+use crate::contract::{AccessPattern, AccessType, AtomicFunction, FunctionParameter, SenderAddress, StaticAddress, Transaction, TransactionType};
+use crate::contract::AtomicFunction::PieceDHashMap;
+use crate::contract::FunctionResult::Another;
+use crate::d_hash_map::{DHashMap, PiecedOperation};
 use crate::key_value::KeyValueOperation;
 use crate::parallel_vm::ParallelVmImmediate;
 use crate::sequential_vm::SequentialVM;
 use crate::utils::mean_ci;
-use crate::vm_utils::{AddressSet, Assignment, Schedule, Scheduling};
+use crate::vm_utils::{AddressSet, Assignment, Schedule, Scheduling, SharedStorage, VmStorage};
 use crate::wip::Word;
 
 //region NUMA latency ------------------------------------------------------------------------------
@@ -729,7 +738,7 @@ pub fn profile_schedule_chunk(batch_size: usize, iter: usize, chunk_fraction: us
     for _ in 0..iter {
         let mut b = batch.clone();
         let a = Instant::now();
-        let (_, postponed, init, main_loop) = computation((0, b));
+        let (scheduled, postponed, init, main_loop) = computation((0, b));
         // println!("{:?} txs were postponed", postponed.len());
         schedule_duration += a.elapsed();
         schedule_init_duration += init;
@@ -1056,5 +1065,783 @@ impl HashMapWrapper for ThinMapAHash {
     }
 }
 //endregion
+
+//endregion
+
+//region Microbenchmarks
+
+//region Scheduling speed (without parallelism)
+pub fn micro_scheduling() {
+    let batch_size: usize = 65536;
+    let storage_size: usize = 100 * batch_size;
+    let seed: u64 = 10;
+    // let fractions = vec![1, 2, 4, 8, 16, 24, 32];
+    // let nb_executors = vec![2, 4, 8, 16, 24, 32];
+    let fractions = vec![1, 2, 4];
+    let nb_executors = vec![4, 8];
+    let nb_repetitions = 1;
+
+    let mut rng = StdRng::seed_from_u64(seed);
+    let mut measurements = vec![Duration::from_secs(0); nb_repetitions];
+
+    // Transfer 0.0 --------------------------------------------------------------------------------
+    let conflict_rate = 0.0;
+    let mut batch_0 = WorkloadUtils::transfer_pairs(storage_size, batch_size, conflict_rate, &mut rng)
+        .iter().enumerate()
+        .map(|(tx_index, pair)| {
+            Transaction {
+                sender: pair.0 as SenderAddress,
+                function: AtomicFunction::Transfer,
+                tx_index,
+                addresses: [pair.0, pair.1],
+                // Transfer loop
+                // addresses: [tx_index as StaticAddress, 1 + tx_index as StaticAddress],
+                params: [2],
+            }
+        }).collect_vec();
+
+
+    // Transfer 0.5 --------------------------------------------------------------------------------
+    let conflict_rate = 0.5;
+    let mut batch_1 = WorkloadUtils::transfer_pairs(storage_size, batch_size, conflict_rate, &mut rng)
+        .iter().enumerate()
+        .map(|(tx_index, pair)| {
+            Transaction {
+                sender: pair.0 as SenderAddress,
+                function: AtomicFunction::Transfer,
+                tx_index,
+                addresses: [pair.0, pair.1],
+                // Transfer loop
+                // addresses: [tx_index as StaticAddress, 1 + tx_index as StaticAddress],
+                params: [2],
+            }
+        }).collect_vec();
+
+    // DHashMap ------------------------------------------------------------------------------------
+    let batch_2 = dhashmap_batch(batch_size, storage_size, &mut rng);
+
+    println!("Scheduling speed =====================================================================");
+    // Scheduling speed for a single schedule
+    println!("Transfer(0.0):");
+    micro_scheduling_batch(&batch_0, &fractions, &nb_executors, nb_repetitions, &mut measurements);
+    println!("Transfer(0.5):");
+    micro_scheduling_batch(&batch_1, &fractions, &nb_executors, nb_repetitions, &mut measurements);
+    println!("PiecedHashMap(7, 64, 64; 0.2, 0.2, 0.2, 0.2):");
+    micro_scheduling_batch(&batch_2, &fractions, &nb_executors, nb_repetitions, &mut measurements);
+    //
+    println!("Scheduling quality (single schedule) =================================================");
+    println!("Transfer(0.0):");
+    micro_scheduling_quality(&batch_0, &fractions, &nb_executors);
+    println!("Transfer(0.5):");
+    micro_scheduling_quality(&batch_1, &fractions, &nb_executors);
+    println!("PiecedHashMap(7, 64, 64; 0.2, 0.2, 0.2, 0.2):");
+    micro_scheduling_quality(&batch_2, &fractions, &nb_executors);
+
+    println!("Scheduling speed and quality (single schedule) =======================================");
+    println!("Transfer(0.5):");
+    let mut storage = VmStorage::new(storage_size);
+    micro_basic_scheduling(&batch_1, &fractions, nb_repetitions, &mut measurements);
+
+    storage.set_storage(200 * nb_repetitions as Word);
+    micro_address_scheduling(&batch_1, &fractions, nb_repetitions, &mut measurements);
+
+    storage.set_storage(200 * nb_repetitions as Word);
+    micro_read_write_scheduling(&batch_1, &fractions, nb_repetitions, &mut measurements);
+
+    storage.set_storage(200 * nb_repetitions as Word);
+    micro_assign_scheduling(&batch_1, &fractions, &nb_executors, nb_repetitions, &mut measurements);
+
+}
+
+fn micro_basic_scheduling<const A: usize, const P: usize>(
+    batch: &Vec<Transaction<A, P>>,
+    fractions: &Vec<usize>,
+    nb_repetitions: usize,
+    measurements: &mut Vec<Duration>
+)
+{
+    let batch_size = batch.len();
+    let mut results = Vec::with_capacity(fractions.len());
+
+    let mut read_only = Vec::with_capacity(batch_size);
+    let mut postponed = Vec::with_capacity(batch_size);
+    for fraction in fractions.iter() {
+        let chunk_size = batch_size/fraction;
+        let mut nb_parallel = 0.0;
+        for i in 0..nb_repetitions {
+            let chunk = Vec::from_iter(batch.iter().take(chunk_size).cloned());
+            chunk.len();
+            let start = Instant::now();
+            BasicScheduling::schedule::<A, P>(&chunk, &mut read_only, &mut postponed);
+            measurements[i] = start.elapsed();
+            nb_parallel = read_only.len() as f64;
+            // println!("\tBasic: Scheduled: {} txs, read_only: {} txs, postponed: {} txs", scheduled.len(), read_only.len(), postponed.len());
+            postponed.truncate(0);
+            read_only.truncate(0);
+        }
+
+        let mean_latency = mean_ci(&measurements).0;
+        let parallelism = nb_parallel/(chunk_size as f64);
+        results.push((parallelism, mean_latency.as_micros(), chunk_size));
+    }
+
+    println!("Basic scheduling: {:.3?}", results);
+}
+
+
+fn micro_address_scheduling<const A: usize, const P: usize>(
+    batch: &Vec<Transaction<A, P>>,
+    fractions: &Vec<usize>,
+    nb_repetitions: usize,
+    measurements: &mut Vec<Duration>,
+)
+{
+    let batch_size = batch.len();
+    let mut results = Vec::with_capacity(fractions.len());
+
+    let mut scheduled = Vec::with_capacity(batch_size);
+    let mut read_only = Vec::with_capacity(batch_size);
+    let mut postponed = Vec::with_capacity(batch_size);
+    for fraction in fractions.iter() {
+        let mut nb_parallel = 0.0;
+        let chunk_size = batch_size/fraction;
+        let mut working_set = AddressSet::with_capacity(2 * A * chunk_size);
+
+        for i in 0..nb_repetitions {
+            let mut chunk = Vec::from_iter(batch.iter().take(chunk_size).cloned());
+
+            let start = Instant::now();
+            AddressScheduling::schedule::<A, P>(&chunk, &mut scheduled, &mut read_only, &mut postponed, &mut working_set);
+            measurements[i] = start.elapsed();
+            nb_parallel = (scheduled.len() + read_only.len()) as f64;
+            // println!("\tMedium: Scheduled: {} txs, read_only: {} txs, postponed: {} txs", scheduled.len(), read_only.len(), postponed.len());
+            scheduled.truncate(0);
+            postponed.truncate(0);
+            read_only.truncate(0);
+            working_set.clear();
+        }
+
+        let mean_latency = mean_ci(&measurements).0;
+        let parallelism = nb_parallel/(chunk_size as f64);
+        results.push((parallelism, mean_latency.as_micros(), chunk_size));
+        // results.push((parallelism, mean_latency.as_micros(), chunk_size, iters));
+    }
+
+    println!("Address scheduling: {:.3?}", results);
+}
+
+fn micro_read_write_scheduling<const A: usize, const P: usize>(
+    batch: &Vec<Transaction<A, P>>,
+    fractions: &Vec<usize>,
+    nb_repetitions: usize,
+    measurements: &mut Vec<Duration>
+)
+{
+    let batch_size = batch.len();
+    let mut results = Vec::with_capacity(fractions.len());
+
+    let mut scheduled = Vec::with_capacity(batch_size);
+    let mut read_only = Vec::with_capacity(batch_size);
+    let mut postponed = Vec::with_capacity(batch_size);
+    for fraction in fractions.iter() {
+        let mut nb_parallel = 0.0;
+        let chunk_size = batch_size/fraction;
+        let mut address_map = HashMap::with_capacity_and_hasher(2 * A * chunk_size, BuildHasherDefault::default());
+
+        for i in 0..nb_repetitions {
+            let transactions = Arc::new(Vec::from_iter(batch.iter().take(chunk_size).cloned()));
+            let mut chunk = (0..chunk_size).collect_vec();
+            let start = Instant::now();
+            ReadWriteScheduling::schedule_chunk_new::<A, P>(
+                &transactions,
+                &mut chunk,
+                &mut scheduled,
+                &mut postponed,
+                &mut address_map,
+                &mut read_only
+            );
+            measurements[i] = start.elapsed();
+            nb_parallel = (scheduled.len() + read_only.len()) as f64;
+            // println!("\tMedium: Scheduled: {} txs, read_only: {} txs, postponed: {} txs", scheduled.len(), read_only.len(), postponed.len());
+            scheduled.truncate(0);
+            postponed.truncate(0);
+            read_only.truncate(0);
+            address_map.clear();
+        }
+
+        let mean_latency = mean_ci(&measurements).0;
+        let parallelism = nb_parallel/(chunk_size as f64);
+        results.push((parallelism, mean_latency.as_micros(), chunk_size));
+    }
+
+    println!("Read/Write scheduling: {:.3?}", results);
+}
+
+fn micro_assign_scheduling<const A: usize, const P: usize>(
+    batch: &Vec<Transaction<A, P>>,
+    fractions: &Vec<usize>,
+    nb_executors: &Vec<usize>,
+    nb_repetitions: usize,
+    measurements: &mut Vec<Duration>
+)
+{
+    let batch_size = batch.len();
+    let mut results = Vec::with_capacity(fractions.len());
+
+    let mut new_reads = Vec::with_capacity(A * batch_size);
+    let mut new_writes = Vec::with_capacity(A * batch_size);
+
+    for nb_workers in nb_executors.iter() {
+        let mut schedule = Schedule::new(batch_size, *nb_workers);
+        for fraction in fractions.iter() {
+            let mut nb_parallel = 0.0;
+            let chunk_size = batch_size/fraction;
+            let mut address_map = HashMap::with_capacity_and_hasher(2 * A * chunk_size, BuildHasherDefault::default());
+            for i in 0..nb_repetitions {
+                schedule.transactions.extend(batch.iter().take(chunk_size).cloned());
+                let start = Instant::now();
+                Scheduling::schedule_chunk_assign::<A, P>(
+                    &mut address_map,
+                    &mut new_reads,
+                    &mut new_writes,
+                    &mut schedule,
+                );
+                measurements[i] = start.elapsed();
+                nb_parallel = (schedule.nb_assigned_tx + schedule.read_only.len()) as f64;
+                // println!("\tAssigned: Scheduled: {} txs, read_only: {} txs, postponed: {} txs",
+                //          schedule.nb_assigned_tx, schedule.read_only.len(), schedule.postponed.len() + schedule.exclusive.len());
+                new_reads.truncate(0);
+                new_writes.truncate(0);
+                address_map.clear();
+                schedule.clear();
+            }
+
+            let mean_latency = mean_ci(&measurements).0;
+            let parallelism = nb_parallel/(chunk_size as f64);
+            results.push((parallelism, mean_latency.as_micros(), chunk_size));
+        }
+
+        println!("Assign scheduling (for {} executors): {:.3?}", nb_workers, results);
+        results.truncate(0);
+    }
+}
+
+// -------------------------------------------------------------------------------------------------
+// TODO compute average nb_scheduled, nb_read_only, nb_postponed
+fn micro_scheduling_batch<const A: usize, const P: usize>(
+    batch: &Vec<Transaction<A, P>>,
+    fractions: &Vec<usize>,
+    nb_executors: &Vec<usize>,
+    nb_repetitions: usize,
+    measurements: &mut Vec<Duration>
+)
+{
+    let batch_size = batch.len();
+    let mut basic_scheduling = Vec::with_capacity(fractions.len()); // ------------
+    let mut postponed = Vec::with_capacity(batch_size);
+    let mut read_only = Vec::with_capacity(batch_size);
+    for fraction in fractions.iter() {
+        let chunk_size = batch_size/fraction;
+        for i in 0..nb_repetitions {
+            let chunk = Vec::from_iter(batch.iter().take(chunk_size).cloned());
+            chunk.len();
+            let start = Instant::now();
+            // let (s, p) = Scheduling::schedule_chunk_old::<A, P>(chunk, scheduled, postponed, working_set);
+            BasicScheduling::schedule::<A, P>(&chunk, &mut read_only, &mut postponed);
+            measurements[i] = start.elapsed();
+
+            // println!("\tBasic: Scheduled: {} txs, read_only: {} txs, postponed: {} txs", scheduled.len(), read_only.len(), postponed.len());
+            postponed.truncate(0);
+            read_only.truncate(0);
+        }
+        basic_scheduling.push(mean_ci(&measurements));
+    }
+    println!("Basic scheduling: {:?}", basic_scheduling);
+    println!();
+
+    let mut medium_scheduling = Vec::with_capacity(fractions.len()); // ------------
+    let mut scheduled = Vec::with_capacity(batch_size);
+    let mut postponed = Vec::with_capacity(batch_size);
+    let mut read_only = Vec::with_capacity(batch_size);
+    for fraction in fractions.iter() {
+        let chunk_size = batch_size/fraction;
+        let mut working_set = AddressSet::with_capacity(2 * A * chunk_size);
+        for i in 0..nb_repetitions {
+            let chunk = Vec::from_iter(batch.iter().take(chunk_size).cloned());
+            chunk.len();
+            let start = Instant::now();
+            // let (s, p) = Scheduling::schedule_chunk_old::<A, P>(chunk, scheduled, postponed, working_set);
+            AddressScheduling::schedule::<A, P>(&chunk, &mut scheduled, &mut read_only, &mut postponed, &mut working_set);
+            measurements[i] = start.elapsed();
+
+            // println!("\tMedium: Scheduled: {} txs, read_only: {} txs, postponed: {} txs", scheduled.len(), read_only.len(), postponed.len());
+            scheduled.truncate(0);
+            postponed.truncate(0);
+            read_only.truncate(0);
+            working_set.clear();
+        }
+        medium_scheduling.push(mean_ci(&measurements));
+    }
+    println!("Medium scheduling: {:?}", medium_scheduling);
+    println!();
+
+    let mut rw_scheduling = Vec::with_capacity(fractions.len()); // ---------------
+    let mut scheduled = Vec::with_capacity(batch_size);
+    let mut postponed = Vec::with_capacity(batch_size);
+    let mut read_only = Vec::with_capacity(batch_size);
+    for fraction in fractions.iter() {
+        let chunk_size = batch_size/fraction;
+        let mut address_map = HashMap::with_capacity_and_hasher(2 * A * chunk_size, BuildHasherDefault::default());
+        for i in 0..nb_repetitions {
+            let transactions = Arc::new(Vec::from_iter(batch.iter().take(chunk_size).cloned()));
+            let mut chunk = (0..chunk_size).collect_vec();
+            let start = Instant::now();
+            ReadWriteScheduling::schedule_chunk_new::<A, P>(
+                &transactions,
+                &mut chunk,
+                &mut scheduled,
+                &mut postponed,
+                &mut address_map,
+                &mut read_only
+            );
+            measurements[i] = start.elapsed();
+            // println!("\tR/W: Scheduled: {} txs, read_only: {} txs, postponed: {} txs", scheduled.len(), read_only.len(), postponed.len());
+
+            scheduled.truncate(0);
+            postponed.truncate(0);
+            read_only.truncate(0);
+            address_map.clear();
+        }
+        rw_scheduling.push(mean_ci(&measurements));
+    }
+    println!("Read/Write scheduling: {:?}", rw_scheduling);
+    println!();
+
+    let mut assign_scheduling = Vec::with_capacity(fractions.len());
+    let mut new_reads = Vec::with_capacity(A * batch_size);
+    let mut new_writes = Vec::with_capacity(A * batch_size);
+    for nb_executor in nb_executors {
+        let mut schedule = Schedule::new(batch_size, *nb_executor);
+        for fraction in fractions.iter() {
+            let chunk_size = batch_size/fraction;
+            let mut address_map = HashMap::with_capacity_and_hasher(2 * A * chunk_size, BuildHasherDefault::default());
+            for i in 0..nb_repetitions {
+                schedule.transactions.extend(batch.iter().take(chunk_size).cloned());
+                let start = Instant::now();
+                Scheduling::schedule_chunk_assign::<A, P>(
+                    &mut address_map,
+                    &mut new_reads,
+                    &mut new_writes,
+                    &mut schedule,
+                );
+                measurements[i] = start.elapsed();
+                 // println!("\tAssigned: Scheduled: {} txs, read_only: {} txs, postponed: {} txs",
+                 //          schedule.nb_assigned_tx, schedule.read_only.len(), schedule.postponed.len() + schedule.exclusive.len());
+                new_reads.truncate(0);
+                new_writes.truncate(0);
+                address_map.clear();
+                schedule.clear();
+            }
+            assign_scheduling.push(mean_ci(&measurements));
+        }
+        println!("Assignment scheduling ({} executors): {:?}", nb_executor, assign_scheduling);
+        // println!();
+        assign_scheduling.truncate(0);
+    }
+
+    println!();
+}
+
+fn micro_scheduling_quality<const A: usize, const P: usize>(
+    batch: &Vec<Transaction<A, P>>,
+    fractions: &Vec<usize>,
+    nb_executors: &Vec<usize>,
+)
+{
+    let batch_size = batch.len();
+    let mut basic_scheduling = Vec::with_capacity(fractions.len()); // ------------
+    let mut postponed = Vec::with_capacity(batch_size);
+    let mut read_only = Vec::with_capacity(batch_size);
+    for fraction in fractions.iter() {
+        let chunk_size = batch_size/fraction;
+        let chunk = Vec::from_iter(batch.iter().take(chunk_size).cloned());
+        chunk.len();
+        BasicScheduling::schedule::<A, P>(&chunk, &mut read_only, &mut postponed);
+        // println!("\tBasic: Scheduled: {} txs, read_only: {} txs, postponed: {} txs", scheduled.len(), read_only.len(), postponed.len());
+
+        let nb_parallel = read_only.len() as f64;
+        basic_scheduling.push(nb_parallel/(chunk_size as f64));
+        postponed.truncate(0);
+        read_only.truncate(0);
+    }
+    println!("Basic scheduling: {:.2?}", basic_scheduling);
+    println!();
+
+    let mut medium_scheduling = Vec::with_capacity(fractions.len()); // ------------
+    let mut scheduled = Vec::with_capacity(batch_size);
+    let mut postponed = Vec::with_capacity(batch_size);
+    let mut read_only = Vec::with_capacity(batch_size);
+    for fraction in fractions.iter() {
+        let chunk_size = batch_size/fraction;
+        let mut working_set = AddressSet::with_capacity(2 * A * chunk_size);
+        let chunk = Vec::from_iter(batch.iter().take(chunk_size).cloned());
+        AddressScheduling::schedule::<A, P>(&chunk, &mut scheduled, &mut read_only, &mut postponed, &mut working_set);
+        // println!("\tMedium: Scheduled: {} txs, read_only: {} txs, postponed: {} txs", scheduled.len(), read_only.len(), postponed.len());
+        let nb_parallel = (scheduled.len() + read_only.len()) as f64;
+        medium_scheduling.push(nb_parallel/(chunk_size as f64));
+        scheduled.truncate(0);
+        postponed.truncate(0);
+        read_only.truncate(0);
+        working_set.clear();
+    }
+    println!("Medium scheduling: {:.2?}", medium_scheduling);
+    println!();
+
+    let mut rw_scheduling = Vec::with_capacity(fractions.len()); // ---------------
+    let mut scheduled = Vec::with_capacity(batch_size);
+    let mut postponed = Vec::with_capacity(batch_size);
+    let mut read_only = Vec::with_capacity(batch_size);
+    for fraction in fractions.iter() {
+        let chunk_size = batch_size/fraction;
+        let mut address_map = HashMap::with_capacity_and_hasher(2 * A * chunk_size, BuildHasherDefault::default());
+        let transactions = Arc::new(Vec::from_iter(batch.iter().take(chunk_size).cloned()));
+        let mut chunk = (0..chunk_size).collect_vec();
+        ReadWriteScheduling::schedule_chunk_new::<A, P>(
+            &transactions,
+            &mut chunk,
+            &mut scheduled,
+            &mut postponed,
+            &mut address_map,
+            &mut read_only
+        );
+        let nb_parallel = (scheduled.len() + read_only.len()) as f64;
+        rw_scheduling.push(nb_parallel/(chunk_size as f64));
+        scheduled.truncate(0);
+        postponed.truncate(0);
+        read_only.truncate(0);
+        address_map.clear();
+
+    }
+    println!("Read/Write scheduling: {:.2?}", rw_scheduling);
+    println!();
+
+    let mut assign_scheduling = Vec::with_capacity(fractions.len());
+    let mut new_reads = Vec::with_capacity(A * batch_size);
+    let mut new_writes = Vec::with_capacity(A * batch_size);
+    for nb_executor in nb_executors {
+        let mut schedule = Schedule::new(batch_size, *nb_executor);
+        for fraction in fractions.iter() {
+            let chunk_size = batch_size/fraction;
+            let mut address_map = HashMap::with_capacity_and_hasher(2 * A * chunk_size, BuildHasherDefault::default());
+            schedule.transactions.extend(batch.iter().take(chunk_size).cloned());
+            Scheduling::schedule_chunk_assign::<A, P>(
+                &mut address_map,
+                &mut new_reads,
+                &mut new_writes,
+                &mut schedule,
+            );
+            let nb_parallel = (schedule.nb_assigned_tx + schedule.read_only.len()) as f64;
+            assign_scheduling.push(nb_parallel/(chunk_size as f64));
+            schedule.clear();
+            new_reads.truncate(0);
+            new_writes.truncate(0);
+            address_map.clear();
+        }
+        println!("Assignment scheduling ({} executors): {:.2?}", nb_executor, assign_scheduling);
+        assign_scheduling.truncate(0);
+    }
+
+    println!();
+}
+
+struct BasicScheduling;
+impl BasicScheduling {
+    pub fn schedule<const A: usize, const P: usize>(
+        chunk: &Vec<Transaction<A, P>>,
+        read_only: &mut Vec<usize>,
+        postponed: &mut Vec<usize>,
+        // a: Instant,
+    ) {
+        for (tx_index, tx) in chunk.iter().enumerate() {
+            match tx.tpe() {
+                TransactionType::ReadOnly => {
+                    read_only.push(tx_index);
+                    continue;
+                },
+                _ => {
+                    postponed.push(tx_index);
+                    continue;
+                },
+            }
+        }
+    }
+}
+
+struct AddressScheduling;
+impl AddressScheduling {
+    pub fn schedule<const A: usize, const P: usize>(
+        chunk: &Vec<Transaction<A, P>>,
+        scheduled: &mut Vec<usize>,
+        read_only: &mut Vec<usize>,
+        postponed: &mut Vec<usize>,
+        working_set: &mut AddressSet,
+        // a: Instant,
+    ) {
+        'backlog: for (tx_index, tx) in chunk.iter().enumerate() {
+            match tx.tpe() {
+                TransactionType::ReadOnly => {
+                    read_only.push(tx_index);
+                    continue;
+                },
+                TransactionType:: Exclusive => {
+                    postponed.push(tx_index);
+                    continue;
+                },
+                _ => {
+
+                }
+            }
+
+            let (possible_reads, possible_writes) = tx.accesses();
+            let reads = possible_reads.as_ref().map_or([].as_slice(), |inside| inside.as_slice());
+            let writes = possible_writes.as_ref().map_or([].as_slice(), |inside| inside.as_slice());
+            'accesses: for access in reads.iter().chain(writes.iter()) {
+                match access {
+                    AccessPattern::Address(addr) => {
+                        if !working_set.insert(*addr) {
+                            // Can't add tx to schedule
+                            postponed.push(tx_index);
+                            continue 'backlog;
+                        }
+                    },
+                    AccessPattern::Range(from, to) => {
+                        assert!(from < to);
+                        'range: for addr in (*from)..(*to) {
+                            if !working_set.insert(addr) {
+                                // Can't add tx to schedule
+                                postponed.push(tx_index);
+                                continue 'backlog;
+                            }
+                        }
+                    },
+                    AccessPattern::All => {
+                        postponed.push(tx_index);
+                        continue 'backlog;
+                    },
+                    AccessPattern::Done => {
+                        // break 'accesses;
+                    }
+                }
+            }
+
+            scheduled.push(tx_index)
+        }
+    }
+}
+
+type Map = HashMap<StaticAddress, AccessType, BuildHasherDefault<AHasher>>;
+struct ReadWriteScheduling;
+impl ReadWriteScheduling {
+    pub fn schedule_chunk_new<const A: usize, const P: usize>(
+        transactions: &Arc<Vec<Transaction<A, P>>>,
+        mut chunk: &mut Vec<usize>,
+        mut scheduled: &mut Vec<usize>,
+        mut postponed: &mut Vec<usize>,
+        mut address_map: &mut Map,
+        read_only: &mut Vec<usize>
+    )
+    {
+
+        let mut remainder = 0;
+
+        let can_read = |addr: StaticAddress, map: &mut Map| {
+            let entry = map.entry(addr).or_insert(AccessType::Read);
+            *entry == AccessType::Read
+        };
+        let can_write = |addr: StaticAddress, map: &mut Map| {
+            let entry = map.entry(addr).or_insert(AccessType::TryWrite);
+            if *entry == AccessType::TryWrite {
+                *entry = AccessType::Write;
+                true
+            } else {
+                false
+            }
+        };
+
+        // let init_duration = a.elapsed();
+        // let mut base_case_duration = Duration::from_secs(0);
+        // let mut reads_duration = Duration::from_secs(0);
+        // let mut writes_duration = Duration::from_secs(0);
+
+        'backlog: for tx_index in chunk.drain(0..) {
+            let tx = transactions.get(tx_index).unwrap();
+
+            match tx.tpe() {
+                TransactionType::ReadOnly => {
+                    read_only.push(tx_index);
+                    continue;
+                },
+                TransactionType:: Exclusive => {
+                    postponed.push(tx_index);
+                    continue;
+                },
+                TransactionType::Writes => {
+                }
+            }
+
+            remainder += 1;
+            // let base_case_start = Instant::now();
+            let (possible_reads, possible_writes) = tx.accesses();
+            let reads = possible_reads.as_ref().map_or([].as_slice(), |inside| inside.as_slice());
+            let writes = possible_writes.as_ref().map_or([].as_slice(), |inside| inside.as_slice());
+
+            // Tx without any memory accesses ------------------------------------------------------
+            if writes.is_empty() {
+                read_only.push(tx_index);
+                continue 'backlog;
+            }
+            // base_case_duration += base_case_start.elapsed();
+
+            // NB: A tx might be postponed after having some of its addresses added to the address set
+            // It is probably too expensive to rollback those changes. TODO Check
+            // Start with reads because they are less problematic if the tx is postponed
+            // Process reads -----------------------------------------------------------------------
+            // let read_start = Instant::now();
+            'reads: for read in reads {
+                match read {
+                    AccessPattern::Address(addr) => {
+                        if !can_read(*addr, &mut address_map) {
+                            postponed.push(tx_index);
+                            // reads_duration += read_start.elapsed();
+                            continue 'backlog;
+                        }
+                    },
+                    AccessPattern::Range(from, to) => {
+                        assert!(from < to);
+                        'range: for addr in (*from)..(*to) {
+                            if !can_read(addr, &mut address_map) {
+                                postponed.push(tx_index);
+                                // reads_duration += read_start.elapsed();
+                                continue 'backlog;
+                            }
+                        }
+                    },
+                    AccessPattern::All => {
+                        postponed.push(tx_index);
+                        continue 'backlog;
+                    },
+                    AccessPattern::Done => {
+                        break 'reads;
+                    }
+                }
+            }
+            // reads_duration += read_start.elapsed();
+
+            // Process writes ----------------------------------------------------------------------
+            // let writes_start = Instant::now();
+            'writes: for write in writes {
+                match write {
+                    AccessPattern::Address(addr) => {
+                        if !can_write(*addr, &mut address_map) {
+                            postponed.push(tx_index);
+                            // writes_duration += writes_start.elapsed();
+                            continue 'backlog;
+                        }
+                    },
+                    AccessPattern::Range(from, to) => {
+                        assert!(from < to);
+                        'range: for addr in (*from)..(*to) {
+                            if !can_write(addr, &mut address_map) {
+                                postponed.push(tx_index);
+                                // writes_duration += writes_start.elapsed();
+                                continue 'backlog;
+                            }
+                        }
+                    },
+                    AccessPattern::All => {
+                        postponed.push(tx_index);
+                        continue 'backlog;
+                    },
+                    AccessPattern::Done => {
+                        // writes_duration += writes_start.elapsed();
+                        break 'writes;
+                    }
+                }
+            }
+            // writes_duration += writes_start.elapsed();
+
+            // Transaction can be executed in parallel
+            scheduled.push(tx_index);
+        }
+
+        // let total = a.elapsed();
+        // println!("Scheduled {:?}", scheduled);
+        // println!("Scheduled: {}, postponed: {}, took {:?}", scheduled.len(), postponed.len(), total);
+        // total, (init, base_case, reads, writes)
+        // println!("\ttook {:.3?} \t({:?} µs, {:?} µs, {:?} µs, {:?} µs)", total, init_duration.as_micros(), base_case_duration.as_micros(), reads_duration.as_micros(), writes_duration.as_micros());
+        // (scheduled, postponed)
+    }
+}
+
+fn dhashmap_batch(batch_size: usize, storage_size: usize, rng: &mut StdRng) -> Vec<Transaction<5, 8>> {
+    let weights = [0.2, 0.2, 0.2, 0.2, ];
+    let addresses = [0, 0, 0, 0, 0];
+    let operations = [
+        PieceDHashMap(PiecedOperation::GetComputeAndFind),
+        PieceDHashMap(PiecedOperation::InsertComputeAndFind),
+        PieceDHashMap(PiecedOperation::RemoveComputeAndFind),
+        PieceDHashMap(PiecedOperation::HasComputeAndFind),
+    ];
+    let nb_buckets = 64;
+    let bucket_capacity_elems = 64;
+    let max_nb_buckets = (nb_buckets << 4) as usize;
+    let max_nb_keys = max_nb_buckets * bucket_capacity_elems as usize;
+    let nb_keys = (2 * max_nb_keys) / 3;
+    let key_space = (0..nb_keys).map(|key| key as FunctionParameter).collect_vec();
+
+    let map_size = |nb_buckets: usize, bucket_capacity_elems: usize, entry_size: usize| {
+        (2 + nb_buckets + nb_buckets * (1 + (bucket_capacity_elems as usize) * entry_size))
+    };
+
+    let mut storage = VmStorage::new(max(
+        map_size(nb_buckets, bucket_capacity_elems, ENTRY_SIZE),
+        storage_size
+    ));
+    DHashMap::init::<ENTRY_SIZE>(&mut storage.content, nb_buckets, bucket_capacity_elems);
+
+    const ENTRY_SIZE: usize = 8;
+    let dist2 = WeightedIndex::new(weights).unwrap();
+    let mut tx_params = [0 as FunctionParameter; ENTRY_SIZE];
+    (0..batch_size).map(|tx_index| {
+        let op = operations[dist2.sample(rng)];
+        let key = *key_space.choose(rng).unwrap_or(&0);
+
+        for i in 0..ENTRY_SIZE { tx_params[i] = (ENTRY_SIZE - i) as FunctionParameter; }
+        tx_params[0] = key;
+
+        let tx = Transaction {
+            sender: tx_index as SenderAddress,
+            function: op,
+            tx_index,
+            addresses,
+            params: tx_params,
+        };
+
+        unsafe {
+            match tx.function.execute(tx, storage.get_shared()) {
+                Another(generated) => generated,
+                _ => panic!()
+            }
+        }
+
+    }).collect_vec()
+}
+//endregion
+
+
+//region Parallel scheduling (tokio vs rayon vs threads)
+//endregion
+
+
 
 //endregion
