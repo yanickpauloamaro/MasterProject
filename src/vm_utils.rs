@@ -21,7 +21,7 @@ use futures::executor::block_on;
 use itertools::Itertools;
 use serde::{Deserialize, Serialize};
 use thincollections::thin_set::ThinSet;
-use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender, Sender as TokioSender};
+use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender, Sender as TokioSender, Receiver as TokioReceiver};
 use tokio::task::{JoinHandle as TokioHandle, spawn_blocking};
 // use tokio::time::Instant;
 
@@ -1434,6 +1434,7 @@ impl<const A: usize, const P: usize> Coordinator<A, P> {
     }
 }
 //endregion coordinator
+
 #[derive(Clone, Debug)]
 enum ScheduleType {
     ReadOnly,
@@ -1514,6 +1515,377 @@ impl<const A: usize, const P: usize> fmt::Display for Schedule<A, P> {
         write!(f, "}}")
     }
 }
+
+#[derive(Debug)]
+enum ScheduleTask<const A: usize, const P: usize> {
+    Exclusive(Arc<Schedule<A, P>>),
+    Assigned(Arc<Schedule<A, P>>),
+    ReadOnly(Arc<Vec<Schedule<A, P>>>),
+}
+
+//region New scheduling + collect
+pub struct LastVM<const A: usize, const P: usize> {
+    nb_schedulers: usize,
+    schedules: Option<Vec<Schedule<A, P>>>,
+    scheduler_inputs: Vec<TokioSender<Schedule<A, P>>>,
+    scheduler_outputs: Vec<TokioReceiver<Arc<Schedule<A, P>>>>,
+    scheduler_durations: Vec<Arc<Mutex<Duration>>>,
+    scheduler_handles: Vec<JoinHandle<anyhow::Result<()>>>,
+
+    nb_executors: usize,
+    executor_inputs: Vec<TokioSender<ScheduleTask<A, P>>>,
+    ready_signals: Vec<TokioReceiver<()>>,
+    executor_outputs: Vec<Arc<Mutex<(
+        Vec<Transaction<A, P>>,
+        Vec<(usize, FunctionResult<A, P>)
+    >)>>>,
+    executor_durations: Vec<Arc<Mutex<Duration>>>,
+    executor_handles: Vec<JoinHandle<anyhow::Result<()>>>,
+
+    stop_signal: tokio::sync::broadcast::Sender<()>,
+
+    storage: VmStorage
+}
+
+impl<const A: usize, const P: usize> LastVM<A, P> {
+    pub fn new(batch_size: usize, storage_size: usize, nb_schedulers: usize, nb_executors: usize) -> Self {
+        assert!(nb_schedulers >= 1);
+        assert!(nb_executors >= 1);
+
+        let mut storage = VmStorage::new(storage_size);
+
+        let chunk_size = (batch_size/nb_schedulers) + 1;
+        let mut schedules = (0..nb_schedulers).map(|scheduler_index| {
+            Schedule::new(chunk_size, nb_executors)
+        }).collect_vec();
+
+        let (stop_signal_send, stop_signal_recv) = tokio::sync::broadcast::channel(1);
+
+        // Prepare schedulers ----------------------------------------------------------------------
+        let mut scheduler_inputs = Vec::with_capacity(nb_schedulers);
+        let mut scheduler_outputs = Vec::with_capacity(nb_schedulers);
+        let mut scheduler_durations = Vec::with_capacity(nb_schedulers);
+        let mut scheduler_handles = Vec::with_capacity(nb_schedulers);
+
+        for i in 0..nb_schedulers {
+            let (input_send, input_recv) = tokio::sync::mpsc::channel(1);
+            scheduler_inputs.push(input_send);
+
+            let (output_send, output_recv) = tokio::sync::mpsc::channel(1);
+            scheduler_outputs.push(output_recv);
+
+            let scheduling_duration = Arc::new(Mutex::new(Duration::from_secs(0)));
+            scheduler_durations.push(scheduling_duration.clone());
+
+            let stop_signal = stop_signal_send.subscribe();
+
+            scheduler_handles.push(thread::spawn(move || {
+                let scheduler_index = i;
+
+                // TODO Pin to core?
+                // let pinned = core_affinity::set_for_current(CoreId{ id: scheduler_index });
+                // if !pinned {
+                //     return Err(anyhow!("Unable to pin to scheduler core to CPU #{}", scheduler_index));
+                // }
+
+                block_on(async {
+                    let mut input = input_recv;
+                    let output = output_send;
+                    let mut stop_signal = stop_signal;
+                    let scheduling_duration: Arc<Mutex<Duration>> = scheduling_duration;
+
+                    let address_map: HashMap<StaticAddress, AccessType, BuildHasherDefault<AHasher>> = HashMap::with_capacity_and_hasher(A * chunk_size, BuildHasherDefault::default());
+
+                    loop {
+                        let to_schedule = tokio::select! {
+                            received = input.recv() => {
+                                received.ok_or(anyhow!("Scheduler {}: Failed to receive new transactions", scheduler_index))?
+                            },
+                            signal = stop_signal.recv() => {
+                                return signal.map_err(|err| anyhow!("Scheduler {}: Failed to receive stop signal", scheduler_index));
+                            }
+                        };
+
+                        let start = Instant::now();
+
+                        // TODO Clear address_map
+                        // TODO Schedule
+
+                        let schedule = Arc::new(to_schedule);
+                        output.send(schedule).await
+                            .context(format!("Scheduler {}: Failed to send schedule", scheduler_index))?;
+
+                        *scheduling_duration.lock().unwrap() += start.elapsed();
+                    }
+                })
+            }));
+        }
+
+        // Prepare executors -----------------------------------------------------------------------
+        let mut executor_inputs = Vec::with_capacity(nb_executors);
+        let mut executor_ready_signals = Vec::with_capacity(nb_executors);
+        let mut executor_outputs = Vec::with_capacity(nb_executors);
+        let mut executor_durations = Vec::with_capacity(nb_executors);
+        let mut executor_handles = Vec::with_capacity(nb_executors);
+
+        for j in 0..nb_executors {
+
+            let (input_send, input_recv) = tokio::sync::mpsc::channel(1);
+            executor_inputs.push(input_send);
+
+            let (ready_signal_send, ready_signal_recv) = tokio::sync::mpsc::channel(1);
+            executor_ready_signals.push(ready_signal_recv);
+
+            let new_txs = Vec::with_capacity(chunk_size);
+            let tx_results = Vec::with_capacity(chunk_size);
+            let outputs = Arc::new(Mutex::new((new_txs, tx_results)));
+            executor_outputs.push(outputs.clone());
+
+            let exec_duration = Arc::new(Mutex::new(Duration::from_secs(0)));
+            executor_durations.push(exec_duration.clone());
+
+            let stop_signal = stop_signal_send.subscribe();
+
+            let storage = storage.get_shared();
+
+            executor_handles.push(thread::spawn(move || {
+                let executor_index = nb_schedulers + j;
+
+                // TODO Pin to core?
+                // let pinned = core_affinity::set_for_current(CoreId{ id: executor_index });
+                // if !pinned {
+                //     return Err(anyhow!("Unable to pin to executor core to CPU #{}", executor_index));
+                // }
+
+                block_on(async {
+                    let mut input = input_recv;
+                    let mut output = outputs;
+                    let ready_signal = ready_signal_send;
+                    let exec_duration: Arc<Mutex<Duration>> = exec_duration;
+                    let storage = storage;
+                    let mut stop_signal = stop_signal;
+
+                    loop {
+                        let schedule = tokio::select! {
+                            received = input.recv() => {
+                                received.ok_or(anyhow!("Executor {}: Failed to receive schedule", executor_index))?
+                            },
+                            signal = stop_signal.recv() => {
+                                return signal.map_err(|err| anyhow!("Executor {}: Failed to receive stop signal", executor_index));
+                            }
+                        };
+
+                        // Execution
+                        let elapsed = {
+                            let start = Instant::now();
+                            /* TODO Put output into an Option so that is can be acquired
+                                => can pass new_txs and tx_results to Executor::execute
+                             */
+                            let mut guard = output.lock()
+                                .map_err(|err| anyhow!("Executor {}: Failed to acquire lock on own output", executor_index))?;
+
+                            // TODO Execute schedule
+
+                            start.elapsed()
+                        };
+
+                        *exec_duration.lock().unwrap() += elapsed;
+
+                        // Only send signal once you have released the locks
+                        ready_signal.send(()).await
+                            .context(format!("Executor {}: Failed to send ready signal", executor_index))?;
+                    }
+                })
+            }));
+        }
+
+        Self {
+            nb_schedulers,
+            schedules: Some(schedules),
+            scheduler_inputs,
+            scheduler_outputs,
+            scheduler_durations,
+            scheduler_handles,
+
+            nb_executors,
+            executor_inputs,
+            ready_signals: executor_ready_signals,
+            executor_outputs,
+            executor_durations,
+            executor_handles,
+
+            storage,
+            stop_signal: stop_signal_send,
+        }
+    }
+
+    pub async fn execute(&mut self, batch: Vec<Transaction<A,P>>) -> anyhow::Result<VmResult<A, P>> {
+        VmUtils::timestamp("================= vm.execute =================");
+        let batch_size = batch.len();
+        let mut results = vec![FunctionResult::Error; batch_size];
+
+        let chunk_size = (batch_size/self.nb_schedulers) + 1;
+        let mut schedules = self.schedules.take().unwrap();
+
+        let mut nb_committed = 0;
+        let mut backlog = batch;
+
+        // TODO Alternative stop condition: backlog.is_empty();
+        'main_loop: while nb_committed < batch_size {
+            VmUtils::timestamp("================= vm.execute: Send transactions to schedulers =================");
+            {
+                let mut to_schedule = backlog.drain(..);
+                for (scheduler_index, scheduler_input) in self.scheduler_inputs.iter_mut().enumerate() {
+                    let mut schedule = schedules.pop().unwrap();
+
+                    // Ensure the schedule is empty before the scheduler writes to it
+                    schedule.clear();
+
+                    schedule.transactions.extend(to_schedule.by_ref().take(chunk_size));
+                    scheduler_input
+                        .try_send(schedule)
+                        .context(format!("Failed to send initial backlog to scheduler {}", scheduler_index))?;
+                }
+                assert_eq!(to_schedule.len(), 0);
+            }
+            assert!(backlog.is_empty());
+
+            VmUtils::timestamp("================= vm.execute: execute exclusive and assigned transactions =================");
+            let mut has_read_only = false;
+            for (scheduler_index, scheduler_output) in self.scheduler_outputs.iter_mut().enumerate() {
+                let arc_schedule = scheduler_output.recv().await
+                    .context(format!("Failed to receive schedule from scheduler {}", scheduler_index))?;
+
+                if !arc_schedule.exclusive.is_empty() {
+                    VmUtils::timestamp(format!(
+                        "---------------- vm.execute: executing exclusive txs of schedule {} -----------------------",
+                        scheduler_index
+                    ).as_str());
+
+                    // Arc of schedule to executor 0
+                    self.executor_inputs[0]
+                        .send(ScheduleTask::Exclusive(arc_schedule.clone())).await
+                        .context("Failed to send input to executor 0")?;
+
+                    // Wait for ready from executor 0
+                    self.ready_signals[0]
+                        .recv().await
+                        .context("Failed to receive ready signal from executor 0")?;
+                }
+
+                if !(arc_schedule.nb_assigned_tx == 0) {
+                    VmUtils::timestamp(format!(
+                        "---------------- vm.execute: executing assigned txs of schedule {} -----------------------",
+                        scheduler_index
+                    ).as_str());
+
+                    for (executor_index, executor_input) in self.executor_inputs.iter_mut().enumerate() {
+                        executor_input
+                            .send(ScheduleTask::Assigned(arc_schedule.clone())).await
+                            .context(format!("Failed to send start signal to executor {}", executor_index))?;
+                    }
+
+                    for (executor_index, ready_signal) in self.ready_signals.iter_mut().enumerate() {
+                        ready_signal
+                            .recv().await
+                            .context(format!("Failed to receive ready signal from executor {}", executor_index))?;
+                    }
+                }
+
+                if !arc_schedule.read_only.is_empty() {
+                    has_read_only = true;
+                }
+
+                // Add postponed transactions back into backlog
+                for tx_index in arc_schedule.postponed.iter() {
+                    let postponed_tx = &arc_schedule.transactions[*tx_index];
+                    backlog.push(postponed_tx.clone());
+                }
+
+                // Take schedule out of Arc (should be the only one owning it)
+                let schedule = Arc::try_unwrap(arc_schedule)
+                    .map_err(|err| anyhow!("Unable to take ownership of schedule {}", scheduler_index))?;
+                schedules.push(schedule);
+            }
+
+            VmUtils::timestamp("---------------- vm.execute: execute read-only txs of all schedules -----------------------");
+            if has_read_only {
+                let read_only = Arc::new(schedules);
+                for (executor_index, executor_input) in self.executor_inputs.iter_mut().enumerate() {
+                    executor_input
+                        .send(ScheduleTask::ReadOnly(read_only.clone())).await
+                        .context(format!("Coordinator: Failed to send start signal to executor {}", executor_index))?;
+                }
+
+                for (executor_index, ready_signal) in self.ready_signals.iter_mut().enumerate() {
+                    ready_signal
+                        .recv().await
+                        .context(format!("Coordinator: Failed to receive ready signal from executor {}", executor_index))?;
+                }
+
+                // Retake ownership of the schedules so they can be sent again next iteration
+                schedules = Arc::try_unwrap(read_only)
+                    .map_err(|err| anyhow!("Unable to take ownership of schedules from executors"))?;
+            }
+
+            VmUtils::timestamp("---------------- vm.execute: Collect results and new transactions -----------------------");
+            // We know all executors are done since we received received ready signals
+            // => safe to acquire locks on their outputs
+            for (executor_index, executor_output) in self.executor_outputs.iter_mut().enumerate() {
+                let mut guard = executor_output.lock()
+                    .map_err(|err| anyhow!("Failed to acquire lock on executor {}'s output", executor_index))?;
+
+                backlog.append(&mut guard.0);
+
+                nb_committed += guard.1.len();
+                for (tx_index, tx_res) in &mut guard.1.drain(..) {
+                    results[tx_index] = tx_res;
+                }
+            }
+        }
+
+        self.schedules = Some(schedules);
+
+        VmUtils::timestamp("================= vm.execute: Collecting metrics =================");
+        // The whole batch was executed to completion, collect latency metrics
+        let mut max_scheduling_duration = Duration::from_secs(0);
+        for (scheduler_index, mutex) in self.scheduler_durations.iter().enumerate() {
+            let mut duration = mutex.lock().unwrap();
+            // println!("Scheduling took {:?} for scheduler {}", *duration, scheduler_index);
+            max_scheduling_duration = max(max_scheduling_duration, *duration);
+            *duration = Duration::from_secs(0);
+        }
+        let mut max_execution_duration = Duration::from_secs(0);
+        for (executor_index, mutex) in self.executor_durations.iter().enumerate() {
+            let mut duration = mutex.lock().unwrap();
+            // println!("Execution took {:?} for executor {}", *duration, executor_index);
+            max_execution_duration = max(max_execution_duration, *duration);
+            *duration = Duration::from_secs(0);
+        }
+
+        let mut res = VmResult::new(results, Some(max_scheduling_duration), Some(max_execution_duration));
+
+        Ok(res)
+    }
+
+    pub fn init_storage(&mut self, init: Box<dyn Fn(&mut Vec<Word>)>) {
+        init(&mut self.storage.content)
+    }
+
+    pub fn terminate(&mut self) -> (Vec<Duration>, Vec<Duration>) {
+        self.stop_signal.send(()).unwrap();
+
+        for scheduler in self.scheduler_handles.drain(..) {
+            scheduler.join().unwrap().unwrap();
+        }
+        for executor in self.executor_handles.drain(..) {
+            executor.join().unwrap().unwrap();
+        }
+
+        (vec!(), vec!())
+    }
+}
+//endregion
 
 pub struct CoordinatorMixed<const A: usize, const P: usize> {
     nb_schedulers: usize,
