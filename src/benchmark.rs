@@ -36,7 +36,7 @@ use crate::parallel_vm::{ParallelVmCollect, ParallelVmImmediate};
 use crate::sequential_vm::SequentialVM;
 use crate::utils::{batch_with_conflicts_new_impl, mean_ci_str};
 use crate::vm::Executor;
-use crate::vm_utils::{Coordinator, CoordinatorMixed, VmFactory, VmResult, VmType};
+use crate::vm_utils::{Coordinator, CoordinatorMixed, NewCollect, VmFactory, VmResult, VmType};
 use crate::wip::{NONE_WIP, Word};
 
 pub fn benchmarking(path: &str) -> Result<()> {
@@ -287,6 +287,7 @@ enum VmWrapper<const A: usize, const P: usize> {
     Immediate(Coordinator<A, P>),
     Collect(Coordinator<A, P>),
     Mixed(CoordinatorMixed<A, P>),
+    NewCollect(NewCollect<A, P>)
 }
 impl<const A: usize, const P: usize> VmWrapper<A, P> {
     pub fn new(p: &RunParameter) -> Self {
@@ -297,6 +298,7 @@ impl<const A: usize, const P: usize> VmWrapper<A, P> {
             VmType::Immediate => VmWrapper::Immediate(Coordinator::new(p.batch_size, p.storage_size, p.nb_schedulers, p.nb_executors)),
             VmType::Collect => VmWrapper::Collect(Coordinator::new(p.batch_size, p.storage_size, p.nb_schedulers, p.nb_executors)),
             VmType::Mixed => VmWrapper::Mixed(CoordinatorMixed::new(p.batch_size, p.storage_size, p.nb_schedulers, p.nb_executors)),
+            VmType::NewCollect => VmWrapper::NewCollect(NewCollect::new(p.batch_size, p.storage_size, p.nb_schedulers, p.nb_executors)),
             _ => todo!()
         }
     }
@@ -308,6 +310,7 @@ impl<const A: usize, const P: usize> VmWrapper<A, P> {
             VmWrapper::Immediate(vm) => vm.init_storage(init),
             VmWrapper::Collect(vm) => vm.init_storage(init),
             VmWrapper::Mixed(vm) => vm.init_storage(init),
+            VmWrapper::NewCollect(vm) => vm.init_storage(init),
             _ => todo!()
         }
     }
@@ -323,6 +326,7 @@ impl<const A: usize, const P: usize> VmWrapper<A, P> {
             },
             VmWrapper::Collect(vm) => { vm.execute(batch, false) },
             VmWrapper::Mixed(vm) => { vm.execute(batch).await },
+            VmWrapper::NewCollect(vm) => { vm.execute(batch).await },
             _ => todo!()
         }
     }
@@ -355,6 +359,10 @@ impl<const A: usize, const P: usize> VmWrapper<A, P> {
             VmWrapper::Mixed(vm) => {
                 // DHashMap::print_total_size::<P>(&vm.storage.content);
                 vm.terminate().await
+            },
+            VmWrapper::NewCollect(vm) => {
+                // DHashMap::print_total_size::<P>(&vm.storage.content);
+                vm.terminate()
             },
             _ => (vec!(), vec!())
         }
@@ -581,7 +589,9 @@ impl TestBench {
         let result = match params.vm_type {
             VmType::Sequential => TestBench::bench_with_parameter_new(params, workload).await,
             // VmType::ParallelCollect | VmType::ParallelImmediate if params.with_details => TestBench::bench_with_parameter_and_details(params),
-            VmType::ParallelCollect | VmType::ParallelImmediate | VmType::Immediate | VmType::Collect | VmType::Mixed
+            VmType::ParallelCollect | VmType::ParallelImmediate |
+            VmType::Immediate | VmType::Collect |
+            VmType::Mixed | VmType::NewCollect
                 => TestBench::bench_with_parameter_new_and_details(params, workload).await,
             _ => TestBench::bench_with_parameter(params)
         };
@@ -709,6 +719,7 @@ impl TestBench {
             let _vm_output = vm.execute(batch).await;
         }
 
+        // vm.init_vm_storage(workload.initialisation(&params, &mut rng));
         for _ in 0..params.repetitions {
             // let batch = workload.new_batch(&params, &mut rng);
             let batch = batch.clone();

@@ -552,9 +552,10 @@ impl Scheduling {
 
 struct Execution;
 impl Execution {
+
     #[inline]
     pub fn execute_tx<const A: usize, const P: usize>(
-        schedule: &Arc<Schedule<A, P>>,
+        schedule: &Schedule<A, P>,
         index_in_schedule: usize,
         results: &mut Vec<(usize, FunctionResult<A, P>)>,
         new_transactions: &mut Vec<Transaction<A, P>>,
@@ -602,7 +603,7 @@ impl Execution {
         for (schedule_index, index_in_schedule) in assigned {
             let schedule = &schedules[schedule_index];
             Execution::execute_tx(
-                schedule,
+                schedule.as_ref(),
                 index_in_schedule,
                 results,
                 new_transactions,
@@ -625,7 +626,7 @@ impl Execution {
 
         for index_in_schedule in assigned {
             Execution::execute_tx(
-                schedule,
+                schedule.as_ref(),
                 *index_in_schedule,
                 results,
                 new_transactions,
@@ -645,7 +646,7 @@ impl Execution {
         for schedule in schedules.iter() {
             for index_in_schedule in &schedule.exclusive {
                 Execution::execute_tx(
-                    schedule,
+                    schedule.as_ref(),
                     *index_in_schedule,
                     results,
                     new_transactions,
@@ -1517,14 +1518,14 @@ impl<const A: usize, const P: usize> fmt::Display for Schedule<A, P> {
 }
 
 #[derive(Debug)]
-enum ScheduleTask<const A: usize, const P: usize> {
+enum ExecutionTask<const A: usize, const P: usize> {
     Exclusive(Arc<Schedule<A, P>>),
     Assigned(Arc<Schedule<A, P>>),
     ReadOnly(Arc<Vec<Schedule<A, P>>>),
 }
 
 //region New scheduling + collect
-pub struct LastVM<const A: usize, const P: usize> {
+pub struct NewCollect<const A: usize, const P: usize> {
     nb_schedulers: usize,
     schedules: Option<Vec<Schedule<A, P>>>,
     scheduler_inputs: Vec<TokioSender<Schedule<A, P>>>,
@@ -1533,12 +1534,10 @@ pub struct LastVM<const A: usize, const P: usize> {
     scheduler_handles: Vec<JoinHandle<anyhow::Result<()>>>,
 
     nb_executors: usize,
-    executor_inputs: Vec<TokioSender<ScheduleTask<A, P>>>,
+    executor_inputs: Vec<TokioSender<ExecutionTask<A, P>>>,
     ready_signals: Vec<TokioReceiver<()>>,
-    executor_outputs: Vec<Arc<Mutex<(
-        Vec<Transaction<A, P>>,
-        Vec<(usize, FunctionResult<A, P>)
-    >)>>>,
+    executor_new_txs: Vec<Arc<Mutex<Vec<Transaction<A, P>>>>>,
+    executor_tx_results: Vec<Arc<Mutex<Vec<(usize, FunctionResult<A, P>)>>>>,
     executor_durations: Vec<Arc<Mutex<Duration>>>,
     executor_handles: Vec<JoinHandle<anyhow::Result<()>>>,
 
@@ -1547,7 +1546,7 @@ pub struct LastVM<const A: usize, const P: usize> {
     storage: VmStorage
 }
 
-impl<const A: usize, const P: usize> LastVM<A, P> {
+impl<const A: usize, const P: usize> NewCollect<A, P> {
     pub fn new(batch_size: usize, storage_size: usize, nb_schedulers: usize, nb_executors: usize) -> Self {
         assert!(nb_schedulers >= 1);
         assert!(nb_executors >= 1);
@@ -1594,10 +1593,12 @@ impl<const A: usize, const P: usize> LastVM<A, P> {
                     let mut stop_signal = stop_signal;
                     let scheduling_duration: Arc<Mutex<Duration>> = scheduling_duration;
 
-                    let address_map: HashMap<StaticAddress, AccessType, BuildHasherDefault<AHasher>> = HashMap::with_capacity_and_hasher(A * chunk_size, BuildHasherDefault::default());
+                    let mut address_map: HashMap<StaticAddress, Assignment, BuildHasherDefault<AHasher>> = HashMap::with_capacity_and_hasher(A * chunk_size, BuildHasherDefault::default());
+                    let mut new_reads = Vec::with_capacity(chunk_size);
+                    let mut new_writes = Vec::with_capacity(chunk_size);
 
                     loop {
-                        let to_schedule = tokio::select! {
+                        let mut to_schedule: Schedule<A, P> = tokio::select! {
                             received = input.recv() => {
                                 received.ok_or(anyhow!("Scheduler {}: Failed to receive new transactions", scheduler_index))?
                             },
@@ -1608,8 +1609,15 @@ impl<const A: usize, const P: usize> LastVM<A, P> {
 
                         let start = Instant::now();
 
-                        // TODO Clear address_map
-                        // TODO Schedule
+                        // Schedule the transactions
+                        VmUtils::timestamp(format!("Scheduler {}: scheduling {} transactions",
+                                                   scheduler_index, to_schedule.transactions.len()).as_str());
+                        Scheduling::schedule_chunk_assign(
+                            &mut address_map,
+                            &mut new_reads,
+                            &mut new_writes,
+                            &mut to_schedule,
+                        );
 
                         let schedule = Arc::new(to_schedule);
                         output.send(schedule).await
@@ -1624,7 +1632,8 @@ impl<const A: usize, const P: usize> LastVM<A, P> {
         // Prepare executors -----------------------------------------------------------------------
         let mut executor_inputs = Vec::with_capacity(nb_executors);
         let mut executor_ready_signals = Vec::with_capacity(nb_executors);
-        let mut executor_outputs = Vec::with_capacity(nb_executors);
+        let mut executor_new_txs = Vec::with_capacity(nb_executors);
+        let mut executor_tx_results = Vec::with_capacity(nb_executors);
         let mut executor_durations = Vec::with_capacity(nb_executors);
         let mut executor_handles = Vec::with_capacity(nb_executors);
 
@@ -1636,10 +1645,11 @@ impl<const A: usize, const P: usize> LastVM<A, P> {
             let (ready_signal_send, ready_signal_recv) = tokio::sync::mpsc::channel(1);
             executor_ready_signals.push(ready_signal_recv);
 
-            let new_txs = Vec::with_capacity(chunk_size);
-            let tx_results = Vec::with_capacity(chunk_size);
-            let outputs = Arc::new(Mutex::new((new_txs, tx_results)));
-            executor_outputs.push(outputs.clone());
+            let new_txs = Arc::new(Mutex::new(Vec::with_capacity(chunk_size)));
+            executor_new_txs.push(new_txs.clone());
+
+            let tx_results = Arc::new(Mutex::new(Vec::with_capacity(chunk_size)));
+            executor_tx_results.push(tx_results.clone());
 
             let exec_duration = Arc::new(Mutex::new(Duration::from_secs(0)));
             executor_durations.push(exec_duration.clone());
@@ -1649,24 +1659,26 @@ impl<const A: usize, const P: usize> LastVM<A, P> {
             let storage = storage.get_shared();
 
             executor_handles.push(thread::spawn(move || {
-                let executor_index = nb_schedulers + j;
+                let executor_index = j;
+                let core_id = nb_schedulers + executor_index;
 
                 // TODO Pin to core?
-                // let pinned = core_affinity::set_for_current(CoreId{ id: executor_index });
+                // let pinned = core_affinity::set_for_current(CoreId{ id: core_id });
                 // if !pinned {
-                //     return Err(anyhow!("Unable to pin to executor core to CPU #{}", executor_index));
+                //     return Err(anyhow!("Unable to pin to executor core to CPU #{}", core_id));
                 // }
 
                 block_on(async {
                     let mut input = input_recv;
-                    let mut output = outputs;
+                    let mut new_txs = new_txs;
+                    let mut tx_results = tx_results;
                     let ready_signal = ready_signal_send;
                     let exec_duration: Arc<Mutex<Duration>> = exec_duration;
                     let storage = storage;
                     let mut stop_signal = stop_signal;
 
                     loop {
-                        let schedule = tokio::select! {
+                        let task = tokio::select! {
                             received = input.recv() => {
                                 received.ok_or(anyhow!("Executor {}: Failed to receive schedule", executor_index))?
                             },
@@ -1678,13 +1690,66 @@ impl<const A: usize, const P: usize> LastVM<A, P> {
                         // Execution
                         let elapsed = {
                             let start = Instant::now();
-                            /* TODO Put output into an Option so that is can be acquired
-                                => can pass new_txs and tx_results to Executor::execute
-                             */
-                            let mut guard = output.lock()
-                                .map_err(|err| anyhow!("Executor {}: Failed to acquire lock on own output", executor_index))?;
+                            let mut results = tx_results.lock()
+                                .map_err(|err| anyhow!("Executor {}: Failed to acquire lock on local results", executor_index))?;
+                            let mut new_transactions = new_txs.lock()
+                                .map_err(|err| anyhow!("Executor {}: Failed to acquire lock on local new transactions", executor_index))?;
 
-                            // TODO Execute schedule
+                            match task {
+                                ExecutionTask::Exclusive(schedule) => {
+                                    VmUtils::timestamp(format!("Executor {}: executing {} exclusive transactions",
+                                                               executor_index, schedule.exclusive.len()).as_str());
+                                    for index_in_schedule in &schedule.exclusive {
+                                        Execution::execute_tx(
+                                            schedule.as_ref(),
+                                            *index_in_schedule,
+                                            &mut results,
+                                            &mut new_transactions,
+                                            storage
+                                        )
+                                    }
+                                },
+                                ExecutionTask::Assigned(schedule) => {
+                                    VmUtils::timestamp(format!("Executor {}: executing {} assigned transactions",
+                                                               executor_index, schedule.assignments[executor_index].len()).as_str());
+                                    for index_in_schedule in &schedule.assignments[executor_index] {
+                                        Execution::execute_tx(
+                                            schedule.as_ref(),
+                                            *index_in_schedule,
+                                            &mut results,
+                                            &mut new_transactions,
+                                            storage
+                                        )
+                                    }
+
+                                },
+                                ExecutionTask::ReadOnly(schedules) => {
+                                    let read_only_indices = schedules.iter()
+                                        .enumerate()
+                                        .flat_map(|(schedule_index, schedule)| {
+                                            schedule.read_only.iter()
+                                                .map(move |index_in_schedule| (schedule_index, *index_in_schedule))
+                                        });
+                                    let assigned = read_only_indices
+                                        .dropping(executor_index)
+                                        .step_by(nb_executors);
+                                    let mut __nb_executed = 0;
+                                    for (schedule_index, index_in_schedule) in assigned {
+                                        __nb_executed += 1;
+                                        let schedule = &schedules[schedule_index];
+                                        Execution::execute_tx(
+                                            schedule,
+                                            index_in_schedule,
+                                            &mut results,
+                                            &mut new_transactions,
+                                            storage
+                                        )
+                                    }
+
+                                    VmUtils::timestamp(format!("Executor {}: executing {} read-only transactions",
+                                                               executor_index, __nb_executed).as_str());
+                                },
+                            }
 
                             start.elapsed()
                         };
@@ -1710,7 +1775,8 @@ impl<const A: usize, const P: usize> LastVM<A, P> {
             nb_executors,
             executor_inputs,
             ready_signals: executor_ready_signals,
-            executor_outputs,
+            executor_new_txs,
+            executor_tx_results,
             executor_durations,
             executor_handles,
 
@@ -1724,16 +1790,20 @@ impl<const A: usize, const P: usize> LastVM<A, P> {
         let batch_size = batch.len();
         let mut results = vec![FunctionResult::Error; batch_size];
 
-        let chunk_size = (batch_size/self.nb_schedulers) + 1;
         let mut schedules = self.schedules.take().unwrap();
 
         let mut nb_committed = 0;
         let mut backlog = batch;
 
         // TODO Alternative stop condition: backlog.is_empty();
-        'main_loop: while nb_committed < batch_size {
+        // 'main_loop: while nb_committed < batch_size {
+        'main_loop: while !backlog.is_empty() {
+
+            // TODO If backlog is small, just execute sequentially
+
             VmUtils::timestamp("================= vm.execute: Send transactions to schedulers =================");
             {
+                let mut chunk_size = (backlog.len()/self.nb_schedulers) + 1;
                 let mut to_schedule = backlog.drain(..);
                 for (scheduler_index, scheduler_input) in self.scheduler_inputs.iter_mut().enumerate() {
                     let mut schedule = schedules.pop().unwrap();
@@ -1764,7 +1834,7 @@ impl<const A: usize, const P: usize> LastVM<A, P> {
 
                     // Arc of schedule to executor 0
                     self.executor_inputs[0]
-                        .send(ScheduleTask::Exclusive(arc_schedule.clone())).await
+                        .send(ExecutionTask::Exclusive(arc_schedule.clone())).await
                         .context("Failed to send input to executor 0")?;
 
                     // Wait for ready from executor 0
@@ -1781,7 +1851,7 @@ impl<const A: usize, const P: usize> LastVM<A, P> {
 
                     for (executor_index, executor_input) in self.executor_inputs.iter_mut().enumerate() {
                         executor_input
-                            .send(ScheduleTask::Assigned(arc_schedule.clone())).await
+                            .send(ExecutionTask::Assigned(arc_schedule.clone())).await
                             .context(format!("Failed to send start signal to executor {}", executor_index))?;
                     }
 
@@ -1813,7 +1883,7 @@ impl<const A: usize, const P: usize> LastVM<A, P> {
                 let read_only = Arc::new(schedules);
                 for (executor_index, executor_input) in self.executor_inputs.iter_mut().enumerate() {
                     executor_input
-                        .send(ScheduleTask::ReadOnly(read_only.clone())).await
+                        .send(ExecutionTask::ReadOnly(read_only.clone())).await
                         .context(format!("Coordinator: Failed to send start signal to executor {}", executor_index))?;
                 }
 
@@ -1831,14 +1901,26 @@ impl<const A: usize, const P: usize> LastVM<A, P> {
             VmUtils::timestamp("---------------- vm.execute: Collect results and new transactions -----------------------");
             // We know all executors are done since we received received ready signals
             // => safe to acquire locks on their outputs
-            for (executor_index, executor_output) in self.executor_outputs.iter_mut().enumerate() {
-                let mut guard = executor_output.lock()
+            // for (executor_index, executor_output) in self.executor_outputs.iter_mut().enumerate() {
+            //     let mut guard = executor_output.lock()
+            //         .map_err(|err| anyhow!("Failed to acquire lock on executor {}'s output", executor_index))?;
+            //
+            //     backlog.append(&mut guard.0);
+            //
+            //     nb_committed += guard.1.len();
+            //     for (tx_index, tx_res) in &mut guard.1.drain(..) {
+            //         results[tx_index] = tx_res;
+            //     }
+            // }
+            for executor_index in 0..self.nb_executors {
+                let mut new_txs = self.executor_new_txs[executor_index].lock()
+                    .map_err(|err| anyhow!("Failed to acquire lock on executor {}'s new txs", executor_index))?;
+                backlog.append(&mut new_txs);
+
+                let mut tx_results = self.executor_tx_results[executor_index].lock()
                     .map_err(|err| anyhow!("Failed to acquire lock on executor {}'s output", executor_index))?;
-
-                backlog.append(&mut guard.0);
-
-                nb_committed += guard.1.len();
-                for (tx_index, tx_res) in &mut guard.1.drain(..) {
+                nb_committed += tx_results.len();
+                for (tx_index, tx_res) in &mut tx_results.drain(..) {
                     results[tx_index] = tx_res;
                 }
             }
@@ -2643,7 +2725,8 @@ pub enum VmType {
     ParallelImmediate,
     Immediate,
     Collect,
-    Mixed
+    Mixed,
+    NewCollect
 }
 
 impl VmType {
@@ -2659,6 +2742,7 @@ impl VmType {
             VmType::Immediate => String::from("Immediate"),
             VmType::Collect => String::from("Collect"),
             VmType::Mixed => String::from("Mixed"),
+            VmType::NewCollect => String::from("NewCollect"),
         }
     }
 
@@ -2670,6 +2754,7 @@ impl VmType {
             VmType::Immediate => true,
             VmType::Collect => true,
             VmType::Mixed => true,
+            VmType::NewCollect => true,
             _ => false
         }
     }
