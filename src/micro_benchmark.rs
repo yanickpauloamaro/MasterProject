@@ -1073,6 +1073,12 @@ const ENTRY_SIZE: usize = 8;
 const NB_BUCKETS: usize = 1024;
 const BUCKET_CAPACITY_ELEMS: usize = 64;
 //region Scheduling speed (without parallelism)
+
+pub async fn micro_scheduling_async() {
+    eprintln!("Async version =================================");
+    micro_scheduling();
+}
+
 pub fn micro_scheduling() {
     let batch_size: usize = 65536;
     let storage_size: usize = 100 * batch_size;
@@ -1080,8 +1086,8 @@ pub fn micro_scheduling() {
     // let fractions = vec![1, 2, 4, 8, 16, 24, 32];
     // let nb_executors = vec![2, 4, 8, 16, 24, 32];
     let fractions = vec![1, 2, 4];
-    let executors = vec![4, 8];
-    let nb_repetitions = 1;
+    let executors = vec![1, 2, 4];
+    let nb_repetitions = 100;
 
     let mut rng = StdRng::seed_from_u64(seed);
     let mut measurements = vec![Duration::from_secs(0); nb_repetitions];
@@ -1122,47 +1128,17 @@ pub fn micro_scheduling() {
     // DHashMap ------------------------------------------------------------------------------------
     let (batch_2, mut hashmap_storage) = dhashmap_batch(batch_size, storage_size, &mut rng);
 
-    // println!("Scheduling speed =====================================================================");
-    // // Scheduling speed for a single schedule
-    // println!("Transfer(0.0):");
-    // micro_scheduling_batch(&batch_0, &fractions, &nb_executors, nb_repetitions, &mut measurements);
-    // println!("Transfer(0.5):");
-    // micro_scheduling_batch(&batch_1, &fractions, &nb_executors, nb_repetitions, &mut measurements);
-    // println!("PiecedHashMap(7, 64, 64; 0.2, 0.2, 0.2, 0.2):");
-    // micro_scheduling_batch(&batch_2, &fractions, &nb_executors, nb_repetitions, &mut measurements);
-    // //
-    // println!("Scheduling quality (single schedule) =================================================");
-    // println!("Transfer(0.0):");
-    // micro_scheduling_quality(&batch_0, &fractions, &nb_executors);
-    // println!("Transfer(0.5):");
-    // micro_scheduling_quality(&batch_1, &fractions, &nb_executors);
-    // println!("PiecedHashMap(7, 64, 64; 0.2, 0.2, 0.2, 0.2):");
-    // micro_scheduling_quality(&batch_2, &fractions, &nb_executors);
-    //
-    // println!("Scheduling speed and quality (single schedule) =======================================");
-    // println!("Transfer(0.5):");
-    // let mut storage = VmStorage::new(storage_size);
-    // micro_basic_scheduling(&batch_1, &fractions, nb_repetitions, &mut measurements);
-    //
-    // storage.set_storage(200 * nb_repetitions as Word);
-    // micro_address_scheduling(&batch_1, &fractions, nb_repetitions, &mut measurements);
-    //
-    // storage.set_storage(200 * nb_repetitions as Word);
-    // micro_read_write_scheduling(&batch_1, &fractions, nb_repetitions, &mut measurements);
-    //
-    // storage.set_storage(200 * nb_repetitions as Word);
-    // micro_assign_scheduling(&batch_1, &fractions, &nb_executors, nb_repetitions, &mut measurements);
-
     let mut storage = VmStorage::new(storage_size);
 
     println!("Transfer(0.0): =======================================================================");
     measure_latency_vs_parallelism::<2, 1>(
         false,
+        "Transfer(0.0)",
         &batch_0,
         &fractions,
         &executors,
         nb_repetitions,
-        [3, 3, 3],
+        [1, 1, 1],
         &mut measurements,
         &mut storage,
     );
@@ -1171,11 +1147,12 @@ pub fn micro_scheduling() {
     println!("Transfer(0.5): =======================================================================");
     measure_latency_vs_parallelism::<2, 1>(
         false,
+        "Transfer(0.5)",
         &batch_1,
         &fractions,
         &executors,
         nb_repetitions,
-        [3, 3, 3],
+        [3, 3, 1],
         &mut measurements,
         &mut storage,
     );
@@ -1183,46 +1160,20 @@ pub fn micro_scheduling() {
     println!("DHashMap: ============================================================================");
     measure_latency_vs_parallelism::<5, 8>(
         true,
+        "DHashMap",
         &batch_2,
         &fractions,
         &executors,
         nb_repetitions,
-        [5, 5, 2],
+        [5, 5, 1],
         &mut measurements,
         &mut hashmap_storage,
     );
-    // let mut storage = VmStorage::new(storage_size);
-
-    // // Address scheduling --------------------------------------------------------------------------
-    // for nb_iters in 1..3 {
-    //     storage.set_storage(200 * nb_repetitions as Word);
-    //     micro_address_scheduling(&batch_1, &fractions, nb_repetitions, &mut measurements, storage.get_shared(), Some(nb_iters));
-    // }
-    // storage.set_storage(200 * nb_repetitions as Word);
-    // micro_address_scheduling(&batch_1, &fractions, nb_repetitions, &mut measurements, storage.get_shared(), None);
-    // println!();
-    //
-    // // Read/Write scheduling -----------------------------------------------------------------------
-    // for nb_iters in 1..3 {
-    //     storage.set_storage(200 * nb_repetitions as Word);
-    //     micro_read_write_scheduling(&batch_1, &fractions, nb_repetitions, &mut measurements, storage.get_shared(), Some(nb_iters));
-    // }
-    // storage.set_storage(200 * nb_repetitions as Word);
-    // micro_read_write_scheduling(&batch_1, &fractions, nb_repetitions, &mut measurements, storage.get_shared(), None);
-    // println!();
-    //
-    // // Assignment scheduling -----------------------------------------------------------------------
-    // for nb_iters in 1..3 {
-    //     storage.set_storage(200 * nb_repetitions as Word);
-    //     micro_assign_scheduling(&batch_1, &fractions, &nb_executors, nb_repetitions, &mut measurements, storage.get_shared(), Some(nb_iters));
-    // }
-    // storage.set_storage(200 * nb_repetitions as Word);
-    // micro_assign_scheduling(&batch_1, &fractions, &nb_executors, nb_repetitions, &mut measurements, storage.get_shared(), None);
-    // println!();
 }
 
 fn measure_latency_vs_parallelism<const A: usize, const P: usize>(
     is_hashmap: bool,
+    workload: &str,
     batch: &Vec<Transaction<A, P>>,
     fractions: &Vec<usize>,
     executors: &Vec<usize>,
@@ -1242,40 +1193,41 @@ fn measure_latency_vs_parallelism<const A: usize, const P: usize>(
     };
 
     // Basic scheduling ----------------------------------------------------------------------------
-    micro_basic_scheduling(batch, &fractions, nb_repetitions, measurements);
+    micro_basic_scheduling(workload, batch, &fractions, nb_repetitions, measurements);
     println!();
 
     // Address scheduling --------------------------------------------------------------------------
-    for nb_iters in 1..max_nb_iters[0] {
+    for nb_iters in 1..max_nb_iters[0]+1 {
         init_storage(storage);
-        micro_address_scheduling(batch, &fractions, nb_repetitions, measurements, storage.get_shared(), Some(nb_iters));
+        micro_address_scheduling(workload, batch, &fractions, nb_repetitions, measurements, storage.get_shared(), Some(nb_iters));
     }
     // init_storage(storage);
-    // micro_address_scheduling(batch, &fractions, nb_repetitions, measurements, storage.get_shared(), None);
+    // micro_address_scheduling(workload, batch, &fractions, nb_repetitions, measurements, storage.get_shared(), None);
     println!();
 
     // Read/Write scheduling -----------------------------------------------------------------------
-    for nb_iters in 1..max_nb_iters[1] {
+    for nb_iters in 1..max_nb_iters[1]+1 {
         init_storage(storage);
-        micro_read_write_scheduling(batch, &fractions, nb_repetitions, measurements, storage.get_shared(), Some(nb_iters));
+        micro_read_write_scheduling(workload, batch, &fractions, nb_repetitions, measurements, storage.get_shared(), Some(nb_iters));
     }
     // init_storage(storage);
-    // micro_read_write_scheduling(batch, &fractions, nb_repetitions, measurements, storage.get_shared(), None);
+    // micro_read_write_scheduling(workload, batch, &fractions, nb_repetitions, measurements, storage.get_shared(), None);
     println!();
 
     // Assignment scheduling -----------------------------------------------------------------------
     for nb_executors in executors.iter() {
-        for nb_iters in 1..max_nb_iters[2] {
+        for nb_iters in 1..max_nb_iters[2]+1 {
             init_storage(storage);
-            micro_assign_scheduling(batch, &fractions, *nb_executors, nb_repetitions, measurements, storage.get_shared(), Some(nb_iters));
+            micro_assign_scheduling(workload, batch, &fractions, *nb_executors, nb_repetitions, measurements, storage.get_shared(), Some(nb_iters));
         }
     }
     // init_storage(storage);
-    // micro_assign_scheduling(batch, &fractions, executors, nb_repetitions, measurements, storage.get_shared(), None);
+    // micro_assign_scheduling(workload, batch, &fractions, executors, nb_repetitions, measurements, storage.get_shared(), None);
     println!();
 }
 
 fn micro_basic_scheduling<const A: usize, const P: usize>(
+    workload: &str,
     batch: &Vec<Transaction<A, P>>,
     fractions: &Vec<usize>,
     nb_repetitions: usize,
@@ -1306,9 +1258,20 @@ fn micro_basic_scheduling<const A: usize, const P: usize>(
         let mean_latency = mean_ci(&measurements).0;
         let parallelism = nb_parallel/(chunk_size as f64);
         results.push((parallelism, mean_latency.as_micros(), chunk_size));
+
+        println!("{{\
+        workload: '{workload:}', \
+        scheduling: 'basic', \
+        size: {chunk_size:}, \
+        parallelism: {parallelism:.3}, \
+        latency: {:.3}, \
+        iter: 1 \
+        }},",
+         mean_latency.as_micros()
+        );
     }
 
-    println!("Basic scheduling: {:.3?}", results);
+    // println!("Basic scheduling: {:.3?}", results);
 }
 
 fn execute_iter<const A: usize, const P: usize>(
@@ -1331,6 +1294,7 @@ fn execute_iter<const A: usize, const P: usize>(
 }
 
 fn micro_address_scheduling<const A: usize, const P: usize>(
+    workload: &str,
     batch: &Vec<Transaction<A, P>>,
     fractions: &Vec<usize>,
     nb_repetitions: usize,
@@ -1347,14 +1311,14 @@ fn micro_address_scheduling<const A: usize, const P: usize>(
     let mut read_only = Vec::with_capacity(batch_size);
     let mut postponed = Vec::with_capacity(batch_size);
     for fraction in fractions.iter() {
-        let mut iters = 0;
+        let mut current_iter = 1;
         let chunk_size = batch_size/fraction;
         let mut nb_parallel = 0.0;
         let mut working_set = AddressSet::with_capacity(2 * A * chunk_size);
 
         for i in 0..nb_repetitions {
             nb_parallel = 0.0;
-            iters = 0;
+            current_iter = 1;
             let mut chunk = Vec::from_iter(batch.iter().take(chunk_size).cloned());
             let mut new_txs = Vec::with_capacity(chunk_size);
             let mut duration = Duration::from_secs(0);
@@ -1392,24 +1356,35 @@ fn micro_address_scheduling<const A: usize, const P: usize>(
                 read_only.truncate(0);
                 working_set.clear();
 
-                iters += 1;
-
-                if iters >= max {
+                if current_iter >= max {
                     break;
                 }
+
+                current_iter += 1;
             }
             measurements[i] = duration;
         }
 
         let mean_latency = mean_ci(&measurements).0;
         let parallelism = nb_parallel/(chunk_size as f64);
-        results.push((parallelism, mean_latency.as_micros(), chunk_size, iters));
+        results.push((parallelism, mean_latency.as_micros(), chunk_size, current_iter));
+        println!("{{\
+        workload: '{workload:}', \
+        scheduling: 'address', \
+        size: {chunk_size:}, \
+        parallelism: {parallelism:.3}, \
+        latency: {:.3}, \
+        iter: {current_iter:} \
+        }},",
+                 mean_latency.as_micros()
+        );
     }
 
-    println!("Address scheduling: {:.3?}", results);
+    // println!("Address scheduling: {:.3?}", results);
 }
 
 fn micro_read_write_scheduling<const A: usize, const P: usize>(
+    workload: &str,
     batch: &Vec<Transaction<A, P>>,
     fractions: &Vec<usize>,
     nb_repetitions: usize,
@@ -1427,14 +1402,14 @@ fn micro_read_write_scheduling<const A: usize, const P: usize>(
     let mut postponed = Vec::with_capacity(batch_size);
 
     for fraction in fractions.iter() {
-        let mut iters = 0;
+        let mut current_iter = 1;
         let chunk_size = batch_size/fraction;
         let mut nb_parallel = 0.0;
         let mut address_map = HashMap::with_capacity_and_hasher(2 * A * chunk_size, BuildHasherDefault::default());
 
         for i in 0..nb_repetitions {
             nb_parallel = 0.0;
-            iters = 0;
+            current_iter = 1;
             let mut chunk = Vec::from_iter(batch.iter().take(chunk_size).cloned());
             let mut new_txs = Vec::with_capacity(chunk_size);
             let mut duration = Duration::from_secs(0);
@@ -1483,24 +1458,36 @@ fn micro_read_write_scheduling<const A: usize, const P: usize>(
                 read_only.truncate(0);
                 address_map.clear();
 
-                iters += 1;
-
-                if iters >= max {
+                if current_iter >= max {
                     break;
                 }
+
+                current_iter += 1;
             }
             measurements[i] = duration;
         }
 
         let mean_latency = mean_ci(&measurements).0;
         let parallelism = nb_parallel/(chunk_size as f64);
-        results.push((parallelism, mean_latency.as_micros(), chunk_size, iters));
+        results.push((parallelism, mean_latency.as_micros(), chunk_size, current_iter));
+
+        println!("{{\
+        workload: '{workload:}', \
+        scheduling: 'read/write', \
+        size: {chunk_size:}, \
+        parallelism: {parallelism:.3}, \
+        latency: {:.3}, \
+        iter: {current_iter:} \
+        }},",
+                 mean_latency.as_micros()
+        );
     }
 
-    println!("Read/Write scheduling: {:.3?}", results);
+    // println!("Read/Write scheduling: {:.3?}", results);
 }
 
 fn micro_assign_scheduling<const A: usize, const P: usize>(
+    workload: &str,
     batch: &Vec<Transaction<A, P>>,
     fractions: &Vec<usize>,
     nb_executors: usize,
@@ -1519,14 +1506,14 @@ fn micro_assign_scheduling<const A: usize, const P: usize>(
 
     let mut schedule = Schedule::new(batch_size, nb_executors);
     for fraction in fractions.iter() {
-        let mut iters = 0;
+        let mut current_iter = 1;
         let chunk_size = batch_size/fraction;
         let mut nb_parallel = 0.0;
         let mut address_map = HashMap::with_capacity_and_hasher(2 * A * chunk_size, BuildHasherDefault::default());
 
         for i in 0..nb_repetitions {
             nb_parallel = 0.0;
-            iters = 0;
+            current_iter = 1;
             schedule.transactions.extend(batch.iter().take(chunk_size).cloned().collect_vec());
             let mut new_txs = Vec::with_capacity(chunk_size);
             let mut duration = Duration::from_secs(0);
@@ -1574,11 +1561,10 @@ fn micro_assign_scheduling<const A: usize, const P: usize>(
                 mem::swap(&mut schedule.transactions, &mut new_txs);
                 new_txs.truncate(0);
 
-                iters += 1;
-
-                if iters >= max {
+                if current_iter >= max {
                     break;
                 }
+                current_iter += 1;
             }
             measurements[i] = duration;
 
@@ -1601,102 +1587,20 @@ fn micro_assign_scheduling<const A: usize, const P: usize>(
 
         let mean_latency = mean_ci(&measurements).0;
         let parallelism = nb_parallel/(chunk_size as f64);
-        results.push((parallelism, mean_latency.as_micros(), chunk_size, iters));
+        results.push((parallelism, mean_latency.as_micros(), chunk_size, current_iter));
+        println!("{{\
+        workload: '{workload:}', \
+        scheduling: 'assign({nb_executors:})', \
+        size: {chunk_size:}, \
+        parallelism: {parallelism:.3}, \
+        latency: {:.3}, \
+        iter: {current_iter:} \
+        }},",
+                 mean_latency.as_micros()
+        );
     }
 
-    println!("Assign scheduling (for {} executors): {:.3?}", nb_executors, results);
-
-    // for nb_executors in executors.iter() {
-    //     let mut schedule = Schedule::new(batch_size, *nb_executors);
-    //     for fraction in fractions.iter() {
-    //         let mut iters = 0;
-    //         let chunk_size = batch_size/fraction;
-    //         let mut nb_parallel = 0.0;
-    //         let mut address_map = HashMap::with_capacity_and_hasher(2 * A * chunk_size, BuildHasherDefault::default());
-    //
-    //         for i in 0..nb_repetitions {
-    //             nb_parallel = 0.0;
-    //             iters = 0;
-    //             schedule.transactions.extend(batch.iter().take(chunk_size).cloned().collect_vec());
-    //             let mut new_txs = Vec::with_capacity(chunk_size);
-    //             let mut duration = Duration::from_secs(0);
-    //             while !schedule.transactions.is_empty() {
-    //                 let start = Instant::now();
-    //                 Scheduling::schedule_chunk_assign::<A, P>(
-    //                     &mut address_map,
-    //                     &mut new_reads,
-    //                     &mut new_writes,
-    //                     &mut schedule,
-    //                 );
-    //                 duration += start.elapsed();
-    //
-    //                 nb_parallel += (schedule.nb_assigned_tx + schedule.read_only.len()) as f64;
-    //                 // println!("Iter {}: {} (+ {})", iters, nb_parallel, schedule.nb_assigned_tx + schedule.read_only.len());
-    //                 // println!("\tAssigned: Scheduled: {} txs, read_only: {} txs, postponed: {} txs",
-    //                 //          schedule.nb_assigned_tx, schedule.read_only.len(), schedule.postponed.len() + schedule.exclusive.len());
-    //
-    //                 execute_iter(
-    //                     schedule.read_only.iter(),
-    //                      &schedule.transactions,
-    //                      &mut new_txs,
-    //                      storage
-    //                 );
-    //                 for assigned in schedule.assignments.iter() {
-    //                     execute_iter(
-    //                         assigned.iter(),
-    //                         &schedule.transactions,
-    //                         &mut new_txs,
-    //                         storage
-    //                     );
-    //                 }
-    //
-    //                 // Add postponed back into chunk
-    //                 for tx_index in schedule.postponed.iter() {
-    //                     let tx = schedule.transactions[*tx_index].clone();
-    //                     new_txs.push(tx);
-    //                 }
-    //
-    //                 new_reads.truncate(0);
-    //                 new_writes.truncate(0);
-    //                 address_map.clear();
-    //                 schedule.clear();
-    //
-    //                 mem::swap(&mut schedule.transactions, &mut new_txs);
-    //                 new_txs.truncate(0);
-    //
-    //                 iters += 1;
-    //
-    //                 if iters >= max {
-    //                     break;
-    //                 }
-    //             }
-    //             measurements[i] = duration;
-    //
-    //             // let start = Instant::now();
-    //             // Scheduling::schedule_chunk_assign::<A, P>(
-    //             //     &mut address_map,
-    //             //     &mut new_reads,
-    //             //     &mut new_writes,
-    //             //     &mut schedule,
-    //             // );
-    //             // measurements[i] = start.elapsed();
-    //             // nb_parallel = (schedule.nb_assigned_tx + schedule.read_only.len()) as f64;
-    //             // // println!("\tAssigned: Scheduled: {} txs, read_only: {} txs, postponed: {} txs",
-    //             // //          schedule.nb_assigned_tx, schedule.read_only.len(), schedule.postponed.len() + schedule.exclusive.len());
-    //             // new_reads.truncate(0);
-    //             // new_writes.truncate(0);
-    //             // address_map.clear();
-    //             // schedule.clear();
-    //         }
-    //
-    //         let mean_latency = mean_ci(&measurements).0;
-    //         let parallelism = nb_parallel/(chunk_size as f64);
-    //         results.push((parallelism, mean_latency.as_micros(), chunk_size, iters));
-    //     }
-    //
-    //     println!("Assign scheduling (for {} executors): {:.3?}", nb_executors, results);
-    //     results.truncate(0);
-    // }
+    // println!("Assign scheduling (for {} executors): {:.3?}", nb_executors, results);
 }
 
 // -------------------------------------------------------------------------------------------------
