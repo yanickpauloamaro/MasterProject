@@ -1,8 +1,3 @@
-let latency_parallelism = true;
-let workload = 'Transfer(0.0)';
-// let workload = 'Transfer(0.5)';
-// let workload = 'DHashMap';
-
 let data = {
   datasetId: 'data',
   source: [
@@ -115,11 +110,7 @@ let data = {
   ]
 };
 
-let config = {
-  encode_y: 'latency'
-};
-
-let make_dataset = (scheduling, iter, size = null) => {
+let make_dataset = (scheduling, iter, size, workload) => {
   let transforms = [{
     type: 'filter',
     config: { dimension: 'scheduling', value: scheduling },
@@ -149,40 +140,6 @@ let make_dataset = (scheduling, iter, size = null) => {
     };
 }
 
-if (latency_parallelism) {
-  config.iter = null;
-  config.size = 65536;
-  config.show_point_label = true;
-  config.serie_type = 'scatter';
-  config.point_label = 'iter';
-  config.encode_x = 'parallelism',
-  config.xAxis = {
-    // inverse: true,
-    name: 'Parallelism',
-    nameLocation: 'middle'
-  };
-} else {
-  config.iter = 1;
-  config.size = null;
-  config.show_point_label = false;
-  config.serie_type = 'line';
-  config.encode_x = 'size',
-  config.xAxis = {
-    inverse: true,
-    name: 'batch size',
-    nameLocation: 'middle'
-  };
-}
-
-config.datasets = [
-    make_dataset('basic', config.iter, config.size),
-    make_dataset('address', config.iter, config.size),
-    make_dataset('read/write', config.iter, config.size),
-    make_dataset('assign(1)', config.iter, config.size),
-    make_dataset('assign(2)', config.iter, config.size),
-    make_dataset('assign(4)', config.iter, config.size),
-    ]
-
 let make_serie = (name, config) => {
   return {
       name: name,
@@ -198,6 +155,77 @@ let make_serie = (name, config) => {
       }
     };
 };
+
+// // Latency vs parallelism (scatter chunk size)
+let config_latency_parallelism_size = {
+    encode_y: 'latency',
+    iter: 1,
+    size: null,
+    serie_type: 'line',
+    point_label: 'size',
+    show_point_label: true,
+    encode_x: 'parallelism',
+    xAxis: {
+        // inverse: true,
+        name: 'Parallelism',
+        nameLocation: 'middle'
+  }
+};
+
+// // Latency vs parallelism (scatter iter)
+let config_latency_parallelism_iter = {
+    encode_y: 'latency',
+    iter: null,
+    size: 65536,
+    serie_type: 'scatter',
+    point_label: 'iter',
+    show_point_label: true,
+    encode_x: 'parallelism',
+    xAxis: {
+        name: 'Parallelism',
+        nameLocation: 'middle'
+    }
+}
+
+// // Latency vs chunk size
+let config_latency_size = {
+    encode_y: 'latency',
+    iter: 1,
+    size: null,
+    show_point_label: false,
+    serie_type: 'line',
+    encode_x: 'size',
+    xAxis: {
+        inverse: true,
+        name: 'batch size',
+        nameLocation: 'middle'
+    }
+}
+
+// =====================================================================
+let workload = 'Transfer(0.0)';
+// let workload = 'Transfer(0.5)';
+// let workload = 'DHashMap';
+
+
+let config = config_latency_size;
+config.datasets = [
+    make_dataset('basic', config.iter, config.size, workload),
+    make_dataset('address', config.iter, config.size, workload),
+    make_dataset('read/write', config.iter, config.size, workload),
+    make_dataset('assign(1)', config.iter, config.size, workload),
+    make_dataset('assign(2)', config.iter, config.size, workload),
+    make_dataset('assign(4)', config.iter, config.size, workload),
+];
+
+let series = [
+ make_serie('basic', config),
+ make_serie('address', config),
+ make_serie('read/write', config),
+ // make_serie('assign(1)', config),
+ // make_serie('assign(2)', config),
+ make_serie('assign(4)', config),
+];
 
 option = {
   dataset: [
@@ -216,12 +244,5 @@ option = {
       formatter: '{value} µs'
     }
   },
-  series: [
-    make_serie('basic', config),
-    make_serie('address', config),
-    make_serie('read/write', config),
-    // make_serie('assign(1)', config),
-    // make_serie('assign(2)', config),
-    make_serie('assign(4)', config),
-  ]
+  series: series
 };
