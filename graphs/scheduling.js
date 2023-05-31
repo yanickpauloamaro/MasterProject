@@ -207,8 +207,10 @@ let workload = 'Transfer(0.0)';
 // let workload = 'Transfer(0.5)';
 // let workload = 'DHashMap';
 
+// let config = config_latency_size;
+let config = config_latency_parallelism_iter;
+// let config = config_latency_parallelism_size;
 
-let config = config_latency_size;
 config.datasets = [
     make_dataset('basic', config.iter, config.size, workload),
     make_dataset('address', config.iter, config.size, workload),
@@ -231,6 +233,10 @@ option = {
   dataset: [
     data,
     ...config.datasets
+  ],
+  dataZoom: [
+    { yAxisIndex: 0, },
+    { xAxisIndex: 0, }
   ],
   legend: {},
   tooltip: {

@@ -472,7 +472,7 @@ impl TestBench {
                     println!("let sequential_latency = {};", baseline_latency);
                     println!("let data = [");
                     for nb_schedulers in config.nb_schedulers.iter() {
-                        print!("\t[{} sch", nb_schedulers);
+                        print!("\t['{} sch'", nb_schedulers);
                         for nb_executors in config.nb_executors.iter() {
                             let parameter = RunParameter::new(
                                 *vm_type,

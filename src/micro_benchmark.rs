@@ -1172,7 +1172,7 @@ pub fn micro_scheduling() {
         &fractions,
         &executors,
         nb_repetitions,
-        [3, 3, 1],
+        [3, 3, 3],
         &mut measurements,
         &mut storage,
         &chunk_config
