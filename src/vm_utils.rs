@@ -14,7 +14,7 @@ use std::vec::Drain;
 
 use ahash::AHasher;
 use anyhow::{anyhow, Context};
-use core_affinity::CoreId;
+use core_affinity::{CoreId, get_core_ids};
 use crossbeam::channel::{Receiver, Sender as CrossSender, unbounded};
 use futures::AsyncReadExt;
 use futures::executor::block_on;
@@ -548,6 +548,152 @@ impl Scheduling {
         // println!("\ttook {:.3?} \t({:?} µs, {:?} µs, {:?} µs, {:?} µs)", total, init_duration.as_micros(), base_case_duration.as_micros(), reads_duration.as_micros(), writes_duration.as_micros());
         // (scheduled, postponed)
     }
+
+    pub fn schedule_chunk_new_bis<const A: usize, const P: usize>(
+        transactions: &Arc<Vec<Transaction<A, P>>>,
+        mut chunk: &mut Vec<usize>,
+        mut scheduled: &mut Vec<usize>,
+        mut read_only: &mut Vec<usize>,
+        mut postponed: &mut Vec<usize>,
+        mut address_map: &mut Map,
+    )
+    {
+
+        assert!(!chunk.is_empty());
+        if chunk.len() == 1 {
+            scheduled.push(chunk.pop().unwrap());
+            return;
+        }
+
+        let mut remainder = 0;
+
+        let mut some_reads = false;
+        let mut some_writes = false;
+
+        let mut read_locked = false;
+        let mut write_locked = false;
+
+        let can_read = |addr: StaticAddress, map: &mut Map| {
+            let entry = map.entry(addr).or_insert(AccessType::Read);
+            *entry == AccessType::Read
+        };
+        let can_write = |addr: StaticAddress, map: &mut Map| {
+            let entry = map.entry(addr).or_insert(AccessType::TryWrite);
+            if *entry == AccessType::TryWrite {
+                *entry = AccessType::Write;
+                true
+            } else {
+                false
+            }
+        };
+
+        'backlog: for tx_index in chunk.drain(0..) {
+            let tx = transactions.get(tx_index).unwrap();
+            remainder += 1;
+
+            let (possible_reads, possible_writes) = tx.accesses();
+            let reads = possible_reads.as_ref().map_or([].as_slice(), |inside| inside.as_slice());
+            let writes = possible_writes.as_ref().map_or([].as_slice(), |inside| inside.as_slice());
+
+            // Tx without any memory accesses ------------------------------------------------------
+            if writes.is_empty() {
+                read_only.push(tx_index);
+                continue 'backlog;
+            }
+
+            // Only reads are allowed --------------------------------------------------------------
+            if read_locked {
+                if writes.is_empty() { scheduled.push(tx_index); }
+                else { postponed.push(tx_index); }
+                continue 'backlog;
+            }
+
+            // All transactions with accesses will be postponed ------------------------------------
+            if write_locked {
+                postponed.push(tx_index);
+                continue 'backlog;
+            }
+
+            // NB: A tx might be postponed after having some of its addresses added to the address set
+            // It is probably too expensive to rollback those changes. TODO Check
+            // Start with reads because they are less problematic if the tx is postponed
+            // Process reads -----------------------------------------------------------------------
+            'reads: for read in reads {
+                match read {
+                    AccessPattern::Address(addr) => {
+                        some_reads = true;
+                        if !can_read(*addr, &mut address_map) {
+                            postponed.push(tx_index);
+                            continue 'backlog;
+                        }
+                    },
+                    AccessPattern::Range(from, to) => {
+                        some_reads = true;
+                        assert!(from < to);
+                        'range: for addr in (*from)..(*to) {
+                            if !can_read(addr, &mut address_map) {
+                                postponed.push(tx_index);
+                                continue 'backlog;
+                            }
+                        }
+                    },
+                    AccessPattern::All => {
+                        if some_writes {
+                            postponed.push(tx_index);
+                        } else {
+                            scheduled.push(tx_index);
+                            read_locked = true;
+                        }
+                        // Read-all transactions can't have any other accesses, can proceed with the next tx
+                        continue 'backlog;
+                    },
+                    AccessPattern::Done => {
+                        break 'reads;
+                    }
+                }
+            }
+
+            // Process writes ----------------------------------------------------------------------
+            'writes: for write in writes {
+                match write {
+                    AccessPattern::Address(addr) => {
+                        some_writes = true;
+                        if !can_write(*addr, &mut address_map) {
+                            postponed.push(tx_index);
+                            continue 'backlog;
+                        }
+                    },
+                    AccessPattern::Range(from, to) => {
+                        some_writes = true;
+                        assert!(from < to);
+                        'range: for addr in (*from)..(*to) {
+                            if !can_write(addr, &mut address_map) {
+                                postponed.push(tx_index);
+                                continue 'backlog;
+                            }
+                        }
+                    },
+                    AccessPattern::All => {
+                        if some_reads || some_writes {
+                            postponed.push(tx_index);
+                        } else {
+                            scheduled.push(tx_index);
+                            write_locked = true;
+                        }
+
+                        // Write-all transactions can't have any other accesses, can proceed with the next tx
+                        continue 'backlog;
+                    },
+                    AccessPattern::Done => {
+                        break 'writes;
+                    }
+                }
+            }
+
+            // Transaction can be executed in parallel
+            scheduled.push(tx_index);
+        }
+    }
 }
 
 struct Execution;
@@ -771,30 +917,44 @@ impl<const A: usize, const P: usize> SchedulingCore<A, P> {
         let mut backlog = self.backlog.get_mut();
         backlog.extend(range);
 
+        let mut read_only = Vec::with_capacity(backlog.len());
+
         while !backlog.is_empty() {
             // TODO Remove this alloc too
             let mut scheduled = Vec::with_capacity(backlog.len());
 
-            Scheduling::schedule_chunk_new(
+            Scheduling::schedule_chunk_new_bis(
                 &transactions,
                 backlog,
                 &mut scheduled,
+                &mut read_only,
                 self.postponed.get_mut(),
                 self.address_map.get_mut(),
                 // c
             );
-            if scheduled.is_empty() { panic!("Scheduler produced an empty schedule"); }
+            if scheduled.is_empty() && read_only.is_empty() { panic!("Scheduler produced an empty schedule"); }
             // backlog is now empty
 
             // VmUtils::timestamp(format!("\tScheduler {} sends schedule", self.scheduler_index).as_str());
-            if let Err(e) = self.output.send(
-                SchedulerOutput{ transactions: transactions.clone(), scheduled: Arc::new(scheduled) }
-            ) {
-                panic!("Failed to send schedule: {:?}", e.into_inner());
+            if !scheduled.is_empty() {
+                if let Err(e) = self.output.send(
+                    SchedulerOutput{ transactions: transactions.clone(), scheduled: Arc::new(scheduled) }
+                ) {
+                    panic!("Failed to send schedule: {:?}", e.into_inner());
+                }
             }
 
             mem::swap(backlog, self.postponed.get_mut());
             self.address_map.get_mut().clear();
+        }
+
+        if !read_only.is_empty() {
+            // println!("Read-only: {:?}", read_only);
+            if let Err(e) = self.output.send(
+                SchedulerOutput{ transactions: transactions.clone(), scheduled: Arc::new(read_only) }
+            ) {
+                panic!("Failed to send read-only schedule: {:?}", e.into_inner());
+            }
         }
 
         if let Err(e) = self.output.send(
@@ -967,13 +1127,30 @@ pub struct Coordinator<const A: usize, const P: usize> {
 
     pub storage: VmStorage,
 }
-impl<const A: usize, const P: usize> Coordinator<A, P> {
-    pub fn new(batch_size: usize, storage_size: usize, nb_schedulers: usize, nb_executors: usize) -> Self {
+struct CoreMapping {
+    executor: Box<dyn Fn(usize) -> usize>,
+    scheduler: Box<dyn Fn(usize) -> usize>,
+}
 
-        let pinned = core_affinity::set_for_current(CoreId{ id: nb_schedulers + nb_executors });
-        if !pinned {
-            panic!("Unable to pin to executor core to CPU #{}", nb_schedulers + nb_executors);
-        }
+impl<const A: usize, const P: usize> Coordinator<A, P> {
+    pub fn new(batch_size: usize, storage_size: usize, nb_schedulers: usize, nb_executors: usize, mapping: String) -> Self {
+        let physical_cores = get_core_ids().unwrap().len()/2;
+
+        let core_mapping = match mapping.as_str() {
+            "a" => CoreMapping{
+                scheduler: Box::new(|index: usize| 2 * index),
+                executor: Box::new(|index: usize| 2 * index + 1),
+            },
+            "b" => CoreMapping{
+                scheduler: Box::new(|index: usize| index),
+                executor: Box::new(move |index: usize| physical_cores + index),
+            },
+            "c" => CoreMapping{
+                scheduler: Box::new(|index: usize| index),
+                executor: Box::new(move |index: usize| nb_schedulers + index),
+            },
+            _ => panic!("Unknown mapping")
+        };
 
         let storage = VmStorage::new(storage_size);
 
@@ -993,7 +1170,7 @@ impl<const A: usize, const P: usize> Coordinator<A, P> {
             scheduler_durations.push(duration.clone());
 
             scheduler_handles.push(SchedulingCore::spawn(
-                scheduler_index,
+                (core_mapping.scheduler)(scheduler_index),
                 batch_size/nb_schedulers,
                 receive_work,
                 send_schedule,
@@ -1020,7 +1197,7 @@ impl<const A: usize, const P: usize> Coordinator<A, P> {
             executor_new_txs.push(new_txs.clone());
 
             executor_handles.push(ExecutionCore::spawn(
-                nb_schedulers + executor_index,
+                (core_mapping.executor)(executor_index),
                 receive_work,
                 send_results,
                 storage.get_shared(),

@@ -47,6 +47,7 @@ pub struct BenchmarkConfig {
     pub warmup: u64,
     pub seed: Option<u64>,
     pub graph: bool,
+    pub mapping: String
 }
 
 impl ConfigFile for BenchmarkConfig {
@@ -68,6 +69,7 @@ impl Default for BenchmarkConfig {
             warmup: 1,
             seed: Some(42),
             graph: false,
+            mapping: String::from("a"),
         }
     }
 }
@@ -84,6 +86,7 @@ pub struct RunParameter {
     pub warmup: u64,
     pub seed: Option<u64>,
     pub graph: bool,
+    pub mapping: String
 }
 
 impl RunParameter {
@@ -98,8 +101,9 @@ impl RunParameter {
         warmup: u64,
         seed: Option<u64>,
         graph: bool,
+        mapping: String
     ) -> Self {
-        return Self{ vm_type, nb_schedulers, nb_executors, batch_size, storage_size, workload, repetitions, warmup, seed, graph }
+        return Self{ vm_type, nb_schedulers, nb_executors, batch_size, storage_size, workload, repetitions, warmup, seed, graph, mapping }
     }
 }
 

@@ -68,7 +68,8 @@ pub fn benchmarking(path: &str) -> Result<()> {
                             config.repetitions,
                             config.warmup,
                             config.seed,
-                            config.graph
+                            config.graph,
+                            config.mapping.clone()
                         );
 
                         let result = if vm_type.new() {
@@ -295,8 +296,8 @@ impl<const A: usize, const P: usize> VmWrapper<A, P> {
             VmType::Sequential => VmWrapper::Sequential(SequentialVM::new(p.storage_size).unwrap()),
             VmType::ParallelCollect => VmWrapper::ParallelCollect(ParallelVmCollect::new(p.storage_size, p.nb_schedulers, p.nb_executors).unwrap()),
             VmType::ParallelImmediate => VmWrapper::ParallelImmediate(ParallelVmImmediate::new(p.storage_size, p.nb_schedulers, p.nb_executors).unwrap()),
-            VmType::Immediate => VmWrapper::Immediate(Coordinator::new(p.batch_size, p.storage_size, p.nb_schedulers, p.nb_executors)),
-            VmType::Collect => VmWrapper::Collect(Coordinator::new(p.batch_size, p.storage_size, p.nb_schedulers, p.nb_executors)),
+            VmType::Immediate => VmWrapper::Immediate(Coordinator::new(p.batch_size, p.storage_size, p.nb_schedulers, p.nb_executors, p.mapping.clone())),
+            VmType::Collect => VmWrapper::Collect(Coordinator::new(p.batch_size, p.storage_size, p.nb_schedulers, p.nb_executors, p.mapping.clone())),
             VmType::Mixed => VmWrapper::Mixed(CoordinatorMixed::new(p.batch_size, p.storage_size, p.nb_schedulers, p.nb_executors)),
             VmType::NewCollect => VmWrapper::NewCollect(NewCollect::new(p.batch_size, p.storage_size, p.nb_schedulers, p.nb_executors)),
             _ => todo!()
@@ -411,7 +412,8 @@ impl TestBench {
                                 config.repetitions,
                                 config.warmup,
                                 config.seed,
-                                config.graph
+                                config.graph,
+                                config.mapping.clone()
                             );
 
                             results.push(TestBench::run(parameter).await);
@@ -462,6 +464,7 @@ impl TestBench {
                     config.warmup,
                     config.seed,
                     config.graph,
+                    config.mapping.clone()
                 );
 
                 let baseline = TestBench::run(parameter).await;
@@ -484,7 +487,8 @@ impl TestBench {
                                 config.repetitions,
                                 config.warmup,
                                 config.seed,
-                                config.graph
+                                config.graph,
+                                config.mapping.clone()
                             );
                             let res = TestBench::run(parameter).await;
                             print!(", {}", format_latency(&res.latency));
