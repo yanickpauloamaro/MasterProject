@@ -1,0 +1,129 @@
+Collect {
+	3 schedulers, 3 executors {
+		PreviousDHashMap(7, 64, 1024; 0.7, 0.05, 0.05, 0.2) {
+			9.81 ± 0.16 tx/µs
+			6.68ms ± 110µs	(scheduling: 1.232ms ± 37µs, execution: 4.485ms ± 18µs)
+		}
+	}
+}
+Done. Took 1.07s
+
+main took 1.07s
+
+ Performance counter stats for 'system wide':
+
+Scheduler 0 and scheduler 1
+S0-D0-C0           2          6,256,476      L1-icache-load-misses                                                (36.04%)
+S0-D0-C0           2         35,695,146      L1-dcache-load-misses                                                (36.42%)
+S0-D0-C0           2         16,079,459      l2_rqsts.all_demand_miss                                             (36.80%)
+S0-D0-C0           2          9,544,169      LLC-loads                                                            (37.17%)
+S0-D0-C0           2            946,118      LLC-load-misses                  #    9.91% of all LL-cache accesses  (37.05%)
+S0-D0-C0           2          4,303,749      LLC-stores                                                           (17.98%)
+S0-D0-C0           2          1,337,699      LLC-store-misses                                                     (17.93%)
+S0-D0-C0           2        785,146,991      dTLB-loads                                                           (26.90%)
+S0-D0-C0           2            785,123      dTLB-load-misses                 #    0.10% of all dTLB cache accesses  (35.87%)
+S0-D0-C0           2        546,967,241      dTLB-stores                                                          (35.88%)
+S0-D0-C0           2            146,231      dTLB-store-misses                                                    (35.88%)
+Scheduler 2 and executor 0
+S0-D0-C1           2          5,847,848      L1-icache-load-misses                                                (36.04%)
+S0-D0-C1           2         35,212,254      L1-dcache-load-misses                                                (36.42%)
+S0-D0-C1           2         15,581,460      l2_rqsts.all_demand_miss                                             (36.79%)
+S0-D0-C1           2          9,972,286      LLC-loads                                                            (37.17%)
+S0-D0-C1           2            891,341      LLC-load-misses                  #    8.94% of all LL-cache accesses  (37.05%)
+S0-D0-C1           2          4,251,147      LLC-stores                                                           (17.99%)
+S0-D0-C1           2          1,338,837      LLC-store-misses                                                     (17.94%)
+S0-D0-C1           2        787,260,706      dTLB-loads                                                           (26.91%)
+S0-D0-C1           2            797,606      dTLB-load-misses                 #    0.10% of all dTLB cache accesses  (35.88%)
+S0-D0-C1           2        546,586,534      dTLB-stores                                                          (35.87%)
+S0-D0-C1           2            144,136      dTLB-store-misses                                                    (35.88%)
+Executor 1 and executor 2
+S0-D0-C2           2          7,103,707      L1-icache-load-misses                                                (36.03%)
+S0-D0-C2           2        175,230,606      L1-dcache-load-misses                                                (36.40%)
+S0-D0-C2           2        137,524,565      l2_rqsts.all_demand_miss                                             (36.78%)
+S0-D0-C2           2         15,461,315      LLC-loads                                                            (37.15%)
+S0-D0-C2           2          5,211,821      LLC-load-misses                  #   33.71% of all LL-cache accesses  (37.06%)
+S0-D0-C2           2        140,563,800      LLC-stores                                                           (18.00%)
+S0-D0-C2           2        120,271,487      LLC-store-misses                                                     (17.95%)
+S0-D0-C2           2        245,810,395      dTLB-loads                                                           (26.91%)
+S0-D0-C2           2            688,298      dTLB-load-misses                 #    0.28% of all dTLB cache accesses  (35.89%)
+S0-D0-C2           2        161,978,534      dTLB-stores                                                          (35.88%)
+S0-D0-C2           2          2,447,941      dTLB-store-misses                                                    (35.88%)
+Coordinator and benchmark
+S0-D0-C3           2          5,887,473      L1-icache-load-misses                                                (36.04%)
+S0-D0-C3           2         24,282,374      L1-dcache-load-misses                                                (36.41%)
+S0-D0-C3           2         11,968,820      l2_rqsts.all_demand_miss                                             (36.78%)
+S0-D0-C3           2          8,378,861      LLC-loads                                                            (37.16%)
+S0-D0-C3           2            567,857      LLC-load-misses                  #    6.78% of all LL-cache accesses  (37.06%)
+S0-D0-C3           2          1,602,884      LLC-stores                                                           (17.99%)
+S0-D0-C3           2            379,600      LLC-store-misses                                                     (17.93%)
+S0-D0-C3           2        637,770,184      dTLB-loads                                                           (26.90%)
+S0-D0-C3           2            616,053      dTLB-load-misses                 #    0.10% of all dTLB cache accesses  (35.88%)
+S0-D0-C3           2        441,648,167      dTLB-stores                                                          (35.88%)
+S0-D0-C3           2             82,001      dTLB-store-misses                                                    (35.88%)
+
+       1.070189853 seconds time elapsed
+
+
+Collect {
+	3 schedulers, 3 executors {
+		PreviousDHashMap(7, 64, 1024; 0.7, 0.05, 0.05, 0.2) {
+			9.35 ± 0.40 tx/µs
+			7.01ms ± 286µs	(scheduling: 1.232ms ± 52µs, execution: 4.51ms ± 22µs)
+		}
+	}
+}
+Done. Took 1.10s
+
+main took 1.10s
+
+ Performance counter stats for 'system wide':
+Scheduler 0 and scheduler 1
+S0-D0-C0           2          7,174,336      L1-icache-load-misses                                                (36.29%)
+S0-D0-C0           2         57,262,911      L1-dcache-load-misses                                                (36.65%)
+S0-D0-C0           2         28,306,177      l2_rqsts.all_demand_miss                                             (36.74%)
+S0-D0-C0           2         10,967,060      LLC-loads                                                            (36.74%)
+S0-D0-C0           2          1,371,022      LLC-load-misses                  #   12.50% of all LL-cache accesses  (36.61%)
+S0-D0-C0           2         11,283,477      LLC-stores                                                           (18.07%)
+S0-D0-C0           2         19,740,736      LLC-store-misses                                                     (18.07%)
+S0-D0-C0           2        790,184,197      dTLB-loads                                                           (27.11%)
+S0-D0-C0           2            959,642      dTLB-load-misses                 #    0.12% of all dTLB cache accesses  (36.15%)
+S0-D0-C0           2        562,174,003      dTLB-stores                                                          (36.15%)
+S0-D0-C0           2            358,647      dTLB-store-misses                                                    (36.15%)
+Scheduler 2 and executor 0
+S0-D0-C1           2          6,738,413      L1-icache-load-misses                                                (36.29%)
+S0-D0-C1           2         51,501,023      L1-dcache-load-misses                                                (36.66%)
+S0-D0-C1           2         33,574,615      l2_rqsts.all_demand_miss                                             (36.74%)
+S0-D0-C1           2         11,344,646      LLC-loads                                                            (36.74%)
+S0-D0-C1           2          1,782,060      LLC-load-misses                  #   15.71% of all LL-cache accesses  (36.60%)
+S0-D0-C1           2         19,540,380      LLC-stores                                                           (18.07%)
+S0-D0-C1           2         18,926,280      LLC-store-misses                                                     (18.07%)
+S0-D0-C1           2        827,230,745      dTLB-loads                                                           (27.11%)
+S0-D0-C1           2          1,002,568      dTLB-load-misses                 #    0.12% of all dTLB cache accesses  (36.14%)
+S0-D0-C1           2        580,135,344      dTLB-stores                                                          (36.15%)
+S0-D0-C1           2            496,830      dTLB-store-misses                                                    (36.16%)
+Executor 1 and executor 2
+S0-D0-C2           2          7,234,349      L1-icache-load-misses                                                (36.30%)
+S0-D0-C2           2         68,491,529      L1-dcache-load-misses                                                (36.65%)
+S0-D0-C2           2         55,601,178      l2_rqsts.all_demand_miss                                             (36.75%)
+S0-D0-C2           2          7,259,369      LLC-loads                                                            (36.75%)
+S0-D0-C2           2          2,738,855      LLC-load-misses                  #   37.73% of all LL-cache accesses  (36.60%)
+S0-D0-C2           2         58,788,331      LLC-stores                                                           (18.07%)
+S0-D0-C2           2         58,390,913      LLC-store-misses                                                     (18.07%)
+S0-D0-C2           2        213,297,310      dTLB-loads                                                           (27.09%)
+S0-D0-C2           2            455,165      dTLB-load-misses                 #    0.21% of all dTLB cache accesses  (36.13%)
+S0-D0-C2           2        140,866,830      dTLB-stores                                                          (36.14%)
+S0-D0-C2           2            950,553      dTLB-store-misses                                                    (36.14%)
+None
+S0-D0-C3           2          8,361,634      L1-icache-load-misses                                                (36.28%)
+S0-D0-C3           2         85,947,416      L1-dcache-load-misses                                                (36.65%)
+S0-D0-C3           2         62,331,404      l2_rqsts.all_demand_miss                                             (36.74%)
+S0-D0-C3           2         13,562,595      LLC-loads                                                            (36.75%)
+S0-D0-C3           2          2,421,809      LLC-load-misses                  #   17.86% of all LL-cache accesses  (36.62%)
+S0-D0-C3           2         51,917,105      LLC-stores                                                           (18.07%)
+S0-D0-C3           2         40,987,336      LLC-store-misses                                                     (18.08%)
+S0-D0-C3           2        657,584,070      dTLB-loads                                                           (27.10%)
+S0-D0-C3           2            922,884      dTLB-load-misses                 #    0.14% of all dTLB cache accesses  (36.15%)
+S0-D0-C3           2        469,996,408      dTLB-stores                                                          (36.15%)
+S0-D0-C3           2            958,829      dTLB-store-misses                                                    (36.14%)
+
+       1.106659339 seconds time elapsed

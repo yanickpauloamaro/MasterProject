@@ -131,8 +131,10 @@ impl<const ADDRESS_COUNT: usize, const PARAM_COUNT: usize> Transaction<ADDRESS_C
 
                         let hash_table_start = 0;
                         let bucket_location = self.addresses[0] as StaticAddress;
+                        let bucket_end = self.addresses[1] as StaticAddress;
                         accesses[0] = Access::Address(hash_table_start, AccessType::Read);
                         accesses[1] = Access::Address(bucket_location, AccessType::Write);
+                        // accesses[1] = Access::Range(bucket_location, bucket_end, AccessType::Write);
                         Some(accesses)
                     },
                     Resize => {
@@ -151,8 +153,10 @@ impl<const ADDRESS_COUNT: usize, const PARAM_COUNT: usize> Transaction<ADDRESS_C
 
                         let hash_table_start = 0;
                         let bucket_location = self.addresses[0] as StaticAddress;
+                        let bucket_end = self.addresses[1] as StaticAddress;
                         accesses[0] = Access::Address(hash_table_start, AccessType::Read);
                         accesses[1] = Access::Address(bucket_location, AccessType::Read);
+                        // accesses[1] = Access::Range(bucket_location, bucket_end, AccessType::Read);
                         Some(accesses)
                     }
                 }
@@ -219,9 +223,11 @@ impl<const ADDRESS_COUNT: usize, const PARAM_COUNT: usize> Transaction<ADDRESS_C
                     Insert | Remove => {
                         let hash_table_start = 0;
                         let bucket_location = self.addresses[0] as StaticAddress;
+                        let bucket_end = self.addresses[1] as StaticAddress;
 
                         reads[0] = AccessPattern::Address(hash_table_start);
                         writes[0] = AccessPattern::Address(bucket_location);
+                        // writes[0] = AccessPattern::Range(bucket_location, bucket_end);
                         (Some(reads), Some(writes))
                     },
                     Resize => {
@@ -231,9 +237,11 @@ impl<const ADDRESS_COUNT: usize, const PARAM_COUNT: usize> Transaction<ADDRESS_C
                     Get | Has => {
                         let hash_table_start = 0;
                         let bucket_location = self.addresses[0] as StaticAddress;
+                        let bucket_end = self.addresses[1] as StaticAddress;
 
                         reads[0] = AccessPattern::Address(hash_table_start);
                         reads[1] = AccessPattern::Address(bucket_location);
+                        // reads[1] = AccessPattern::Range(bucket_location, bucket_end);
                         (Some(reads), None)
                     }
                 }

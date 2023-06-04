@@ -1,0 +1,122 @@
+Collect {
+	2 schedulers, 2 executors {
+		Transfer(0.0) {
+			30.57 ± 0.14 tx/µs
+			2.144ms ± 10µs	(scheduling: 997µs ± 2µs, execution: 913µs ± 7µs)
+		}
+		Transfer(0.5) {
+			27.55 ± 0.08 tx/µs
+			2.379ms ± 7µs	(scheduling: 1.416ms ± 2µs, execution: 1.049ms ± 6µs)
+		}
+		Fibonacci(20) {
+            0.09 ± 0.00 tx/µs
+            710.736ms ± 72µs	(scheduling: 160µs ± 6µs, execution: 709.951ms ± 38µs)
+        }
+		PreviousDHashMap(7, 64, 1024; 0.7, 0.05, 0.05, 0.2) {
+			8.79 ± 0.01 tx/µs
+			7.455ms ± 9µs	(scheduling: 1.479ms ± 3µs, execution: 5.9ms ± 3µs)
+		}
+		PreviousDHashMap(7, 64, 1024; 0.25, 0.25, 0.25, 0.25) {
+			5.09 ± 0.04 tx/µs
+			12.881ms ± 106µs	(scheduling: 6.722ms ± 75µs, execution: 8.794ms ± 5µs)
+		}
+		PreviousDHashMap(7, 64, 4098; 0.7, 0.05, 0.05, 0.2) {
+			7.88 ± 0.02 tx/µs
+			8.32ms ± 16µs	(scheduling: 1.439ms ± 3µs, execution: 6.025ms ± 6µs)
+		}
+		PreviousDHashMap(7, 64, 4098; 0.25, 0.25, 0.25, 0.25) {
+			6.40 ± 0.01 tx/µs
+			10.248ms ± 10µs	(scheduling: 4.435ms ± 5µs, execution: 8.296ms ± 3µs)
+		}
+	}
+	2 schedulers, 4 executors {
+		Transfer(0.0) {
+			38.89 ± 0.12 tx/µs
+			1.685ms ± 5µs	(scheduling: 990µs ± 2µs, execution: 458µs ± 2µs)
+		}
+		Transfer(0.5) {
+			31.63 ± 0.09 tx/µs
+			2.072ms ± 6µs	(scheduling: 1.43ms ± 3µs, execution: 626µs ± 4µs)
+		}
+		Fibonacci(20) {
+            0.18 ± 0.00 tx/µs
+            355.349ms ± 60µs	(scheduling: 158µs ± 3µs, execution: 354.614ms ± 19µs)
+        }
+		PreviousDHashMap(7, 64, 1024; 0.7, 0.05, 0.05, 0.2) {
+			13.50 ± 0.01 tx/µs
+			4.853ms ± 4µs	(scheduling: 1.467ms ± 1µs, execution: 3.07ms ± 1µs)
+		}
+		PreviousDHashMap(7, 64, 1024; 0.25, 0.25, 0.25, 0.25) {
+			6.97 ± 0.09 tx/µs
+			9.406ms ± 120µs	(scheduling: 6.384ms ± 65µs, execution: 4.803ms ± 11µs)
+		}
+		PreviousDHashMap(7, 64, 4098; 0.7, 0.05, 0.05, 0.2) {
+			12.46 ± 0.02 tx/µs
+			5.26ms ± 8µs	(scheduling: 1.374ms ± 2µs, execution: 2.989ms ± 2µs)
+		}
+		PreviousDHashMap(7, 64, 4098; 0.25, 0.25, 0.25, 0.25) {
+			9.53 ± 0.01 tx/µs
+			6.874ms ± 8µs	(scheduling: 4.397ms ± 4µs, execution: 4.664ms ± 1µs)
+		}
+	}
+	2 schedulers, 8 executors {
+		Transfer(0.0) {
+			45.10 ± 0.06 tx/µs
+			1.453ms ± 2µs	(scheduling: 984µs ± 1µs, execution: 230µs ± 0ns)
+		}
+		Transfer(0.5) {
+			35.33 ± 0.04 tx/µs
+			1.855ms ± 2µs	(scheduling: 1.36ms ± 2µs, execution: 367µs ± 1µs)
+		}
+		Fibonacci(20) {
+            0.37 ± 0.00 tx/µs
+            177.886ms ± 35µs	(scheduling: 161µs ± 6µs, execution: 177.359ms ± 11µs)
+        }
+		PreviousDHashMap(7, 64, 1024; 0.7, 0.05, 0.05, 0.2) {
+			17.75 ± 0.02 tx/µs
+			3.693ms ± 4µs	(scheduling: 1.4ms ± 1µs, execution: 1.611ms ± 1µs)
+		}
+		PreviousDHashMap(7, 64, 1024; 0.25, 0.25, 0.25, 0.25) {
+			7.91 ± 0.10 tx/µs
+			8.289ms ± 108µs	(scheduling: 6.043ms ± 70µs, execution: 2.559ms ± 5µs)
+		}
+		PreviousDHashMap(7, 64, 4098; 0.7, 0.05, 0.05, 0.2) {
+			16.63 ± 0.03 tx/µs
+			3.942ms ± 6µs	(scheduling: 1.337ms ± 2µs, execution: 1.546ms ± 1µs)
+		}
+		PreviousDHashMap(7, 64, 4098; 0.25, 0.25, 0.25, 0.25) {
+			11.20 ± 0.02 tx/µs
+			5.852ms ± 8µs	(scheduling: 4.109ms ± 5µs, execution: 2.48ms ± 1µs)
+		}
+	}
+	2 schedulers, 12 executors {
+		Transfer(0.0) {
+			45.86 ± 0.10 tx/µs
+			1.429ms ± 3µs	(scheduling: 997µs ± 2µs, execution: 255µs ± 0ns)
+		}
+		Transfer(0.5) {
+			34.04 ± 0.04 tx/µs
+			1.925ms ± 2µs	(scheduling: 1.334ms ± 2µs, execution: 261µs ± 0ns)
+		}
+		Fibonacci(20) {
+            0.55 ± 0.00 tx/µs
+            118.986ms ± 56µs	(scheduling: 158µs ± 6µs, execution: 118.233ms ± 7µs)
+        }
+		PreviousDHashMap(7, 64, 1024; 0.7, 0.05, 0.05, 0.2) {
+			18.12 ± 0.01 tx/µs
+			3.616ms ± 2µs	(scheduling: 1.344ms ± 1µs, execution: 1.136ms ± 1µs)
+		}
+		PreviousDHashMap(7, 64, 1024; 0.25, 0.25, 0.25, 0.25) {
+			8.04 ± 0.11 tx/µs
+			8.149ms ± 108µs	(scheduling: 5.891ms ± 70µs, execution: 1.714ms ± 4µs)
+		}
+		PreviousDHashMap(7, 64, 4098; 0.7, 0.05, 0.05, 0.2) {
+			17.44 ± 0.02 tx/µs
+			3.758ms ± 4µs	(scheduling: 1.316ms ± 1µs, execution: 1.119ms ± 0ns)
+		}
+		PreviousDHashMap(7, 64, 4098; 0.25, 0.25, 0.25, 0.25) {
+			11.26 ± 0.01 tx/µs
+			5.821ms ± 7µs	(scheduling: 3.936ms ± 5µs, execution: 1.669ms ± 1µs)
+		}
+	}
+}

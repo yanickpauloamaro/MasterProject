@@ -1,0 +1,80 @@
+Collect {
+	8 schedulers, 2 executors {
+		Transfer(0.0) {
+			52.68 ± 0.21 tx/µs
+			1.244ms ± 5µs	(scheduling: 216µs ± 0ns, execution: 773µs ± 2µs)
+		}
+		Transfer(0.5) {
+			46.38 ± 0.10 tx/µs
+			1.413ms ± 3µs	(scheduling: 228µs ± 0ns, execution: 810µs ± 2µs)
+		}
+		PreviousDHashMap(7, 64, 1024; 0.7, 0.05, 0.05, 0.2) {
+			8.89 ± 0.01 tx/µs
+			7.372ms ± 5µs	(scheduling: 314µs ± 1µs, execution: 5.782ms ± 1µs)
+		}
+		PreviousDHashMap(7, 64, 1024; 0.25, 0.25, 0.25, 0.25) {
+			6.69 ± 0.00 tx/µs
+			9.795ms ± 6µs	(scheduling: 689µs ± 2µs, execution: 7.609ms ± 2µs)
+		}
+		PreviousDHashMap(7, 64, 4098; 0.7, 0.05, 0.05, 0.2) {
+			8.77 ± 0.01 tx/µs
+			7.473ms ± 5µs	(scheduling: 316µs ± 1µs, execution: 5.885ms ± 2µs)
+		}
+		PreviousDHashMap(7, 64, 4098; 0.25, 0.25, 0.25, 0.25) {
+			6.94 ± 0.00 tx/µs
+			9.45ms ± 6µs	(scheduling: 635µs ± 2µs, execution: 7.353ms ± 2µs)
+		}
+	}
+	8 schedulers, 4 executors {
+		Transfer(0.0) {
+			75.50 ± 0.09 tx/µs
+			868µs ± 1µs	(scheduling: 217µs ± 0ns, execution: 395µs ± 1µs)
+		}
+		Transfer(0.5) {
+			53.41 ± 0.04 tx/µs
+			1.227ms ± 1µs	(scheduling: 231µs ± 0ns, execution: 453µs ± 1µs)
+		}
+		PreviousDHashMap(7, 64, 1024; 0.7, 0.05, 0.05, 0.2) {
+			12.82 ± 0.01 tx/µs
+			5.111ms ± 3µs	(scheduling: 312µs ± 0ns, execution: 3.001ms ± 1µs)
+		}
+		PreviousDHashMap(7, 64, 1024; 0.25, 0.25, 0.25, 0.25) {
+			9.33 ± 0.01 tx/µs
+			7.023ms ± 4µs	(scheduling: 767µs ± 1µs, execution: 4.06ms ± 1µs)
+		}
+		PreviousDHashMap(7, 64, 4098; 0.7, 0.05, 0.05, 0.2) {
+			12.57 ± 0.01 tx/µs
+			5.213ms ± 3µs	(scheduling: 331µs ± 1µs, execution: 3.052ms ± 1µs)
+		}
+		PreviousDHashMap(7, 64, 4098; 0.25, 0.25, 0.25, 0.25) {
+			9.48 ± 0.01 tx/µs
+			6.914ms ± 10µs	(scheduling: 734µs ± 4µs, execution: 3.94ms ± 2µs)
+		}
+	}
+	8 schedulers, 7 executors {
+		Transfer(0.0) {
+			83.27 ± 0.11 tx/µs
+			787µs ± 1µs	(scheduling: 234µs ± 0ns, execution: 279µs ± 0ns)
+		}
+		Transfer(0.5) {
+			50.69 ± 0.04 tx/µs
+			1.293ms ± 1µs	(scheduling: 245µs ± 0ns, execution: 320µs ± 0ns)
+		}
+		PreviousDHashMap(7, 64, 1024; 0.7, 0.05, 0.05, 0.2) {
+			14.49 ± 0.01 tx/µs
+			4.523ms ± 3µs	(scheduling: 353µs ± 1µs, execution: 1.739ms ± 0ns)
+		}
+		PreviousDHashMap(7, 64, 1024; 0.25, 0.25, 0.25, 0.25) {
+			10.13 ± 0.00 tx/µs
+			6.468ms ± 3µs	(scheduling: 839µs ± 1µs, execution: 2.353ms ± 1µs)
+		}
+		PreviousDHashMap(7, 64, 4098; 0.7, 0.05, 0.05, 0.2) {
+			14.73 ± 0.01 tx/µs
+			4.449ms ± 3µs	(scheduling: 335µs ± 1µs, execution: 1.777ms ± 0ns)
+		}
+		PreviousDHashMap(7, 64, 4098; 0.25, 0.25, 0.25, 0.25) {
+			10.38 ± 0.03 tx/µs
+			6.313ms ± 16µs	(scheduling: 775µs ± 2µs, execution: 2.317ms ± 1µs)
+		}
+	}
+}

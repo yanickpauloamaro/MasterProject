@@ -1,0 +1,102 @@
+
+
+// =============================================================================================
+// =============================================================================================
+// =============================================================================================
+sudo perf stat -e L1-icache-load-misses,L1-dcache-load-misses,l2_rqsts.all_demand_miss,LLC-loads,LLC-load-misses,LLC-stores,LLC-store-misses,dTLB-loads,dTLB-load-misses,dTLB-stores,dTLB-store-misses ./target/release/testbench
+// Collect 1 schedulers, 1 executors
+Performance counter stats for './target/release/testbench':
+
+       251,477,589      L1-dcache-load-misses                                                (39.35%)
+       157,029,061      l2_rqsts.all_demand_miss                                             (39.53%)
+        46,007,200      LLC-loads                                                            (38.92%)
+         7,347,988      LLC-load-misses                  #   15.97% of all LL-cache accesses  (40.81%)
+       119,559,542      LLC-stores                                                           (21.23%)
+       124,924,824      LLC-store-misses                                                     (20.70%)
+     2,591,840,930      dTLB-loads                                                           (30.45%)
+         2,453,354      dTLB-load-misses                 #    0.09% of all dTLB cache accesses  (40.48%)
+     1,792,364,169      dTLB-stores                                                          (40.22%)
+         3,525,463      dTLB-store-misses                                                    (39.08%)
+
+       2.153990900 seconds time elapsed
+
+       2.107584000 seconds user
+       0.152172000 seconds sys
+
+// Collect 4 schedulers, 1 executors
+Performance counter stats for './target/release/testbench':
+
+       262,577,326      L1-dcache-load-misses                                                (41.96%)
+       165,034,985      l2_rqsts.all_demand_miss                                             (42.30%)
+        37,021,183      LLC-loads                                                            (40.23%)
+         7,168,192      LLC-load-misses                  #   19.36% of all LL-cache accesses  (38.99%)
+       139,109,549      LLC-stores                                                           (18.68%)
+        94,839,030      LLC-store-misses                                                     (20.94%)
+     2,655,575,722      dTLB-loads                                                           (30.87%)
+         2,133,153      dTLB-load-misses                 #    0.08% of all dTLB cache accesses  (40.84%)
+     1,801,644,600      dTLB-stores                                                          (41.87%)
+         5,870,584      dTLB-store-misses                                                    (41.56%)
+
+       2.143860841 seconds time elapsed
+
+       2.282484000 seconds user
+       0.239421000 seconds sys
+
+
+// Collect 1 schedulers, 4 executors
+Performance counter stats for './target/release/testbench':
+
+       266,292,133      L1-dcache-load-misses                                                (39.37%)
+       170,453,160      l2_rqsts.all_demand_miss                                             (38.43%)
+        44,466,601      LLC-loads                                                            (40.29%)
+         7,561,153      LLC-load-misses                  #   17.00% of all LL-cache accesses  (40.35%)
+       145,589,941      LLC-stores                                                           (20.47%)
+       109,869,698      LLC-store-misses                                                     (21.45%)
+     2,631,782,826      dTLB-loads                                                           (32.34%)
+         3,191,043      dTLB-load-misses                 #    0.12% of all dTLB cache accesses  (43.09%)
+     1,810,343,026      dTLB-stores                                                          (40.85%)
+         3,602,254      dTLB-store-misses                                                    (39.55%)
+
+       1.293695561 seconds time elapsed
+
+       2.307002000 seconds user
+       0.162891000 seconds sys
+
+
+// Collect 3 schedulers, 4 executors
+Performance counter stats for './target/release/testbench':
+
+       264,499,881      L1-dcache-load-misses                                                (38.28%)
+       175,334,268      l2_rqsts.all_demand_miss                                             (38.18%)
+        41,673,014      LLC-loads                                                            (39.12%)
+         7,445,770      LLC-load-misses                  #   17.87% of all LL-cache accesses  (41.25%)
+       147,495,785      LLC-stores                                                           (21.16%)
+       126,054,487      LLC-store-misses                                                     (20.25%)
+     2,381,772,335      dTLB-loads                                                           (30.67%)
+         3,366,703      dTLB-load-misses                 #    0.14% of all dTLB cache accesses  (41.19%)
+     1,705,655,346      dTLB-stores                                                          (40.90%)
+         2,694,442      dTLB-store-misses                                                    (39.98%)
+
+       1.018256781 seconds time elapsed
+
+       2.472994000 seconds user
+       0.105233000 seconds sys
+
+// Sequential
+Performance counter stats for './target/release/testbench':
+
+       175,389,012      L1-dcache-load-misses                                                (39.98%)
+       123,387,834      l2_rqsts.all_demand_miss                                             (39.97%)
+        21,893,766      LLC-loads                                                            (39.98%)
+         4,486,374      LLC-load-misses                  #   20.49% of all LL-cache accesses  (39.97%)
+       136,124,713      LLC-stores                                                           (20.01%)
+       108,226,402      LLC-store-misses                                                     (20.00%)
+     1,914,392,143      dTLB-loads                                                           (30.00%)
+           705,131      dTLB-load-misses                 #    0.04% of all dTLB cache accesses  (40.01%)
+     1,427,003,960      dTLB-stores                                                          (40.01%)
+         2,208,577      dTLB-store-misses                                                    (40.02%)
+
+       1.719503488 seconds time elapsed
+
+       1.694571000 seconds user
+       0.023979000 seconds sys

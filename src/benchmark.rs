@@ -723,11 +723,11 @@ impl TestBench {
             let _vm_output = vm.execute(batch).await;
         }
 
-        // vm.init_vm_storage(workload.initialisation(&params, &mut rng));
+        vm.init_vm_storage(workload.initialisation(&params, &mut rng));
         for _ in 0..params.repetitions {
             // let batch = workload.new_batch(&params, &mut rng);
             let batch = batch.clone();
-            vm.init_vm_storage(workload.initialisation(&params, &mut rng));
+            // vm.init_vm_storage(workload.initialisation(&params, &mut rng));
 
             // let start = Instant::now();
             // let (scheduling, execution) = vm.execute(batch).unwrap();
