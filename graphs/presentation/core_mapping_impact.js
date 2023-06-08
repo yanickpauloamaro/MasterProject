@@ -1,3 +1,4 @@
+// less /sys/devices/system/cpu/cpu0/topology/thread_siblings_list
 let transfer_0 = [
   {
     name: 'Sequential', data: [1.881], type: 'line',
@@ -187,6 +188,11 @@ let hash_50_4098 = [
 option = {
   title: {
     text: 'Latency'
+  },
+  toolbox: {
+    feature: {
+      saveAsImage: {}
+    }
   },
   legend: {},
   tooltip: { trigger: 'axis'},

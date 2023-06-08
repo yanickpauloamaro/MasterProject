@@ -246,9 +246,7 @@ option = {
   xAxis: config.xAxis,
   yAxis: {
     name: 'Latency',
-    axisLabel: {
-      formatter: '{value} µs'
-    }
+    axisLabel: { formatter: '{value} µs'},
   },
   series: series
 };

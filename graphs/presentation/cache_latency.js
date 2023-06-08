@@ -4,6 +4,11 @@ option = {
   title: {
     text: "Cache misses"
   },
+  toolbox: {
+    feature: {
+      saveAsImage: {}
+    }
+  },
   legend: {},
   tooltip: {
     trigger: 'axis',
