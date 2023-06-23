@@ -1,0 +1,27 @@
+NewCollect {
+	8 schedulers, 8 executors {
+		PreviousDHashMap(7, 64, 1024; 0.7, 0.05, 0.05, 0.2) {
+			12.40 ± 0.02 tx/µs
+			1.321ms ± 2µs	(scheduling: 30µs ± 0ns, execution: 408µs ± 0ns)
+		}
+		PreviousDHashMap(7, 64, 1024; 0.7, 0.05, 0.05, 0.2) {
+			13.62 ± 0.03 tx/µs
+			2.405ms ± 5µs	(scheduling: 65µs ± 0ns, execution: 816µs ± 2µs)
+		}
+		PreviousDHashMap(7, 64, 1024; 0.7, 0.05, 0.05, 0.2) {
+			14.34 ± 0.04 tx/µs
+			4.569ms ± 13µs	(scheduling: 134µs ± 1µs, execution: 1.72ms ± 4µs)
+		}
+		PreviousDHashMap(7, 64, 1024; 0.7, 0.05, 0.05, 0.2) {
+			11.60 ± 0.05 tx/µs
+			11.298ms ± 47µs	(scheduling: 253µs ± 1µs, execution: 3.623ms ± 7µs)
+		}
+		PreviousDHashMap(7, 64, 1024; 0.7, 0.05, 0.05, 0.2) {
+			10.33 ± 0.02 tx/µs
+			25.365ms ± 42µs	(scheduling: 803µs ± 8µs, execution: 7.646ms ± 12µs)
+		}
+	}
+}
+Done. Took 49.76s
+
+main took 49.76s

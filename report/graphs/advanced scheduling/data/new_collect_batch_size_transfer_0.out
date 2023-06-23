@@ -1,0 +1,51 @@
+NewCollect {
+	8 schedulers, 8 executors {
+		Transfer(0.0) {
+			24.90 ± 0.04 tx/µs
+			658µs ± 1µs	(scheduling: 148µs ± 0ns, execution: 63µs ± 0ns)
+		}
+		Transfer(0.0) {
+			30.26 ± 0.03 tx/µs
+			1.083ms ± 1µs	(scheduling: 285µs ± 1µs, execution: 128µs ± 0ns)
+		}
+		Transfer(0.0) {
+			32.08 ± 0.03 tx/µs
+			2.043ms ± 2µs	(scheduling: 514µs ± 1µs, execution: 266µs ± 0ns)
+		}
+		Transfer(0.0) {
+			32.10 ± 0.05 tx/µs
+			4.083ms ± 6µs	(scheduling: 1.067ms ± 4µs, execution: 767µs ± 3µs)
+		}
+		Transfer(0.0) {
+			25.58 ± 0.04 tx/µs
+			10.248ms ± 15µs	(scheduling: 3.223ms ± 13µs, execution: 2.517ms ± 3µs)
+		}
+	}
+}
+Sequential {
+	8 schedulers, 8 executors {
+		Transfer(0.0) {
+			51.20 ± 0.00 tx/µs
+			320µs ± 0ns
+		}
+		Transfer(0.0) {
+			48.76 ± 0.07 tx/µs
+			672µs ± 1µs
+		}
+		Transfer(0.0) {
+			40.76 ± 0.23 tx/µs
+			1.608ms ± 9µs
+		}
+		Transfer(0.0) {
+			23.17 ± 0.13 tx/µs
+			5.656ms ± 31µs
+		}
+		Transfer(0.0) {
+			15.78 ± 0.02 tx/µs
+			16.612ms ± 18µs
+		}
+	}
+}
+Done. Took 81.49s
+
+main took 81.49s

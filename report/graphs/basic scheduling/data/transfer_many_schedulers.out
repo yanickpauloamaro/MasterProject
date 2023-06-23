@@ -1,0 +1,209 @@
+let dimensions = ['...', '4 exec', '8 exec', '12 exec'];
+Workload: Transfer(0.0) ====================================================
+let title = 'Collect: Transfer(0.0)'; // --------------------
+let sequential_throughput = 39.791;
+let data = [
+	['1 schedulers', 24.454, 25.343, 25.382],
+	['2 schedulers', 42.037, 46.414, 46.778],
+	['4 schedulers', 62.594, 69.719, 72.899],
+	['8 schedulers', 70.697, 79.341, 89.043],
+	['10 schedulers', 75.940, 91.531, 90.645],
+	['12 schedulers', 76.561, 91.531, 84.672],
+	['16 schedulers', 68.768, 80.809, 71.860],
+];
+
+Workload: Transfer(0.5) ====================================================
+let title = 'Collect: Transfer(0.5)'; // --------------------
+let sequential_latency = 37.578;
+let data = [
+	['1 schedulers', 20.766, 20.378, 19.764],
+	['2 schedulers', 36.777, 38.894, 37.729],
+	['4 schedulers', 51.766, 53.499, 44.401],
+	['8 schedulers', 54.705, 44.613, 39.864],
+	['10 schedulers', 53.023, 46.446, 42.254],
+	['12 schedulers', 49.312, 45.322, 34.915],
+	['16 schedulers', 45.448, 40.807, 30.257],
+];
+
+Done. Took 90.14s
+
+==================================================================================
+==================================================================================
+==================================================================================
+Sequential 1 sch, 1 exec: Transfer(0.0) {
+	39.79 ± 0.29 tx/µs
+	1.647ms ± 12µs
+}
+Collect 1 sch, 4 exec: Transfer(0.0) {
+	24.45 ± 0.04 tx/µs
+	2.68ms ± 4µs	(scheduling: 2.143ms ± 3µs, execution: 353µs ± 1µs)
+}
+Collect 1 sch, 8 exec: Transfer(0.0) {
+	25.34 ± 0.03 tx/µs
+	2.586ms ± 3µs	(scheduling: 2.165ms ± 2µs, execution: 220µs ± 1µs)
+}
+Collect 1 sch, 12 exec: Transfer(0.0) {
+	25.38 ± 0.03 tx/µs
+	2.582ms ± 3µs	(scheduling: 2.215ms ± 2µs, execution: 215µs ± 0ns)
+}
+Collect 2 sch, 4 exec: Transfer(0.0) {
+	42.04 ± 0.08 tx/µs
+	1.559ms ± 3µs	(scheduling: 944µs ± 2µs, execution: 399µs ± 1µs)
+}
+Collect 2 sch, 8 exec: Transfer(0.0) {
+	46.41 ± 0.07 tx/µs
+	1.412ms ± 2µs	(scheduling: 956µs ± 1µs, execution: 300µs ± 0ns)
+}
+Collect 2 sch, 12 exec: Transfer(0.0) {
+	46.78 ± 0.07 tx/µs
+	1.401ms ± 2µs	(scheduling: 964µs ± 1µs, execution: 250µs ± 0ns)
+}
+Collect 4 sch, 4 exec: Transfer(0.0) {
+	62.59 ± 0.12 tx/µs
+	1.047ms ± 2µs	(scheduling: 396µs ± 0ns, execution: 432µs ± 1µs)
+}
+Collect 4 sch, 8 exec: Transfer(0.0) {
+	69.72 ± 0.07 tx/µs
+	940µs ± 1µs	(scheduling: 393µs ± 1µs, execution: 329µs ± 0ns)
+}
+Collect 4 sch, 12 exec: Transfer(0.0) {
+	72.90 ± 0.08 tx/µs
+	899µs ± 1µs	(scheduling: 397µs ± 1µs, execution: 253µs ± 0ns)
+}
+Collect 8 sch, 4 exec: Transfer(0.0) {
+	70.70 ± 0.08 tx/µs
+	927µs ± 1µs	(scheduling: 195µs ± 0ns, execution: 451µs ± 1µs)
+}
+Collect 8 sch, 8 exec: Transfer(0.0) {
+	79.34 ± 0.10 tx/µs
+	826µs ± 1µs	(scheduling: 193µs ± 0ns, execution: 331µs ± 0ns)
+}
+Collect 8 sch, 12 exec: Transfer(0.0) {
+	89.04 ± 0.12 tx/µs
+	736µs ± 1µs	(scheduling: 198µs ± 0ns, execution: 234µs ± 0ns)
+}
+Collect 10 sch, 4 exec: Transfer(0.0) {
+	75.94 ± 0.18 tx/µs
+	863µs ± 2µs	(scheduling: 174µs ± 0ns, execution: 403µs ± 1µs)
+}
+Collect 10 sch, 8 exec: Transfer(0.0) {
+	91.53 ± 0.13 tx/µs
+	716µs ± 1µs	(scheduling: 173µs ± 0ns, execution: 232µs ± 0ns)
+}
+Collect 10 sch, 12 exec: Transfer(0.0) {
+	90.64 ± 0.13 tx/µs
+	723µs ± 1µs	(scheduling: 179µs ± 1µs, execution: 160µs ± 0ns)
+}
+Collect 12 sch, 4 exec: Transfer(0.0) {
+	76.56 ± 0.09 tx/µs
+	856µs ± 1µs	(scheduling: 160µs ± 1µs, execution: 399µs ± 1µs)
+}
+Collect 12 sch, 8 exec: Transfer(0.0) {
+	91.53 ± 0.13 tx/µs
+	716µs ± 1µs	(scheduling: 162µs ± 0ns, execution: 222µs ± 0ns)
+}
+Collect 12 sch, 12 exec: Transfer(0.0) {
+	84.67 ± 0.00 tx/µs
+	774µs ± 0ns	(scheduling: 161µs ± 0ns, execution: 162µs ± 0ns)
+}
+Collect 16 sch, 4 exec: Transfer(0.0) {
+	68.77 ± 0.14 tx/µs
+	953µs ± 2µs	(scheduling: 129µs ± 0ns, execution: 460µs ± 1µs)
+}
+Collect 16 sch, 8 exec: Transfer(0.0) {
+	80.81 ± 0.10 tx/µs
+	811µs ± 1µs	(scheduling: 144µs ± 0ns, execution: 238µs ± 0ns)
+}
+Collect 16 sch, 12 exec: Transfer(0.0) {
+	71.86 ± 0.16 tx/µs
+	912µs ± 2µs	(scheduling: 139µs ± 0ns, execution: 182µs ± 2µs)
+}
+Sequential 1 sch, 1 exec: Transfer(0.5) {
+	37.58 ± 0.28 tx/µs
+	1.744ms ± 13µs
+}
+Collect 1 sch, 4 exec: Transfer(0.5) {
+	20.77 ± 0.03 tx/µs
+	3.156ms ± 4µs	(scheduling: 3.059ms ± 3µs, execution: 398µs ± 1µs)
+}
+Collect 1 sch, 8 exec: Transfer(0.5) {
+	20.38 ± 0.02 tx/µs
+	3.216ms ± 3µs	(scheduling: 3.089ms ± 3µs, execution: 231µs ± 0ns)
+}
+Collect 1 sch, 12 exec: Transfer(0.5) {
+	19.76 ± 0.02 tx/µs
+	3.316ms ± 4µs	(scheduling: 3.143ms ± 4µs, execution: 175µs ± 0ns)
+}
+Collect 2 sch, 4 exec: Transfer(0.5) {
+	36.78 ± 0.06 tx/µs
+	1.782ms ± 3µs	(scheduling: 1.185ms ± 2µs, execution: 434µs ± 1µs)
+}
+Collect 2 sch, 8 exec: Transfer(0.5) {
+	38.89 ± 0.05 tx/µs
+	1.685ms ± 2µs	(scheduling: 1.195ms ± 2µs, execution: 249µs ± 0ns)
+}
+Collect 2 sch, 12 exec: Transfer(0.5) {
+	37.73 ± 0.04 tx/µs
+	1.737ms ± 2µs	(scheduling: 1.21ms ± 2µs, execution: 185µs ± 0ns)
+}
+Collect 4 sch, 4 exec: Transfer(0.5) {
+	51.77 ± 0.16 tx/µs
+	1.266ms ± 4µs	(scheduling: 445µs ± 1µs, execution: 432µs ± 3µs)
+}
+Collect 4 sch, 8 exec: Transfer(0.5) {
+	53.50 ± 0.04 tx/µs
+	1.225ms ± 1µs	(scheduling: 447µs ± 1µs, execution: 256µs ± 0ns)
+}
+Collect 4 sch, 12 exec: Transfer(0.5) {
+	44.40 ± 0.03 tx/µs
+	1.476ms ± 1µs	(scheduling: 449µs ± 1µs, execution: 357µs ± 0ns)
+}
+Collect 8 sch, 4 exec: Transfer(0.5) {
+	54.70 ± 0.05 tx/µs
+	1.198ms ± 1µs	(scheduling: 202µs ± 0ns, execution: 432µs ± 0ns)
+}
+Collect 8 sch, 8 exec: Transfer(0.5) {
+	44.61 ± 0.03 tx/µs
+	1.469ms ± 1µs	(scheduling: 205µs ± 0ns, execution: 457µs ± 0ns)
+}
+Collect 8 sch, 12 exec: Transfer(0.5) {
+	39.86 ± 0.02 tx/µs
+	1.644ms ± 1µs	(scheduling: 214µs ± 0ns, execution: 348µs ± 0ns)
+}
+Collect 10 sch, 4 exec: Transfer(0.5) {
+	53.02 ± 0.04 tx/µs
+	1.236ms ± 1µs	(scheduling: 157µs ± 0ns, execution: 457µs ± 1µs)
+}
+Collect 10 sch, 8 exec: Transfer(0.5) {
+	46.45 ± 0.20 tx/µs
+	1.411ms ± 6µs	(scheduling: 171µs ± 0ns, execution: 345µs ± 4µs)
+}
+Collect 10 sch, 12 exec: Transfer(0.5) {
+	42.25 ± 0.11 tx/µs
+	1.551ms ± 4µs	(scheduling: 177µs ± 0ns, execution: 193µs ± 1µs)
+}
+Collect 12 sch, 4 exec: Transfer(0.5) {
+	49.31 ± 0.04 tx/µs
+	1.329ms ± 1µs	(scheduling: 151µs ± 0ns, execution: 472µs ± 0ns)
+}
+Collect 12 sch, 8 exec: Transfer(0.5) {
+	45.32 ± 0.03 tx/µs
+	1.446ms ± 1µs	(scheduling: 163µs ± 0ns, execution: 266µs ± 0ns)
+}
+Collect 12 sch, 12 exec: Transfer(0.5) {
+	34.92 ± 0.04 tx/µs
+	1.877ms ± 2µs	(scheduling: 140µs ± 0ns, execution: 284µs ± 0ns)
+}
+Collect 16 sch, 4 exec: Transfer(0.5) {
+	45.45 ± 0.03 tx/µs
+	1.442ms ± 1µs	(scheduling: 136µs ± 0ns, execution: 494µs ± 1µs)
+}
+Collect 16 sch, 8 exec: Transfer(0.5) {
+	40.81 ± 0.03 tx/µs
+	1.606ms ± 1µs	(scheduling: 138µs ± 0ns, execution: 269µs ± 0ns)
+}
+Collect 16 sch, 12 exec: Transfer(0.5) {
+	30.26 ± 0.10 tx/µs
+	2.166ms ± 7µs	(scheduling: 145µs ± 0ns, execution: 262µs ± 2µs)
+}
+main took 90.14s

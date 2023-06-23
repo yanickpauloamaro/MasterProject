@@ -468,14 +468,14 @@ impl TestBench {
                 );
 
                 let baseline = TestBench::run(parameter).await;
-                let baseline_latency = format_latency(&baseline.latency);
+                let baseline_throughput = format_throughput(baseline.throughput_micro);
                 results.push(baseline);
                 for vm_type in config.vm_types.iter() {
                     println!("let title = '{:?}: {}'; // --------------------", vm_type, workload);
-                    println!("let sequential_latency = {};", baseline_latency);
+                    println!("let sequential_throughput = {};", baseline_throughput);
                     println!("let data = [");
                     for nb_schedulers in config.nb_schedulers.iter() {
-                        print!("\t['{} sch'", nb_schedulers);
+                        print!("\t['{} schedulers'", nb_schedulers);
                         for nb_executors in config.nb_executors.iter() {
                             let parameter = RunParameter::new(
                                 *vm_type,
@@ -491,7 +491,7 @@ impl TestBench {
                                 config.mapping.clone()
                             );
                             let res = TestBench::run(parameter).await;
-                            print!(", {}", format_latency(&res.latency));
+                            print!(", {}", format_throughput(res.throughput_micro));
                             results.push(res);
                         }
                         println!("],");
@@ -505,22 +505,22 @@ impl TestBench {
         println!("Done. Took {:.2?}", benchmark_start.elapsed());
         println!();
 
-        // println!("==================================================================================");
-        // println!("==================================================================================");
-        // println!("==================================================================================");
-        // for res in results.iter() {
-        //     println!("{:?}: {} {{", res.parameters.vm_type, res.parameters.workload);
-        //     println!("\t{:.2} ± {:.2} tx/µs", res.throughput_micro, res.throughput_ci);
-        //     print!("\t{:?} ± {:?}", res.latency, res.latency_ci);
-        //
-        //     // Print details
-        //     if let Some((scheduling, execution)) = &res.latency_breakdown {
-        //         // print!("\t({}, {})", scheduling, execution);
-        //         print!("\t(scheduling: {}, execution: {})", scheduling, execution);
-        //     }
-        //     println!();
-        //     println!("}}");
-        // }
+        println!("==================================================================================");
+        println!("==================================================================================");
+        println!("==================================================================================");
+        for res in results.iter() {
+            println!("{:?}: {} {{", res.parameters.vm_type, res.parameters.workload);
+            println!("\t{:.2} ± {:.2} tx/µs", res.throughput_micro, res.throughput_ci);
+            print!("\t{:?} ± {:?}", res.latency, res.latency_ci);
+        
+            // Print details
+            if let Some((scheduling, execution)) = &res.latency_breakdown {
+                // print!("\t({}, {})", scheduling, execution);
+                print!("\t(scheduling: {}, execution: {})", scheduling, execution);
+            }
+            println!();
+            println!("}}");
+        }
 
         Ok(results)
     }

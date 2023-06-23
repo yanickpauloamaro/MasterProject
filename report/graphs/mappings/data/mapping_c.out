@@ -1,0 +1,203 @@
+let dimensions = ['...', '2 exec', '4 exec', '8 exec'];
+Workload: Transfer(0.0) ====================================================
+let title = 'Collect: Transfer(0.0)'; // --------------------
+let sequential_throughput = 39.290;
+let data = [
+	['2 schedulers', 34.098, 41.930, 45.733],
+	['4 schedulers', 48.047, 59.632, 67.913],
+	['8 schedulers', 53.895, 70.773, 87.033],
+];
+
+Workload: Transfer(0.5) ====================================================
+let title = 'Collect: Transfer(0.5)'; // --------------------
+let sequential_throughput = 41.037;
+let data = [
+	['2 schedulers', 31.938, 37.068, 37.535],
+	['4 schedulers', 45.228, 48.473, 49.127],
+	['8 schedulers', 47.697, 54.432, 52.429],
+];
+
+Workload: PreviousDHashMap(7, 64, 64; 0.7, 0.05, 0.05, 0.2) ====================================================
+let title = 'Collect: PreviousDHashMap(7, 64, 64; 0.7, 0.05, 0.05, 0.2)'; // --------------------
+let sequential_throughput = 5.521;
+let data = [
+	['2 schedulers', 7.765, 11.224, 11.768],
+	['4 schedulers', 7.789, 10.928, 11.003],
+	['8 schedulers', 7.658, 9.761, 10.167],
+];
+
+Workload: PreviousDHashMap(7, 64, 64; 0.25, 0.25, 0.25, 0.25) ====================================================
+let title = 'Collect: PreviousDHashMap(7, 64, 64; 0.25, 0.25, 0.25, 0.25)'; // --------------------
+let sequential_throughput = 4.001;
+let data = [
+	['2 schedulers', 5.021, 7.018, 7.094],
+	['4 schedulers', 5.119, 7.467, 7.822],
+	['8 schedulers', 4.943, 6.708, 7.213],
+];
+
+Done. Took 242.00s
+
+==================================================================================
+==================================================================================
+==================================================================================
+Sequential 1 sch, 1 exec: Transfer(0.0) {
+	39.29 ± 0.21 tx/µs
+	1.668ms ± 9µs
+}
+Collect 2 sch, 2 exec: Transfer(0.0) {
+	34.10 ± 0.07 tx/µs
+	1.922ms ± 4µs	(scheduling: 941µs ± 1µs, execution: 759µs ± 3µs)
+}
+Collect 2 sch, 4 exec: Transfer(0.0) {
+	41.93 ± 0.05 tx/µs
+	1.563ms ± 2µs	(scheduling: 935µs ± 1µs, execution: 397µs ± 1µs)
+}
+Collect 2 sch, 8 exec: Transfer(0.0) {
+	45.73 ± 0.06 tx/µs
+	1.433ms ± 2µs	(scheduling: 949µs ± 1µs, execution: 274µs ± 1µs)
+}
+Collect 4 sch, 2 exec: Transfer(0.0) {
+	48.05 ± 0.82 tx/µs
+	1.364ms ± 23µs	(scheduling: 391µs ± 17µs, execution: 721µs ± 2µs)
+}
+Collect 4 sch, 4 exec: Transfer(0.0) {
+	59.63 ± 0.11 tx/µs
+	1.099ms ± 2µs	(scheduling: 386µs ± 1µs, execution: 531µs ± 1µs)
+}
+Collect 4 sch, 8 exec: Transfer(0.0) {
+	67.91 ± 0.07 tx/µs
+	965µs ± 1µs	(scheduling: 388µs ± 1µs, execution: 339µs ± 0ns)
+}
+Collect 8 sch, 2 exec: Transfer(0.0) {
+	53.89 ± 0.09 tx/µs
+	1.216ms ± 2µs	(scheduling: 204µs ± 0ns, execution: 733µs ± 2µs)
+}
+Collect 8 sch, 4 exec: Transfer(0.0) {
+	70.77 ± 0.08 tx/µs
+	926µs ± 1µs	(scheduling: 188µs ± 0ns, execution: 455µs ± 1µs)
+}
+Collect 8 sch, 8 exec: Transfer(0.0) {
+	87.03 ± 0.12 tx/µs
+	753µs ± 1µs	(scheduling: 226µs ± 1µs, execution: 241µs ± 0ns)
+}
+Sequential 1 sch, 1 exec: Transfer(0.5) {
+	41.04 ± 0.21 tx/µs
+	1.597ms ± 8µs
+}
+Collect 2 sch, 2 exec: Transfer(0.5) {
+	31.94 ± 0.08 tx/µs
+	2.052ms ± 5µs	(scheduling: 1.176ms ± 2µs, execution: 780µs ± 3µs)
+}
+Collect 2 sch, 4 exec: Transfer(0.5) {
+	37.07 ± 0.06 tx/µs
+	1.768ms ± 3µs	(scheduling: 1.179ms ± 1µs, execution: 429µs ± 1µs)
+}
+Collect 2 sch, 8 exec: Transfer(0.5) {
+	37.53 ± 0.04 tx/µs
+	1.746ms ± 2µs	(scheduling: 1.186ms ± 1µs, execution: 362µs ± 0ns)
+}
+Collect 4 sch, 2 exec: Transfer(0.5) {
+	45.23 ± 0.09 tx/µs
+	1.449ms ± 3µs	(scheduling: 440µs ± 1µs, execution: 744µs ± 2µs)
+}
+Collect 4 sch, 4 exec: Transfer(0.5) {
+	48.47 ± 0.07 tx/µs
+	1.352ms ± 2µs	(scheduling: 452µs ± 2µs, execution: 579µs ± 1µs)
+}
+Collect 4 sch, 8 exec: Transfer(0.5) {
+	49.13 ± 0.07 tx/µs
+	1.334ms ± 2µs	(scheduling: 445µs ± 1µs, execution: 367µs ± 1µs)
+}
+Collect 8 sch, 2 exec: Transfer(0.5) {
+	47.70 ± 0.07 tx/µs
+	1.374ms ± 2µs	(scheduling: 217µs ± 0ns, execution: 771µs ± 2µs)
+}
+Collect 8 sch, 4 exec: Transfer(0.5) {
+	54.43 ± 0.05 tx/µs
+	1.204ms ± 1µs	(scheduling: 222µs ± 0ns, execution: 436µs ± 1µs)
+}
+Collect 8 sch, 8 exec: Transfer(0.5) {
+	52.43 ± 0.04 tx/µs
+	1.25ms ± 1µs	(scheduling: 243µs ± 0ns, execution: 270µs ± 0ns)
+}
+Sequential 1 sch, 1 exec: PreviousDHashMap(7, 64, 64; 0.7, 0.05, 0.05, 0.2) {
+	5.52 ± 0.00 tx/µs
+	11.871ms ± 2µs
+}
+Collect 2 sch, 2 exec: PreviousDHashMap(7, 64, 64; 0.7, 0.05, 0.05, 0.2) {
+	7.76 ± 0.01 tx/µs
+	8.44ms ± 10µs	(scheduling: 1.806ms ± 5µs, execution: 6.477ms ± 4µs)
+}
+Collect 2 sch, 4 exec: PreviousDHashMap(7, 64, 64; 0.7, 0.05, 0.05, 0.2) {
+	11.22 ± 0.05 tx/µs
+	5.839ms ± 28µs	(scheduling: 1.805ms ± 5µs, execution: 3.256ms ± 17µs)
+}
+Collect 2 sch, 8 exec: PreviousDHashMap(7, 64, 64; 0.7, 0.05, 0.05, 0.2) {
+	11.77 ± 0.02 tx/µs
+	5.569ms ± 10µs	(scheduling: 1.817ms ± 4µs, execution: 1.845ms ± 2µs)
+}
+Collect 4 sch, 2 exec: PreviousDHashMap(7, 64, 64; 0.7, 0.05, 0.05, 0.2) {
+	7.79 ± 0.01 tx/µs
+	8.414ms ± 7µs	(scheduling: 745µs ± 2µs, execution: 6.514ms ± 4µs)
+}
+Collect 4 sch, 4 exec: PreviousDHashMap(7, 64, 64; 0.7, 0.05, 0.05, 0.2) {
+	10.93 ± 0.01 tx/µs
+	5.997ms ± 6µs	(scheduling: 764µs ± 2µs, execution: 3.223ms ± 2µs)
+}
+Collect 4 sch, 8 exec: PreviousDHashMap(7, 64, 64; 0.7, 0.05, 0.05, 0.2) {
+	11.00 ± 0.01 tx/µs
+	5.956ms ± 8µs	(scheduling: 773µs ± 2µs, execution: 1.971ms ± 1µs)
+}
+Collect 8 sch, 2 exec: PreviousDHashMap(7, 64, 64; 0.7, 0.05, 0.05, 0.2) {
+	7.66 ± 0.01 tx/µs
+	8.558ms ± 7µs	(scheduling: 347µs ± 0ns, execution: 6.893ms ± 3µs)
+}
+Collect 8 sch, 4 exec: PreviousDHashMap(7, 64, 64; 0.7, 0.05, 0.05, 0.2) {
+	9.76 ± 0.01 tx/µs
+	6.714ms ± 9µs	(scheduling: 348µs ± 0ns, execution: 3.507ms ± 6µs)
+}
+Collect 8 sch, 8 exec: PreviousDHashMap(7, 64, 64; 0.7, 0.05, 0.05, 0.2) {
+	10.17 ± 0.01 tx/µs
+	6.446ms ± 9µs	(scheduling: 420µs ± 1µs, execution: 1.788ms ± 2µs)
+}
+Sequential 1 sch, 1 exec: PreviousDHashMap(7, 64, 64; 0.25, 0.25, 0.25, 0.25) {
+	4.00 ± 0.00 tx/µs
+	16.38ms ± 5µs
+}
+Collect 2 sch, 2 exec: PreviousDHashMap(7, 64, 64; 0.25, 0.25, 0.25, 0.25) {
+	5.02 ± 0.07 tx/µs
+	13.052ms ± 181µs	(scheduling: 6.341ms ± 169µs, execution: 10.577ms ± 21µs)
+}
+Collect 2 sch, 4 exec: PreviousDHashMap(7, 64, 64; 0.25, 0.25, 0.25, 0.25) {
+	7.02 ± 0.33 tx/µs
+	9.338ms ± 416µs	(scheduling: 6.436ms ± 161µs, execution: 5.572ms ± 18µs)
+}
+Collect 2 sch, 8 exec: PreviousDHashMap(7, 64, 64; 0.25, 0.25, 0.25, 0.25) {
+	7.09 ± 0.56 tx/µs
+	9.238ms ± 671µs	(scheduling: 6.502ms ± 161µs, execution: 3.258ms ± 18µs)
+}
+Collect 4 sch, 2 exec: PreviousDHashMap(7, 64, 64; 0.25, 0.25, 0.25, 0.25) {
+	5.12 ± 0.03 tx/µs
+	12.802ms ± 80µs	(scheduling: 2.364ms ± 48µs, execution: 10.329ms ± 20µs)
+}
+Collect 4 sch, 4 exec: PreviousDHashMap(7, 64, 64; 0.25, 0.25, 0.25, 0.25) {
+	7.47 ± 0.29 tx/µs
+	8.777ms ± 331µs	(scheduling: 2.588ms ± 48µs, execution: 5.49ms ± 19µs)
+}
+Collect 4 sch, 8 exec: PreviousDHashMap(7, 64, 64; 0.25, 0.25, 0.25, 0.25) {
+	7.82 ± 0.55 tx/µs
+	8.378ms ± 553µs	(scheduling: 2.289ms ± 49µs, execution: 3.396ms ± 18µs)
+}
+Collect 8 sch, 2 exec: PreviousDHashMap(7, 64, 64; 0.25, 0.25, 0.25, 0.25) {
+	4.94 ± 0.03 tx/µs
+	13.258ms ± 67µs	(scheduling: 840µs ± 11µs, execution: 10.45ms ± 23µs)
+}
+Collect 8 sch, 4 exec: PreviousDHashMap(7, 64, 64; 0.25, 0.25, 0.25, 0.25) {
+	6.71 ± 0.25 tx/µs
+	9.77ms ± 351µs	(scheduling: 845µs ± 10µs, execution: 5.792ms ± 27µs)
+}
+Collect 8 sch, 8 exec: PreviousDHashMap(7, 64, 64; 0.25, 0.25, 0.25, 0.25) {
+	7.21 ± 0.49 tx/µs
+	9.086ms ± 574µs	(scheduling: 904µs ± 12µs, execution: 3.237ms ± 24µs)
+}
+main took 242.00s

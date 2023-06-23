@@ -1,0 +1,91 @@
+Collect {
+	8 schedulers, 8 executors {
+		Transfer(0.0) {
+			48.33 ± 0.14 tx/µs
+			339µs ± 1µs	(scheduling: 69µs ± 0ns, execution: 56µs ± 0ns)
+		}
+		Transfer(0.0) {
+			72.98 ± 0.16 tx/µs
+			449µs ± 1µs	(scheduling: 121µs ± 0ns, execution: 114µs ± 0ns)
+		}
+		Transfer(0.0) {
+			89.41 ± 0.12 tx/µs
+			733µs ± 1µs	(scheduling: 227µs ± 0ns, execution: 233µs ± 0ns)
+		}
+		Transfer(0.0) {
+			92.43 ± 0.20 tx/µs
+			1.418ms ± 3µs	(scheduling: 527µs ± 1µs, execution: 510µs ± 1µs)
+		}
+		Transfer(0.0) {
+			64.86 ± 0.18 tx/µs
+			4.042ms ± 11µs	(scheduling: 1.298ms ± 3µs, execution: 1.962ms ± 2µs)
+		}
+		Transfer(0.5) {
+			21.76 ± 0.23 tx/µs
+			753µs ± 8µs	(scheduling: 72µs ± 5µs, execution: 73µs ± 1µs)
+		}
+		Transfer(0.5) {
+			36.90 ± 0.34 tx/µs
+			888µs ± 8µs	(scheduling: 136µs ± 6µs, execution: 140µs ± 2µs)
+		}
+		Transfer(0.5) {
+			51.68 ± 0.62 tx/µs
+			1.268ms ± 15µs	(scheduling: 263µs ± 11µs, execution: 275µs ± 4µs)
+		}
+		Transfer(0.5) {
+			67.32 ± 0.98 tx/µs
+			1.947ms ± 28µs	(scheduling: 612µs ± 13µs, execution: 559µs ± 11µs)
+		}
+		Transfer(0.5) {
+			57.77 ± 0.79 tx/µs
+			4.538ms ± 61µs	(scheduling: 1.418ms ± 26µs, execution: 1.887ms ± 8µs)
+		}
+	}
+}
+Sequential {
+	8 schedulers, 8 executors {
+		Transfer(0.0) {
+			51.20 ± 0.00 tx/µs
+			320µs ± 0ns
+		}
+		Transfer(0.0) {
+			48.76 ± 0.07 tx/µs
+			672µs ± 1µs
+		}
+		Transfer(0.0) {
+			40.76 ± 0.23 tx/µs
+			1.608ms ± 9µs
+		}
+		Transfer(0.0) {
+			23.17 ± 0.13 tx/µs
+			5.656ms ± 31µs
+		}
+		Transfer(0.0) {
+			15.78 ± 0.02 tx/µs
+			16.612ms ± 18µs
+		}
+		Transfer(0.5) {
+			49.35 ± 0.30 tx/µs
+			332µs ± 2µs
+		}
+		Transfer(0.5) {
+			46.35 ± 0.94 tx/µs
+			707µs ± 14µs
+		}
+		Transfer(0.5) {
+			39.38 ± 1.09 tx/µs
+			1.664ms ± 45µs
+		}
+		Transfer(0.5) {
+			24.66 ± 0.36 tx/µs
+			5.315ms ± 77µs
+		}
+		Transfer(0.5) {
+			16.08 ± 0.08 tx/µs
+			16.3ms ± 82µs
+		}
+	}
+}
+Done. Took 9.99s
+
+main took 9.99s
