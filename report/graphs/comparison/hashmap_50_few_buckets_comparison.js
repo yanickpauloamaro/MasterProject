@@ -21,11 +21,11 @@ let point_details = {
       markLine: {
         data: [{ yAxis: 3.964 }],
         symbolSize: '10',
-        symbol: 'circle',
+        symbol: 'none',
         lineStyle: { width: 3 },
         label: {
           // formatter: 'Sequential'
-          fontSize: 16
+          fontSize: 20
         },
       },
     },
@@ -33,21 +33,22 @@ let point_details = {
       type: 'line', 
       symbolSize: '10',
       lineStyle: { width: 3 },
-      name: 'basic (4 sch)',
+      name: 'basic scheduling (4 sch)',
       data: [5.136, 7.230, 8.528, 7.174, 6.172, 5.570],
     },
     {
       type: 'line', 
       symbolSize: '10',
       lineStyle: { width: 3 },
-      name: 'advanced (4 sch) ',
+      name: 'advanced scheduling (4 sch) ',
       data: [5.326, 8.342, 11.692, 13.696, 14.467, 13.688],
     },
   ];
   
   option = {
     title: {
-      text: 'Hashmap 50% 64 buckets'
+      text: 'Hashmap 50% 64 buckets',
+      textStyle:  { fontSize: 20, },
     },
     toolbox: {
       feature: {

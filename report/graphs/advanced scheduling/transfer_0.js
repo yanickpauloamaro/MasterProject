@@ -21,11 +21,11 @@ let series = [
         markLine: {
         data: [{ yAxis:  37.817 }],
         symbolSize: '10',
-        symbol: 'circle',
+        symbol: 'none',
         lineStyle: { width: 3 },
         label: {
             // formatter: 'Sequential'
-            fontSize: 16
+            fontSize: 20
         },
         },
     },
@@ -60,14 +60,23 @@ let series = [
 ];
   
 option = {
-    title: { text: 'Transfer 0% (adv)' },
+    title: {
+        text: 'Transfer 0% (advanced scheduling)',
+        textStyle:  { fontSize: 20, },
+    },
     toolbox: {
         feature: {
             saveAsImage: {}
         }
     },
     legend: {
-        textStyle:  { fontSize: 16, },
+        right: '0%',
+        // top: '25%',
+        orient: 'vertical',
+        textStyle:  { fontSize: 20, },
+    },
+    grid: {
+        right: '10%', 
     },
     tooltip: { trigger: 'axis'},
     xAxis: {

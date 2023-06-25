@@ -23,11 +23,11 @@ let series = [
         markLine: {
         data: [{ yAxis:  5.247 }],
         symbolSize: '10',
-        symbol: 'circle',
+        symbol: 'none',
         lineStyle: { width: 3 },
         label: {
             // formatter: 'Sequential'
-            fontSize: 16
+            fontSize: 20
         },
         },
     },
@@ -48,7 +48,10 @@ let series = [
 ];
   
 option = {
-    title: { text: 'Hashmap 50% (adv)' },
+    title: {
+        text: 'Hashmap 50% (comparison)',
+        textStyle:  { fontSize: 20, },
+    },
     toolbox: {
         feature: {
             saveAsImage: {}

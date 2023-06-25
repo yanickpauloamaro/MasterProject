@@ -19,13 +19,13 @@ let point_details = {
     {
       name: 'Sequential', type: 'line',
       markLine: {
-        data: [{ yAxis: 32.573 }],
+        data: [{ yAxis: 39.791 }],
         symbolSize: '10',
-        symbol: 'circle',
+        symbol: 'none',
         lineStyle: { width: 3 },
         label: {
           // formatter: 'Sequential'
-          fontSize: 16
+          fontSize: 20
         },
       },
     },
@@ -61,7 +61,8 @@ let point_details = {
   
   option = {
     title: {
-      text: 'Transfer 50% conflict'
+      text: 'Transfer 50% conflict',
+      textStyle:  { fontSize: 20, },
     },
     toolbox: {
       feature: {
@@ -69,7 +70,13 @@ let point_details = {
       }
     },
     legend: {
-      textStyle:  { fontSize: 16, },
+      right: '0%',
+      // top: '25%',
+      orient: 'vertical',
+      textStyle:  { fontSize: 20, },
+    },
+    grid: {
+      right: '10%', 
     },
     tooltip: { trigger: 'axis'},
     xAxis: {

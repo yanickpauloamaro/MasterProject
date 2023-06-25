@@ -21,11 +21,11 @@ let point_details = {
       markLine: {
         data: [{ yAxis: 32.573 }],
         symbolSize: '10',
-        symbol: 'circle',
+        symbol: 'none',
         lineStyle: { width: 3 },
         label: {
           // formatter: 'Sequential'
-          fontSize: 16
+          fontSize: 20
         },
       },
     },
@@ -47,7 +47,8 @@ let point_details = {
   
   option = {
     title: {
-      text: 'Transfer 0% conflict'
+      text: 'Transfer 0% conflict',
+      textStyle:  { fontSize: 20, },
     },
     toolbox: {
       feature: {
