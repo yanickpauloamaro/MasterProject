@@ -1,22 +1,22 @@
-Collect {
+BasicPrototype {
 	8 schedulers, 8 executors {
-		PreviousDHashMap(7, 64, 1024; 0.7, 0.05, 0.05, 0.2) {
+		Hashmap(7, 64, 1024; 0.7, 0.05, 0.05, 0.2) {
 			7.03 ± 0.05 tx/µs
 			2.332ms ± 16µs	(scheduling: 70µs ± 5µs, execution: 467µs ± 2µs)
 		}
-		PreviousDHashMap(7, 64, 1024; 0.7, 0.05, 0.05, 0.2) {
+		Hashmap(7, 64, 1024; 0.7, 0.05, 0.05, 0.2) {
 			10.96 ± 0.12 tx/µs
 			2.99ms ± 32µs	(scheduling: 141µs ± 9µs, execution: 875µs ± 2µs)
 		}
-		PreviousDHashMap(7, 64, 1024; 0.7, 0.05, 0.05, 0.2) {
+		Hashmap(7, 64, 1024; 0.7, 0.05, 0.05, 0.2) {
 			13.90 ± 0.29 tx/µs
 			4.714ms ± 96µs	(scheduling: 280µs ± 20µs, execution: 1.705ms ± 2µs)
 		}
-		PreviousDHashMap(7, 64, 1024; 0.7, 0.05, 0.05, 0.2) {
+		Hashmap(7, 64, 1024; 0.7, 0.05, 0.05, 0.2) {
 			17.12 ± 0.42 tx/µs
 			7.654ms ± 185µs	(scheduling: 587µs ± 28µs, execution: 3.277ms ± 4µs)
 		}
-		PreviousDHashMap(7, 64, 1024; 0.7, 0.05, 0.05, 0.2) {
+		Hashmap(7, 64, 1024; 0.7, 0.05, 0.05, 0.2) {
 			18.29 ± 0.47 tx/µs
 			14.334ms ± 361µs	(scheduling: 1.368ms ± 54µs, execution: 6.759ms ± 8µs)
 		}
@@ -24,23 +24,23 @@ Collect {
 }
 Sequential {
 	8 schedulers, 8 executors {
-		PreviousDHashMap(7, 64, 1024; 0.7, 0.05, 0.05, 0.2) {
+		Hashmap(7, 64, 1024; 0.7, 0.05, 0.05, 0.2) {
 			6.45 ± 0.02 tx/µs
 			2.542ms ± 7µs
 		}
-		PreviousDHashMap(7, 64, 1024; 0.7, 0.05, 0.05, 0.2) {
+		Hashmap(7, 64, 1024; 0.7, 0.05, 0.05, 0.2) {
 			6.23 ± 0.02 tx/µs
 			5.261ms ± 17µs
 		}
-		PreviousDHashMap(7, 64, 1024; 0.7, 0.05, 0.05, 0.2) {
+		Hashmap(7, 64, 1024; 0.7, 0.05, 0.05, 0.2) {
 			6.11 ± 0.02 tx/µs
 			10.725ms ± 33µs
 		}
-		PreviousDHashMap(7, 64, 1024; 0.7, 0.05, 0.05, 0.2) {
+		Hashmap(7, 64, 1024; 0.7, 0.05, 0.05, 0.2) {
 			5.86 ± 0.01 tx/µs
 			22.375ms ± 54µs
 		}
-		PreviousDHashMap(7, 64, 1024; 0.7, 0.05, 0.05, 0.2) {
+		Hashmap(7, 64, 1024; 0.7, 0.05, 0.05, 0.2) {
 			5.63 ± 0.01 tx/µs
 			46.587ms ± 99µs
 		}

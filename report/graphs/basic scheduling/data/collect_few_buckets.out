@@ -1,6 +1,6 @@
 let dimensions = ['...', '2 exec', '4 exec', '8 exec', '12 exec', '16 exec', '20 exec'];
-Workload: PreviousDHashMap(7, 64, 64; 0.7, 0.05, 0.05, 0.2) ====================================================
-let title = 'Collect: PreviousDHashMap(7, 64, 64; 0.7, 0.05, 0.05, 0.2)'; // --------------------
+Workload: Hashmap(7, 64, 64; 0.7, 0.05, 0.05, 0.2) ====================================================
+let title = 'BasicPrototype: Hashmap(7, 64, 64; 0.7, 0.05, 0.05, 0.2)'; // --------------------
 let sequential_throughput = 5.504;
 let data = [
 	['1 schedulers', 4.282, 5.226, 5.730, 5.812, 5.638, 5.393],
@@ -9,8 +9,8 @@ let data = [
 	['8 schedulers', 7.399, 9.761, 9.675, 8.307, 7.099, 6.063],
 ];
 
-Workload: PreviousDHashMap(7, 64, 64; 0.25, 0.25, 0.25, 0.25) ====================================================
-let title = 'Collect: PreviousDHashMap(7, 64, 64; 0.25, 0.25, 0.25, 0.25)'; // --------------------
+Workload: Hashmap(7, 64, 64; 0.25, 0.25, 0.25, 0.25) ====================================================
+let title = 'BasicPrototype: Hashmap(7, 64, 64; 0.25, 0.25, 0.25, 0.25)'; // --------------------
 let sequential_throughput = 3.649;
 let data = [
 	['1 schedulers', 1.330, 1.415, 1.454, 1.459, 1.437, 1.422],
@@ -24,203 +24,203 @@ Done. Took 743.16s
 ==================================================================================
 ==================================================================================
 ==================================================================================
-Sequential 1 sch, 1 exec: PreviousDHashMap(7, 64, 64; 0.7, 0.05, 0.05, 0.2) {
+Sequential 1 sch, 1 exec: Hashmap(7, 64, 64; 0.7, 0.05, 0.05, 0.2) {
 	5.50 ± 0.00 tx/µs
 	11.906ms ± 4µs
 }
-Collect 1 sch, 2 exec: PreviousDHashMap(7, 64, 64; 0.7, 0.05, 0.05, 0.2) {
+BasicPrototype 1 sch, 2 exec: Hashmap(7, 64, 64; 0.7, 0.05, 0.05, 0.2) {
 	4.28 ± 0.01 tx/µs
 	15.304ms ± 33µs	(scheduling: 8.923ms ± 19µs, execution: 6.475ms ± 8µs)
 }
-Collect 1 sch, 4 exec: PreviousDHashMap(7, 64, 64; 0.7, 0.05, 0.05, 0.2) {
+BasicPrototype 1 sch, 4 exec: Hashmap(7, 64, 64; 0.7, 0.05, 0.05, 0.2) {
 	5.23 ± 0.01 tx/µs
 	12.541ms ± 29µs	(scheduling: 8.811ms ± 18µs, execution: 3.23ms ± 5µs)
 }
-Collect 1 sch, 8 exec: PreviousDHashMap(7, 64, 64; 0.7, 0.05, 0.05, 0.2) {
+BasicPrototype 1 sch, 8 exec: Hashmap(7, 64, 64; 0.7, 0.05, 0.05, 0.2) {
 	5.73 ± 0.01 tx/µs
 	11.437ms ± 28µs	(scheduling: 8.824ms ± 18µs, execution: 1.745ms ± 3µs)
 }
-Collect 1 sch, 12 exec: PreviousDHashMap(7, 64, 64; 0.7, 0.05, 0.05, 0.2) {
+BasicPrototype 1 sch, 12 exec: Hashmap(7, 64, 64; 0.7, 0.05, 0.05, 0.2) {
 	5.81 ± 0.01 tx/µs
 	11.276ms ± 27µs	(scheduling: 8.824ms ± 19µs, execution: 1.225ms ± 1µs)
 }
-Collect 1 sch, 16 exec: PreviousDHashMap(7, 64, 64; 0.7, 0.05, 0.05, 0.2) {
+BasicPrototype 1 sch, 16 exec: Hashmap(7, 64, 64; 0.7, 0.05, 0.05, 0.2) {
 	5.64 ± 0.01 tx/µs
 	11.625ms ± 29µs	(scheduling: 9.171ms ± 20µs, execution: 1.037ms ± 2µs)
 }
-Collect 1 sch, 20 exec: PreviousDHashMap(7, 64, 64; 0.7, 0.05, 0.05, 0.2) {
+BasicPrototype 1 sch, 20 exec: Hashmap(7, 64, 64; 0.7, 0.05, 0.05, 0.2) {
 	5.39 ± 0.01 tx/µs
 	12.153ms ± 29µs	(scheduling: 9.292ms ± 20µs, execution: 925µs ± 1µs)
 }
-Collect 2 sch, 2 exec: PreviousDHashMap(7, 64, 64; 0.7, 0.05, 0.05, 0.2) {
+BasicPrototype 2 sch, 2 exec: Hashmap(7, 64, 64; 0.7, 0.05, 0.05, 0.2) {
 	7.79 ± 0.01 tx/µs
 	8.41ms ± 16µs	(scheduling: 1.81ms ± 5µs, execution: 6.466ms ± 4µs)
 }
-Collect 2 sch, 4 exec: PreviousDHashMap(7, 64, 64; 0.7, 0.05, 0.05, 0.2) {
+BasicPrototype 2 sch, 4 exec: Hashmap(7, 64, 64; 0.7, 0.05, 0.05, 0.2) {
 	11.28 ± 0.03 tx/µs
 	5.808ms ± 14µs	(scheduling: 1.807ms ± 5µs, execution: 3.248ms ± 3µs)
 }
-Collect 2 sch, 8 exec: PreviousDHashMap(7, 64, 64; 0.7, 0.05, 0.05, 0.2) {
+BasicPrototype 2 sch, 8 exec: Hashmap(7, 64, 64; 0.7, 0.05, 0.05, 0.2) {
 	11.92 ± 0.03 tx/µs
 	5.498ms ± 12µs	(scheduling: 1.814ms ± 5µs, execution: 1.875ms ± 2µs)
 }
-Collect 2 sch, 12 exec: PreviousDHashMap(7, 64, 64; 0.7, 0.05, 0.05, 0.2) {
+BasicPrototype 2 sch, 12 exec: Hashmap(7, 64, 64; 0.7, 0.05, 0.05, 0.2) {
 	10.59 ± 0.02 tx/µs
 	6.189ms ± 11µs	(scheduling: 1.823ms ± 5µs, execution: 1.265ms ± 1µs)
 }
-Collect 2 sch, 16 exec: PreviousDHashMap(7, 64, 64; 0.7, 0.05, 0.05, 0.2) {
+BasicPrototype 2 sch, 16 exec: Hashmap(7, 64, 64; 0.7, 0.05, 0.05, 0.2) {
 	9.36 ± 0.01 tx/µs
 	6.998ms ± 11µs	(scheduling: 2.019ms ± 6µs, execution: 1.018ms ± 1µs)
 }
-Collect 2 sch, 20 exec: PreviousDHashMap(7, 64, 64; 0.7, 0.05, 0.05, 0.2) {
+BasicPrototype 2 sch, 20 exec: Hashmap(7, 64, 64; 0.7, 0.05, 0.05, 0.2) {
 	8.29 ± 0.02 tx/µs
 	7.907ms ± 18µs	(scheduling: 1.996ms ± 5µs, execution: 958µs ± 1µs)
 }
-Collect 4 sch, 2 exec: PreviousDHashMap(7, 64, 64; 0.7, 0.05, 0.05, 0.2) {
+BasicPrototype 4 sch, 2 exec: Hashmap(7, 64, 64; 0.7, 0.05, 0.05, 0.2) {
 	7.89 ± 0.01 tx/µs
 	8.303ms ± 7µs	(scheduling: 735µs ± 2µs, execution: 6.417ms ± 4µs)
 }
-Collect 4 sch, 4 exec: PreviousDHashMap(7, 64, 64; 0.7, 0.05, 0.05, 0.2) {
+BasicPrototype 4 sch, 4 exec: Hashmap(7, 64, 64; 0.7, 0.05, 0.05, 0.2) {
 	11.01 ± 0.01 tx/µs
 	5.95ms ± 6µs	(scheduling: 737µs ± 1µs, execution: 3.236ms ± 2µs)
 }
-Collect 4 sch, 8 exec: PreviousDHashMap(7, 64, 64; 0.7, 0.05, 0.05, 0.2) {
+BasicPrototype 4 sch, 8 exec: Hashmap(7, 64, 64; 0.7, 0.05, 0.05, 0.2) {
 	11.49 ± 0.02 tx/µs
 	5.703ms ± 11µs	(scheduling: 754µs ± 1µs, execution: 1.704ms ± 1µs)
 }
-Collect 4 sch, 12 exec: PreviousDHashMap(7, 64, 64; 0.7, 0.05, 0.05, 0.2) {
+BasicPrototype 4 sch, 12 exec: Hashmap(7, 64, 64; 0.7, 0.05, 0.05, 0.2) {
 	9.63 ± 0.02 tx/µs
 	6.805ms ± 13µs	(scheduling: 760µs ± 2µs, execution: 1.566ms ± 2µs)
 }
-Collect 4 sch, 16 exec: PreviousDHashMap(7, 64, 64; 0.7, 0.05, 0.05, 0.2) {
+BasicPrototype 4 sch, 16 exec: Hashmap(7, 64, 64; 0.7, 0.05, 0.05, 0.2) {
 	8.45 ± 0.02 tx/µs
 	7.754ms ± 14µs	(scheduling: 841µs ± 2µs, execution: 1.186ms ± 4µs)
 }
-Collect 4 sch, 20 exec: PreviousDHashMap(7, 64, 64; 0.7, 0.05, 0.05, 0.2) {
+BasicPrototype 4 sch, 20 exec: Hashmap(7, 64, 64; 0.7, 0.05, 0.05, 0.2) {
 	7.26 ± 0.02 tx/µs
 	9.032ms ± 21µs	(scheduling: 833µs ± 2µs, execution: 980µs ± 3µs)
 }
-Collect 8 sch, 2 exec: PreviousDHashMap(7, 64, 64; 0.7, 0.05, 0.05, 0.2) {
+BasicPrototype 8 sch, 2 exec: Hashmap(7, 64, 64; 0.7, 0.05, 0.05, 0.2) {
 	7.40 ± 0.01 tx/µs
 	8.857ms ± 7µs	(scheduling: 331µs ± 1µs, execution: 6.714ms ± 4µs)
 }
-Collect 8 sch, 4 exec: PreviousDHashMap(7, 64, 64; 0.7, 0.05, 0.05, 0.2) {
+BasicPrototype 8 sch, 4 exec: Hashmap(7, 64, 64; 0.7, 0.05, 0.05, 0.2) {
 	9.76 ± 0.02 tx/µs
 	6.714ms ± 12µs	(scheduling: 333µs ± 0ns, execution: 3.518ms ± 7µs)
 }
-Collect 8 sch, 8 exec: PreviousDHashMap(7, 64, 64; 0.7, 0.05, 0.05, 0.2) {
+BasicPrototype 8 sch, 8 exec: Hashmap(7, 64, 64; 0.7, 0.05, 0.05, 0.2) {
 	9.67 ± 0.03 tx/µs
 	6.774ms ± 19µs	(scheduling: 341µs ± 0ns, execution: 1.94ms ± 9µs)
 }
-Collect 8 sch, 12 exec: PreviousDHashMap(7, 64, 64; 0.7, 0.05, 0.05, 0.2) {
+BasicPrototype 8 sch, 12 exec: Hashmap(7, 64, 64; 0.7, 0.05, 0.05, 0.2) {
 	8.31 ± 0.02 tx/µs
 	7.889ms ± 18µs	(scheduling: 408µs ± 1µs, execution: 1.57ms ± 10µs)
 }
-Collect 8 sch, 16 exec: PreviousDHashMap(7, 64, 64; 0.7, 0.05, 0.05, 0.2) {
+BasicPrototype 8 sch, 16 exec: Hashmap(7, 64, 64; 0.7, 0.05, 0.05, 0.2) {
 	7.10 ± 0.01 tx/µs
 	9.232ms ± 18µs	(scheduling: 395µs ± 0ns, execution: 1.263ms ± 1µs)
 }
-Collect 8 sch, 20 exec: PreviousDHashMap(7, 64, 64; 0.7, 0.05, 0.05, 0.2) {
+BasicPrototype 8 sch, 20 exec: Hashmap(7, 64, 64; 0.7, 0.05, 0.05, 0.2) {
 	6.06 ± 0.01 tx/µs
 	10.809ms ± 22µs	(scheduling: 392µs ± 1µs, execution: 1.034ms ± 3µs)
 }
-Sequential 1 sch, 1 exec: PreviousDHashMap(7, 64, 64; 0.25, 0.25, 0.25, 0.25) {
+Sequential 1 sch, 1 exec: Hashmap(7, 64, 64; 0.25, 0.25, 0.25, 0.25) {
 	3.65 ± 0.00 tx/µs
 	17.962ms ± 6µs
 }
-Collect 1 sch, 2 exec: PreviousDHashMap(7, 64, 64; 0.25, 0.25, 0.25, 0.25) {
+BasicPrototype 1 sch, 2 exec: Hashmap(7, 64, 64; 0.25, 0.25, 0.25, 0.25) {
 	1.33 ± 0.02 tx/µs
 	49.261ms ± 618µs	(scheduling: 42.165ms ± 616µs, execution: 9.929ms ± 25µs)
 }
-Collect 1 sch, 4 exec: PreviousDHashMap(7, 64, 64; 0.25, 0.25, 0.25, 0.25) {
+BasicPrototype 1 sch, 4 exec: Hashmap(7, 64, 64; 0.25, 0.25, 0.25, 0.25) {
 	1.42 ± 0.02 tx/µs
 	46.313ms ± 754µs	(scheduling: 42.194ms ± 607µs, execution: 5.265ms ± 20µs)
 }
-Collect 1 sch, 8 exec: PreviousDHashMap(7, 64, 64; 0.25, 0.25, 0.25, 0.25) {
+BasicPrototype 1 sch, 8 exec: Hashmap(7, 64, 64; 0.25, 0.25, 0.25, 0.25) {
 	1.45 ± 0.03 tx/µs
 	45.071ms ± 954µs	(scheduling: 42.276ms ± 598µs, execution: 2.757ms ± 20µs)
 }
-Collect 1 sch, 12 exec: PreviousDHashMap(7, 64, 64; 0.25, 0.25, 0.25, 0.25) {
+BasicPrototype 1 sch, 12 exec: Hashmap(7, 64, 64; 0.25, 0.25, 0.25, 0.25) {
 	1.46 ± 0.04 tx/µs
 	44.912ms ± 1.144ms	(scheduling: 42.373ms ± 595µs, execution: 1.876ms ± 19µs)
 }
-Collect 1 sch, 16 exec: PreviousDHashMap(7, 64, 64; 0.25, 0.25, 0.25, 0.25) {
+BasicPrototype 1 sch, 16 exec: Hashmap(7, 64, 64; 0.25, 0.25, 0.25, 0.25) {
 	1.44 ± 0.05 tx/µs
 	45.604ms ± 1.397ms	(scheduling: 42.864ms ± 617µs, execution: 1.68ms ± 19µs)
 }
-Collect 1 sch, 20 exec: PreviousDHashMap(7, 64, 64; 0.25, 0.25, 0.25, 0.25) {
+BasicPrototype 1 sch, 20 exec: Hashmap(7, 64, 64; 0.25, 0.25, 0.25, 0.25) {
 	1.42 ± 0.05 tx/µs
 	46.089ms ± 1.62ms	(scheduling: 42.988ms ± 612µs, execution: 1.459ms ± 21µs)
 }
-Collect 2 sch, 2 exec: PreviousDHashMap(7, 64, 64; 0.25, 0.25, 0.25, 0.25) {
+BasicPrototype 2 sch, 2 exec: Hashmap(7, 64, 64; 0.25, 0.25, 0.25, 0.25) {
 	5.03 ± 0.07 tx/µs
 	13.034ms ± 177µs	(scheduling: 6.286ms ± 164µs, execution: 10.55ms ± 21µs)
 }
-Collect 2 sch, 4 exec: PreviousDHashMap(7, 64, 64; 0.25, 0.25, 0.25, 0.25) {
+BasicPrototype 2 sch, 4 exec: Hashmap(7, 64, 64; 0.25, 0.25, 0.25, 0.25) {
 	6.98 ± 0.34 tx/µs
 	9.389ms ± 430µs	(scheduling: 6.445ms ± 163µs, execution: 5.612ms ± 18µs)
 }
-Collect 2 sch, 8 exec: PreviousDHashMap(7, 64, 64; 0.25, 0.25, 0.25, 0.25) {
+BasicPrototype 2 sch, 8 exec: Hashmap(7, 64, 64; 0.25, 0.25, 0.25, 0.25) {
 	7.26 ± 0.54 tx/µs
 	9.031ms ± 630µs	(scheduling: 6.509ms ± 161µs, execution: 2.825ms ± 19µs)
 }
-Collect 2 sch, 12 exec: PreviousDHashMap(7, 64, 64; 0.25, 0.25, 0.25, 0.25) {
+BasicPrototype 2 sch, 12 exec: Hashmap(7, 64, 64; 0.25, 0.25, 0.25, 0.25) {
 	6.94 ± 0.69 tx/µs
 	9.441ms ± 859µs	(scheduling: 6.527ms ± 164µs, execution: 2.396ms ± 19µs)
 }
-Collect 2 sch, 16 exec: PreviousDHashMap(7, 64, 64; 0.25, 0.25, 0.25, 0.25) {
+BasicPrototype 2 sch, 16 exec: Hashmap(7, 64, 64; 0.25, 0.25, 0.25, 0.25) {
 	5.92 ± 0.64 tx/µs
 	11.077ms ± 1.084ms	(scheduling: 7.197ms ± 169µs, execution: 1.987ms ± 17µs)
 }
-Collect 2 sch, 20 exec: PreviousDHashMap(7, 64, 64; 0.25, 0.25, 0.25, 0.25) {
+BasicPrototype 2 sch, 20 exec: Hashmap(7, 64, 64; 0.25, 0.25, 0.25, 0.25) {
 	5.53 ± 0.69 tx/µs
 	11.842ms ± 1.307ms	(scheduling: 7.05ms ± 168µs, execution: 1.493ms ± 21µs)
 }
-Collect 4 sch, 2 exec: PreviousDHashMap(7, 64, 64; 0.25, 0.25, 0.25, 0.25) {
+BasicPrototype 4 sch, 2 exec: Hashmap(7, 64, 64; 0.25, 0.25, 0.25, 0.25) {
 	5.14 ± 0.03 tx/µs
 	12.761ms ± 81µs	(scheduling: 2.227ms ± 41µs, execution: 10.36ms ± 22µs)
 }
-Collect 4 sch, 4 exec: PreviousDHashMap(7, 64, 64; 0.25, 0.25, 0.25, 0.25) {
+BasicPrototype 4 sch, 4 exec: Hashmap(7, 64, 64; 0.25, 0.25, 0.25, 0.25) {
 	7.23 ± 0.30 tx/µs
 	9.064ms ± 360µs	(scheduling: 2.248ms ± 41µs, execution: 5.684ms ± 20µs)
 }
-Collect 4 sch, 8 exec: PreviousDHashMap(7, 64, 64; 0.25, 0.25, 0.25, 0.25) {
+BasicPrototype 4 sch, 8 exec: Hashmap(7, 64, 64; 0.25, 0.25, 0.25, 0.25) {
 	8.53 ± 0.65 tx/µs
 	7.685ms ± 541µs	(scheduling: 2.306ms ± 42µs, execution: 2.879ms ± 21µs)
 }
-Collect 4 sch, 12 exec: PreviousDHashMap(7, 64, 64; 0.25, 0.25, 0.25, 0.25) {
+BasicPrototype 4 sch, 12 exec: Hashmap(7, 64, 64; 0.25, 0.25, 0.25, 0.25) {
 	7.17 ± 0.67 tx/µs
 	9.135ms ± 780µs	(scheduling: 2.3ms ± 41µs, execution: 2.597ms ± 18µs)
 }
-Collect 4 sch, 16 exec: PreviousDHashMap(7, 64, 64; 0.25, 0.25, 0.25, 0.25) {
+BasicPrototype 4 sch, 16 exec: Hashmap(7, 64, 64; 0.25, 0.25, 0.25, 0.25) {
 	6.17 ± 0.65 tx/µs
 	10.618ms ± 1.015ms	(scheduling: 2.532ms ± 46µs, execution: 1.888ms ± 19µs)
 }
-Collect 4 sch, 20 exec: PreviousDHashMap(7, 64, 64; 0.25, 0.25, 0.25, 0.25) {
+BasicPrototype 4 sch, 20 exec: Hashmap(7, 64, 64; 0.25, 0.25, 0.25, 0.25) {
 	5.57 ± 0.64 tx/µs
 	11.766ms ± 1.217ms	(scheduling: 2.549ms ± 45µs, execution: 1.507ms ± 16µs)
 }
-Collect 8 sch, 2 exec: PreviousDHashMap(7, 64, 64; 0.25, 0.25, 0.25, 0.25) {
+BasicPrototype 8 sch, 2 exec: Hashmap(7, 64, 64; 0.25, 0.25, 0.25, 0.25) {
 	4.97 ± 0.02 tx/µs
 	13.189ms ± 64µs	(scheduling: 835µs ± 10µs, execution: 10.782ms ± 20µs)
 }
-Collect 8 sch, 4 exec: PreviousDHashMap(7, 64, 64; 0.25, 0.25, 0.25, 0.25) {
+BasicPrototype 8 sch, 4 exec: Hashmap(7, 64, 64; 0.25, 0.25, 0.25, 0.25) {
 	7.04 ± 0.29 tx/µs
 	9.314ms ± 364µs	(scheduling: 834µs ± 11µs, execution: 5.526ms ± 18µs)
 }
-Collect 8 sch, 8 exec: PreviousDHashMap(7, 64, 64; 0.25, 0.25, 0.25, 0.25) {
+BasicPrototype 8 sch, 8 exec: Hashmap(7, 64, 64; 0.25, 0.25, 0.25, 0.25) {
 	7.34 ± 0.49 tx/µs
 	8.93ms ± 561µs	(scheduling: 1.001ms ± 15µs, execution: 3.077ms ± 26µs)
 }
-Collect 8 sch, 12 exec: PreviousDHashMap(7, 64, 64; 0.25, 0.25, 0.25, 0.25) {
+BasicPrototype 8 sch, 12 exec: Hashmap(7, 64, 64; 0.25, 0.25, 0.25, 0.25) {
 	6.12 ± 0.51 tx/µs
 	10.715ms ± 825µs	(scheduling: 998µs ± 11µs, execution: 2.441ms ± 18µs)
 }
-Collect 8 sch, 16 exec: PreviousDHashMap(7, 64, 64; 0.25, 0.25, 0.25, 0.25) {
+BasicPrototype 8 sch, 16 exec: Hashmap(7, 64, 64; 0.25, 0.25, 0.25, 0.25) {
 	5.33 ± 0.49 tx/µs
 	12.302ms ± 1.034ms	(scheduling: 969µs ± 12µs, execution: 1.929ms ± 18µs)
 }
-Collect 8 sch, 20 exec: PreviousDHashMap(7, 64, 64; 0.25, 0.25, 0.25, 0.25) {
+BasicPrototype 8 sch, 20 exec: Hashmap(7, 64, 64; 0.25, 0.25, 0.25, 0.25) {
 	4.58 ± 0.45 tx/µs
 	14.308ms ± 1.278ms	(scheduling: 968µs ± 10µs, execution: 1.608ms ± 18µs)
 }

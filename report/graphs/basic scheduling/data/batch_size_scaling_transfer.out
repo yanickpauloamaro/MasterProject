@@ -1,4 +1,4 @@
-Collect {
+BasicPrototype {
 	8 schedulers, 8 executors {
 		Transfer(0.0) {
 			48.33 ± 0.14 tx/µs

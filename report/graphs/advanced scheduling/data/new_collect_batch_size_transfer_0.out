@@ -1,4 +1,4 @@
-NewCollect {
+AdvancedPrototype {
 	8 schedulers, 8 executors {
 		Transfer(0.0) {
 			24.90 ± 0.04 tx/µs

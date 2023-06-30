@@ -1,6 +1,6 @@
 let dimensions = ['...', '2 exec', '4 exec', '8 exec', '12 exec', '16 exec', '20 exec', '22 exec'];
 Workload: Fibonacci(20) ====================================================
-let title = 'Collect: Fibonacci(20)'; // --------------------
+let title = 'BasicPrototype: Fibonacci(20)'; // --------------------
 let sequential_throughput = 0.046;
 let data = [
 	['1 schedulers', 0.093, 0.186, 0.370, 0.554, 0.736, 0.525, 0.577],
@@ -15,31 +15,31 @@ Sequential 1 sch, 1 exec: Fibonacci(20) {
 	0.05 ± 0.00 tx/µs
 	1.410312s ± 38µs
 }
-Collect 1 sch, 2 exec: Fibonacci(20) {
+BasicPrototype 1 sch, 2 exec: Fibonacci(20) {
 	0.09 ± 0.00 tx/µs
 	706.16ms ± 38µs	(scheduling: 295µs ± 5µs, execution: 705.567ms ± 29µs)
 }
-Collect 1 sch, 4 exec: Fibonacci(20) {
+BasicPrototype 1 sch, 4 exec: Fibonacci(20) {
 	0.19 ± 0.00 tx/µs
 	353.258ms ± 15µs	(scheduling: 289µs ± 4µs, execution: 352.691ms ± 14µs)
 }
-Collect 1 sch, 8 exec: Fibonacci(20) {
+BasicPrototype 1 sch, 8 exec: Fibonacci(20) {
 	0.37 ± 0.00 tx/µs
 	176.963ms ± 15µs	(scheduling: 292µs ± 6µs, execution: 176.4ms ± 8µs)
 }
-Collect 1 sch, 12 exec: Fibonacci(20) {
+BasicPrototype 1 sch, 12 exec: Fibonacci(20) {
 	0.55 ± 0.00 tx/µs
 	118.385ms ± 55µs	(scheduling: 280µs ± 6µs, execution: 117.583ms ± 12µs)
 }
-Collect 1 sch, 16 exec: Fibonacci(20) {
+BasicPrototype 1 sch, 16 exec: Fibonacci(20) {
 	0.74 ± 0.00 tx/µs
 	88.997ms ± 55µs	(scheduling: 282µs ± 4µs, execution: 88.179ms ± 5µs)
 }
-Collect 1 sch, 20 exec: Fibonacci(20) {
+BasicPrototype 1 sch, 20 exec: Fibonacci(20) {
 	0.52 ± 0.00 tx/µs
 	124.929ms ± 55µs	(scheduling: 292µs ± 6µs, execution: 124.07ms ± 3µs)
 }
-Collect 1 sch, 22 exec: Fibonacci(20) {
+BasicPrototype 1 sch, 22 exec: Fibonacci(20) {
 	0.58 ± 0.00 tx/µs
 	113.603ms ± 54µs	(scheduling: 279µs ± 5µs, execution: 112.787ms ± 5µs)
 }

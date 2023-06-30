@@ -55,6 +55,7 @@ use testbench::sequential_vm::SequentialVM;
 use testbench::worker_implementation::WorkerC;
 use std::str::FromStr;
 use core_affinity::{CoreId, get_core_ids};
+use futures::executor::block_on;
 use futures::stream::iter;
 use rand::prelude::SliceRandom;
 use testbench::micro_benchmark::{all_numa_latencies};
@@ -67,12 +68,15 @@ struct T {
     to: A,
 }
 
-#[tokio::main]
-async fn main() -> Result<()> {
-// fn main() -> Result<()> {
+//#[tokio::main(flavor = "multi_thread", worker_threads = 8)]
+// #[tokio::main(flavor = "current_thread")]
+// async fn main() -> Result<()> {
+fn main() -> Result<()> {
 
     let total = Instant::now();
-
+    // hwloc_test().await;
+    // micro_benchmark::micro_scheduling();
+    // micro_benchmark::micro_scheduling_async().await;
     // TestSharedMap::test_all();
     // transaction_sizes(8, 24);
     // transaction_sizes(12, 20);
@@ -116,7 +120,13 @@ async fn main() -> Result<()> {
     //     // println!("New version");
     //     TestBench::benchmark("benchmark_config.json")
     // }).await.expect("Task panicked")?;
-    TestBench::benchmark("benchmark_config.json").await?;
+    // TestBench::benchmark("benchmark_config.json").await?;
+    block_on(async {
+        TestBench::benchmark("benchmark_config.json").await?;
+        anyhow::Ok(())
+    })?;
+
+    // println!("Cores: {:?}", get_core_ids().unwrap().len()/2);
 
     // let from_power = 2;
     // // let to_power = 18;
@@ -148,7 +158,7 @@ async fn main() -> Result<()> {
     // println!();
     // profile_schedule_chunk(batch.clone(), 100, 8, 8);  // ???
 
-    // println!("main took {:?}", total.elapsed());
+    println!("main took {:.2?}", total.elapsed());
 
     Ok(())
 }

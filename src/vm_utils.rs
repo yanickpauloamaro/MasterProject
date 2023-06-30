@@ -1,3 +1,4 @@
+use futures::future::join_all;
 use std::cell::RefCell;
 use std::cmp::{max, min};
 use std::collections::HashMap;
@@ -874,6 +875,7 @@ impl<const A: usize, const P: usize> SchedulingCore<A, P> {
         std::thread::spawn(move || {
 
             let pinned = core_affinity::set_for_current(CoreId{ id: scheduler_index });
+            // println!("Pinning scheduler to core {}", scheduler_index);
             if !pinned {
                 return Err(anyhow!("Unable to pin to scheduler core to CPU #{}", scheduler_index));
             }
@@ -994,6 +996,7 @@ impl<const A: usize, const P: usize> ExecutionCore<A, P> {
         std::thread::spawn(move || {
 
             let pinned = core_affinity::set_for_current(CoreId{ id: executor_index });
+            // println!("Pinning executor to core {}", executor_index);
             if !pinned {
                 return Err(anyhow!("Unable to pin to executor core to CPU #{}", executor_index));
             }
@@ -1108,7 +1111,7 @@ impl<const A: usize, const P: usize> VmResult<A, P> {
 }
 
 //region coordinator ===============================================================================
-pub struct Coordinator<const A: usize, const P: usize> {
+pub struct BasicPrototype<const A: usize, const P: usize> {
     nb_schedulers: usize,
     to_schedulers: Vec<CrossSender<SchedulerInput<A, P>>>,
     from_schedulers: Vec<Receiver<SchedulerOutput<A, P>>>,
@@ -1132,8 +1135,15 @@ struct CoreMapping {
     scheduler: Box<dyn Fn(usize) -> usize>,
 }
 
-impl<const A: usize, const P: usize> Coordinator<A, P> {
+impl<const A: usize, const P: usize> BasicPrototype<A, P> {
     pub fn new(batch_size: usize, storage_size: usize, nb_schedulers: usize, nb_executors: usize, mapping: String) -> Self {
+
+        // let id = nb_schedulers + nb_executors;
+        // let pinned = core_affinity::set_for_current(CoreId{ id });
+        // if !pinned {
+        //     panic!("Unable to pin to executor core to CPU #{}", id);
+        // }
+
         let physical_cores = get_core_ids().unwrap().len()/2;
 
         let core_mapping = match mapping.as_str() {
@@ -1226,6 +1236,12 @@ impl<const A: usize, const P: usize> Coordinator<A, P> {
     }
 
     pub fn execute(&mut self, mut batch: Vec<Transaction<A, P>>, immediate: bool) -> anyhow::Result<VmResult<A, P>> {
+
+        // let id = self.nb_schedulers + self.nb_executors;
+        // let pinned = core_affinity::set_for_current(CoreId{ id });
+        // if !pinned {
+        //     panic!("Unable to pin to executor core to CPU #{}", id);
+        // }
 
         /* Immediate Version (maybe good when there are lots of conflicts because the batch is broken down faster)
         *   Create backlog with content of batch
@@ -1399,6 +1415,11 @@ impl<const A: usize, const P: usize> Coordinator<A, P> {
         // res.scheduler_msg_sending = Some(__scheduler_msg_sending);
         // res.executor_msg_allocation = Some(__executor_msg_allocation);
         // res.executor_msg_sending = Some(__executor_msg_sending);
+
+        // let pinned = core_affinity::set_for_current(CoreId{ id: id-1 });
+        // if !pinned {
+        //     panic!("Unable to pin to executor core to CPU #{}", id-1);
+        // }
 
         Ok(res)
     }
@@ -1702,31 +1723,36 @@ enum ExecutionTask<const A: usize, const P: usize> {
 }
 
 //region New scheduling + collect
-pub struct NewCollect<const A: usize, const P: usize> {
+pub struct AdvancedPrototype<const A: usize, const P: usize> {
     nb_schedulers: usize,
     schedules: Option<Vec<Schedule<A, P>>>,
-    scheduler_inputs: Vec<TokioSender<Schedule<A, P>>>,
-    scheduler_outputs: Vec<TokioReceiver<Arc<Schedule<A, P>>>>,
+    scheduler_inputs: Vec<CrossSender<Schedule<A, P>>>,
+    scheduler_outputs: Vec<Receiver<Arc<Schedule<A, P>>>>,
     scheduler_durations: Vec<Arc<Mutex<Duration>>>,
     scheduler_handles: Vec<JoinHandle<anyhow::Result<()>>>,
 
     nb_executors: usize,
-    executor_inputs: Vec<TokioSender<ExecutionTask<A, P>>>,
-    ready_signals: Vec<TokioReceiver<()>>,
+    executor_inputs: Vec<CrossSender<ExecutionTask<A, P>>>,
+    ready_signals: Vec<Receiver<()>>,
     executor_new_txs: Vec<Arc<Mutex<Vec<Transaction<A, P>>>>>,
     executor_tx_results: Vec<Arc<Mutex<Vec<(usize, FunctionResult<A, P>)>>>>,
     executor_durations: Vec<Arc<Mutex<Duration>>>,
     executor_handles: Vec<JoinHandle<anyhow::Result<()>>>,
 
-    stop_signal: tokio::sync::broadcast::Sender<()>,
+    stop_signal: CrossSender<()>,
 
     storage: VmStorage
 }
 
-impl<const A: usize, const P: usize> NewCollect<A, P> {
+impl<const A: usize, const P: usize> AdvancedPrototype<A, P> {
     pub fn new(batch_size: usize, storage_size: usize, nb_schedulers: usize, nb_executors: usize) -> Self {
         assert!(nb_schedulers >= 1);
         assert!(nb_executors >= 1);
+
+        // let pinned = core_affinity::set_for_current(CoreId{ id: nb_schedulers + nb_executors });
+        // if !pinned {
+        //     panic!("Unable to pin to coordinator core to CPU #{}", nb_schedulers + nb_executors);
+        // }
 
         let mut storage = VmStorage::new(storage_size);
 
@@ -1735,7 +1761,8 @@ impl<const A: usize, const P: usize> NewCollect<A, P> {
             Schedule::new(chunk_size, nb_executors)
         }).collect_vec();
 
-        let (stop_signal_send, stop_signal_recv) = tokio::sync::broadcast::channel(1);
+        let (stop_signal_send, stop_signal_recv) = unbounded(); // TODO
+        // let (stop_signal_send, stop_signal_recv) = tokio::sync::broadcast::channel(10);
 
         // Prepare schedulers ----------------------------------------------------------------------
         let mut scheduler_inputs = Vec::with_capacity(nb_schedulers);
@@ -1744,25 +1771,28 @@ impl<const A: usize, const P: usize> NewCollect<A, P> {
         let mut scheduler_handles = Vec::with_capacity(nb_schedulers);
 
         for i in 0..nb_schedulers {
-            let (input_send, input_recv) = tokio::sync::mpsc::channel(1);
+            // let (input_send, input_recv) = tokio::sync::mpsc::channel(10);
+            let (input_send, input_recv) = unbounded();
             scheduler_inputs.push(input_send);
 
-            let (output_send, output_recv) = tokio::sync::mpsc::channel(1);
+            // let (output_send, output_recv) = tokio::sync::mpsc::channel(10);
+            let (output_send, output_recv) = unbounded();
             scheduler_outputs.push(output_recv);
 
             let scheduling_duration = Arc::new(Mutex::new(Duration::from_secs(0)));
             scheduler_durations.push(scheduling_duration.clone());
 
-            let stop_signal = stop_signal_send.subscribe();
+            // let stop_signal = stop_signal_send.subscribe();
+            let stop_signal = stop_signal_recv.clone();
 
             scheduler_handles.push(thread::spawn(move || {
                 let scheduler_index = i;
 
                 // TODO Pin to core?
-                // let pinned = core_affinity::set_for_current(CoreId{ id: scheduler_index });
-                // if !pinned {
-                //     return Err(anyhow!("Unable to pin to scheduler core to CPU #{}", scheduler_index));
-                // }
+                let pinned = core_affinity::set_for_current(CoreId{ id: scheduler_index });
+                if !pinned {
+                    return Err(anyhow!("Unable to pin to scheduler core to CPU #{}", scheduler_index));
+                }
 
                 block_on(async {
                     let mut input = input_recv;
@@ -1775,13 +1805,25 @@ impl<const A: usize, const P: usize> NewCollect<A, P> {
                     let mut new_writes = Vec::with_capacity(chunk_size);
 
                     loop {
-                        let mut to_schedule: Schedule<A, P> = tokio::select! {
-                            received = input.recv() => {
-                                received.ok_or(anyhow!("Scheduler {}: Failed to receive new transactions", scheduler_index))?
+                        // let mut to_schedule: Schedule<A, P> = tokio::select! {
+                        //     received = input.recv() => {
+                        //         received.ok_or(anyhow!("Scheduler {}: Failed to receive new transactions", scheduler_index))?
+                        //     },
+                        //     signal = stop_signal.recv() => {
+                        //         return signal.map_err(|err| anyhow!("Scheduler {}: Failed to receive stop signal", scheduler_index));
+                        //     }
+                        // };
+
+                        let mut to_schedule: Schedule<A, P> = crossbeam_channel::select! {
+                            recv(input) -> received => {
+                                received.context(format!("Scheduler {}: Failed to receive new transactions", scheduler_index))?
                             },
-                            signal = stop_signal.recv() => {
+                            recv(stop_signal) -> signal => {
                                 return signal.map_err(|err| anyhow!("Scheduler {}: Failed to receive stop signal", scheduler_index));
-                            }
+                            },
+                            // default(Duration::from_secs(1)) => {
+                            //     panic!("Unexpected select");
+                            // },
                         };
 
                         let start = Instant::now();
@@ -1797,7 +1839,7 @@ impl<const A: usize, const P: usize> NewCollect<A, P> {
                         );
 
                         let schedule = Arc::new(to_schedule);
-                        output.send(schedule).await
+                        output.send(schedule)
                             .context(format!("Scheduler {}: Failed to send schedule", scheduler_index))?;
 
                         *scheduling_duration.lock().unwrap() += start.elapsed();
@@ -1816,10 +1858,12 @@ impl<const A: usize, const P: usize> NewCollect<A, P> {
 
         for j in 0..nb_executors {
 
-            let (input_send, input_recv) = tokio::sync::mpsc::channel(1);
+            // let (input_send, input_recv) = tokio::sync::mpsc::channel(10);
+            let (input_send, input_recv) = unbounded();
             executor_inputs.push(input_send);
 
-            let (ready_signal_send, ready_signal_recv) = tokio::sync::mpsc::channel(1);
+            // let (ready_signal_send, ready_signal_recv) = tokio::sync::mpsc::channel(10);
+            let (ready_signal_send, ready_signal_recv) = unbounded();
             executor_ready_signals.push(ready_signal_recv);
 
             let new_txs = Arc::new(Mutex::new(Vec::with_capacity(chunk_size)));
@@ -1831,7 +1875,8 @@ impl<const A: usize, const P: usize> NewCollect<A, P> {
             let exec_duration = Arc::new(Mutex::new(Duration::from_secs(0)));
             executor_durations.push(exec_duration.clone());
 
-            let stop_signal = stop_signal_send.subscribe();
+            // let stop_signal = stop_signal_send.subscribe();
+            let stop_signal = stop_signal_recv.clone();
 
             let storage = storage.get_shared();
 
@@ -1840,10 +1885,10 @@ impl<const A: usize, const P: usize> NewCollect<A, P> {
                 let core_id = nb_schedulers + executor_index;
 
                 // TODO Pin to core?
-                // let pinned = core_affinity::set_for_current(CoreId{ id: core_id });
-                // if !pinned {
-                //     return Err(anyhow!("Unable to pin to executor core to CPU #{}", core_id));
-                // }
+                let pinned = core_affinity::set_for_current(CoreId{ id: core_id });
+                if !pinned {
+                    return Err(anyhow!("Unable to pin to executor core to CPU #{}", core_id));
+                }
 
                 block_on(async {
                     let mut input = input_recv;
@@ -1855,13 +1900,25 @@ impl<const A: usize, const P: usize> NewCollect<A, P> {
                     let mut stop_signal = stop_signal;
 
                     loop {
-                        let task = tokio::select! {
-                            received = input.recv() => {
-                                received.ok_or(anyhow!("Executor {}: Failed to receive schedule", executor_index))?
+                        // let task = tokio::select! {
+                        //     received = input.recv() => {
+                        //         received.ok_or(anyhow!("Executor {}: Failed to receive schedule", executor_index))?
+                        //     },
+                        //     signal = stop_signal.recv() => {
+                        //         return signal.map_err(|err| anyhow!("Executor {}: Failed to receive stop signal", executor_index));
+                        //     }
+                        // };
+
+                        let task = crossbeam_channel::select! {
+                            recv(input) -> received => {
+                                received.context(format!("Executor {}: Failed to receive schedule", executor_index))?
                             },
-                            signal = stop_signal.recv() => {
+                            recv(stop_signal) -> signal => {
                                 return signal.map_err(|err| anyhow!("Executor {}: Failed to receive stop signal", executor_index));
-                            }
+                            },
+                            // default(Duration::from_secs(1)) => {
+                            //     panic!("Unexpected select");
+                            // },
                         };
 
                         // Execution
@@ -1934,7 +1991,7 @@ impl<const A: usize, const P: usize> NewCollect<A, P> {
                         *exec_duration.lock().unwrap() += elapsed;
 
                         // Only send signal once you have released the locks
-                        ready_signal.send(()).await
+                        ready_signal.send(())
                             .context(format!("Executor {}: Failed to send ready signal", executor_index))?;
                     }
                 })
@@ -2000,7 +2057,7 @@ impl<const A: usize, const P: usize> NewCollect<A, P> {
             VmUtils::timestamp("================= vm.execute: execute exclusive and assigned transactions =================");
             let mut has_read_only = false;
             for (scheduler_index, scheduler_output) in self.scheduler_outputs.iter_mut().enumerate() {
-                let arc_schedule = scheduler_output.recv().await
+                let arc_schedule = scheduler_output.recv()
                     .context(format!("Failed to receive schedule from scheduler {}", scheduler_index))?;
 
                 if !arc_schedule.exclusive.is_empty() {
@@ -2011,12 +2068,12 @@ impl<const A: usize, const P: usize> NewCollect<A, P> {
 
                     // Arc of schedule to executor 0
                     self.executor_inputs[0]
-                        .send(ExecutionTask::Exclusive(arc_schedule.clone())).await
+                        .send(ExecutionTask::Exclusive(arc_schedule.clone()))
                         .context("Failed to send input to executor 0")?;
 
                     // Wait for ready from executor 0
                     self.ready_signals[0]
-                        .recv().await
+                        .recv()
                         .context("Failed to receive ready signal from executor 0")?;
                 }
 
@@ -2028,13 +2085,13 @@ impl<const A: usize, const P: usize> NewCollect<A, P> {
 
                     for (executor_index, executor_input) in self.executor_inputs.iter_mut().enumerate() {
                         executor_input
-                            .send(ExecutionTask::Assigned(arc_schedule.clone())).await
+                            .send(ExecutionTask::Assigned(arc_schedule.clone()))
                             .context(format!("Failed to send start signal to executor {}", executor_index))?;
                     }
 
                     for (executor_index, ready_signal) in self.ready_signals.iter_mut().enumerate() {
                         ready_signal
-                            .recv().await
+                            .recv()
                             .context(format!("Failed to receive ready signal from executor {}", executor_index))?;
                     }
                 }
@@ -2060,13 +2117,13 @@ impl<const A: usize, const P: usize> NewCollect<A, P> {
                 let read_only = Arc::new(schedules);
                 for (executor_index, executor_input) in self.executor_inputs.iter_mut().enumerate() {
                     executor_input
-                        .send(ExecutionTask::ReadOnly(read_only.clone())).await
+                        .send(ExecutionTask::ReadOnly(read_only.clone()))
                         .context(format!("Coordinator: Failed to send start signal to executor {}", executor_index))?;
                 }
 
                 for (executor_index, ready_signal) in self.ready_signals.iter_mut().enumerate() {
                     ready_signal
-                        .recv().await
+                        .recv()
                         .context(format!("Coordinator: Failed to receive ready signal from executor {}", executor_index))?;
                 }
 
@@ -2132,7 +2189,10 @@ impl<const A: usize, const P: usize> NewCollect<A, P> {
     }
 
     pub fn terminate(&mut self) -> (Vec<Duration>, Vec<Duration>) {
-        self.stop_signal.send(()).unwrap();
+        // self.stop_signal.send(()).unwrap();
+        for _ in 0..self.nb_schedulers+self.nb_executors {
+            self.stop_signal.send(()).unwrap();
+        }
 
         for scheduler in self.scheduler_handles.drain(..) {
             scheduler.join().unwrap().unwrap();
@@ -2281,18 +2341,32 @@ impl<const A: usize, const P: usize> CoordinatorMixed<A, P> {
                                 let mut committed = false;
 
                                 // Receive all schedules -------------------------------------------------------
-                                for (index, mut receiver) in receive_schedule.iter_mut().enumerate() {
-                                    VmUtils::timestamp(format!("Coordinator: waiting for schedule {}", index).as_str());
-                                    let schedule = tokio::select! {
-                                received = receiver.recv() => {
+                                let mut receive_all = receive_schedule.iter_mut().map(|receiver| receiver.recv());
+                                let mut received_schedules: Vec<Result<_, _>> = tokio::select! {
+                                    received = join_all(receive_all) => {
+                                        received
+                                    },
+                                    terminate = receive_terminate_signal.recv() => {
+                                        VmUtils::timestamp("Coordinator: terminated");
+                                        return terminate.map_err(|err| anyhow!("Failed to receive termination signal"));
+                                    },
+                                };
+
+                                for (index, mut received) in received_schedules.into_iter().enumerate() {
                                     if received.is_err() { VmUtils::timestamp(format!("!!!! Coordinator: failed to receive schedule {:?}", received).as_str()); }
-                                    received.map_err(|err| anyhow!("Failed to receive schedule from scheduler {}", index))?
-                                },
-                                terminate = receive_terminate_signal.recv() => {
-                                    VmUtils::timestamp("Coordinator: terminated");
-                                    return terminate.map_err(|err| anyhow!("Failed to receive termination signal"));
-                                },
-                            };
+                                    let schedule = received.map_err(|err| anyhow!("Failed to receive schedule from scheduler {}", index))?;
+                            //     for (index, mut receiver) in receive_schedule.iter_mut().enumerate() {
+                            //         VmUtils::timestamp(format!("Coordinator: waiting for schedule {}", index).as_str());
+                            //         let schedule = tokio::select! {
+                            //     received = receiver.recv() => {
+                            //         if received.is_err() { VmUtils::timestamp(format!("!!!! Coordinator: failed to receive schedule {:?}", received).as_str()); }
+                            //         received.map_err(|err| anyhow!("Failed to receive schedule from scheduler {}", index))?
+                            //     },
+                            //     terminate = receive_terminate_signal.recv() => {
+                            //         VmUtils::timestamp("Coordinator: terminated");
+                            //         return terminate.map_err(|err| anyhow!("Failed to receive termination signal"));
+                            //     },
+                            // };
 
                                     // If any schedule is non empty we are not done
                                     if !schedule.is_empty() {
@@ -2517,18 +2591,32 @@ impl<const A: usize, const P: usize> CoordinatorMixed<A, P> {
                         'main_loop: loop {
                             VmUtils::timestamp(format!("Executor {}: start main loop", executor_index).as_str());
                             // Receive all schedules -------------------------------------------------------
-                            for (index, mut receiver) in receive_schedule.iter_mut().enumerate() {
-                                VmUtils::timestamp(format!("Executor {}: waiting for schedule {}", executor_index, index).as_str());
-                                let schedule = tokio::select! {
-                                received = receiver.recv() => {
-                                    if received.is_err() { VmUtils::timestamp(format!("!!!! Executor {}: failed to receive schedule {:?}", executor_index, received).as_str()); }
-                                    received.map_err(|err| anyhow!("Failed to receive schedule from scheduler {}", index))?
-                                },
-                                terminate = receive_terminate_signal.recv() => {
-                                    VmUtils::timestamp(format!("Executor {}: terminated", executor_index).as_str());
-                                    return terminate.map_err(|err| anyhow!("Failed to receive termination signal"));
-                                },
-                            };
+                            let mut receive_all = receive_schedule.iter_mut().map(|receiver| receiver.recv());
+                            let mut received_schedules: Vec<Result<_, _>> = tokio::select! {
+                                    received = join_all(receive_all) => {
+                                        received
+                                    },
+                                    terminate = receive_terminate_signal.recv() => {
+                                        VmUtils::timestamp("Coordinator: terminated");
+                                        return terminate.map_err(|err| anyhow!("Failed to receive termination signal"));
+                                    },
+                                };
+
+                            for (index, mut received) in received_schedules.into_iter().enumerate() {
+                                if received.is_err() { VmUtils::timestamp(format!("!!!! Coordinator: failed to receive schedule {:?}", received).as_str()); }
+                                let schedule = received.map_err(|err| anyhow!("Failed to receive schedule from scheduler {}", index))?;
+                            // for (index, mut receiver) in receive_schedule.iter_mut().enumerate() {
+                            //     VmUtils::timestamp(format!("Executor {}: waiting for schedule {}", executor_index, index).as_str());
+                            //     let schedule = tokio::select! {
+                            //     received = receiver.recv() => {
+                            //         if received.is_err() { VmUtils::timestamp(format!("!!!! Executor {}: failed to receive schedule {:?}", executor_index, received).as_str()); }
+                            //         received.map_err(|err| anyhow!("Failed to receive schedule from scheduler {}", index))?
+                            //     },
+                            //     terminate = receive_terminate_signal.recv() => {
+                            //         VmUtils::timestamp(format!("Executor {}: terminated", executor_index).as_str());
+                            //         return terminate.map_err(|err| anyhow!("Failed to receive termination signal"));
+                            //     },
+                            // };
 
                                 /* TODO technically, could drop empty schedules here (just make sure the
                                     coordinator also drop them, otherwise the indices won't match)
@@ -2893,45 +2981,48 @@ impl<const A: usize, const P: usize> CoordinatorMixed<A, P> {
 //region VM Types ==================================================================================
 #[derive(Debug, Serialize, Deserialize, Copy, Clone, PartialEq)]
 pub enum VmType {
+    Sequential,
+    BasicPrototype,
+    AdvancedPrototype,
+
     A,
     BTokio,
     BStd,
     C,
-    Sequential,
     ParallelCollect,
     ParallelImmediate,
     Immediate,
-    Collect,
     Mixed,
-    NewCollect
 }
 
 impl VmType {
     pub fn name(&self) -> String {
         match self {
+            VmType::Sequential => String::from("Sequential"),
+            VmType::BasicPrototype => String::from("BasicPrototype"),
+            VmType::AdvancedPrototype => String::from("AdvancedPrototype"),
+
             VmType::A => String::from("VmA"),
             VmType::BTokio => String::from("VmB_Tokio"),
             VmType::BStd => String::from("VmB_Std"),
             VmType::C => String::from("VmC"),
-            VmType::Sequential => String::from("Sequential"),
             VmType::ParallelCollect => String::from("ParallelCollect"),
             VmType::ParallelImmediate => String::from("ParallelImmediate"),
             VmType::Immediate => String::from("Immediate"),
-            VmType::Collect => String::from("Collect"),
             VmType::Mixed => String::from("Mixed"),
-            VmType::NewCollect => String::from("NewCollect"),
         }
     }
 
     pub fn new(&self) -> bool {
         match self {
             VmType::Sequential => true,
+            VmType::BasicPrototype => true,
+            VmType::AdvancedPrototype => true,
+
             VmType::ParallelCollect => true,
             VmType::ParallelImmediate => true,
             VmType::Immediate => true,
-            VmType::Collect => true,
             VmType::Mixed => true,
-            VmType::NewCollect => true,
             _ => false
         }
     }

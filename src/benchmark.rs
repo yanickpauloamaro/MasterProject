@@ -36,7 +36,7 @@ use crate::parallel_vm::{ParallelVmCollect, ParallelVmImmediate};
 use crate::sequential_vm::SequentialVM;
 use crate::utils::{batch_with_conflicts_new_impl, mean_ci_str};
 use crate::vm::Executor;
-use crate::vm_utils::{Coordinator, CoordinatorMixed, NewCollect, VmFactory, VmResult, VmType};
+use crate::vm_utils::{AdvancedPrototype, BasicPrototype, CoordinatorMixed, VmFactory, VmResult, VmType};
 use crate::wip::{NONE_WIP, Word};
 
 pub fn benchmarking(path: &str) -> Result<()> {
@@ -285,10 +285,10 @@ enum VmWrapper<const A: usize, const P: usize> {
     Sequential(SequentialVM),
     ParallelCollect(ParallelVmCollect),
     ParallelImmediate(ParallelVmImmediate),
-    Immediate(Coordinator<A, P>),
-    Collect(Coordinator<A, P>),
+    Immediate(BasicPrototype<A, P>),
+    BasicPrototype(BasicPrototype<A, P>),
     Mixed(CoordinatorMixed<A, P>),
-    NewCollect(NewCollect<A, P>)
+    AdvancedPrototype(AdvancedPrototype<A, P>)
 }
 impl<const A: usize, const P: usize> VmWrapper<A, P> {
     pub fn new(p: &RunParameter) -> Self {
@@ -296,10 +296,10 @@ impl<const A: usize, const P: usize> VmWrapper<A, P> {
             VmType::Sequential => VmWrapper::Sequential(SequentialVM::new(p.storage_size).unwrap()),
             VmType::ParallelCollect => VmWrapper::ParallelCollect(ParallelVmCollect::new(p.storage_size, p.nb_schedulers, p.nb_executors).unwrap()),
             VmType::ParallelImmediate => VmWrapper::ParallelImmediate(ParallelVmImmediate::new(p.storage_size, p.nb_schedulers, p.nb_executors).unwrap()),
-            VmType::Immediate => VmWrapper::Immediate(Coordinator::new(p.batch_size, p.storage_size, p.nb_schedulers, p.nb_executors, p.mapping.clone())),
-            VmType::Collect => VmWrapper::Collect(Coordinator::new(p.batch_size, p.storage_size, p.nb_schedulers, p.nb_executors, p.mapping.clone())),
+            VmType::Immediate => VmWrapper::Immediate(BasicPrototype::new(p.batch_size, p.storage_size, p.nb_schedulers, p.nb_executors, p.mapping.clone())),
+            VmType::BasicPrototype => VmWrapper::BasicPrototype(BasicPrototype::new(p.batch_size, p.storage_size, p.nb_schedulers, p.nb_executors, p.mapping.clone())),
             VmType::Mixed => VmWrapper::Mixed(CoordinatorMixed::new(p.batch_size, p.storage_size, p.nb_schedulers, p.nb_executors)),
-            VmType::NewCollect => VmWrapper::NewCollect(NewCollect::new(p.batch_size, p.storage_size, p.nb_schedulers, p.nb_executors)),
+            VmType::AdvancedPrototype => VmWrapper::AdvancedPrototype(AdvancedPrototype::new(p.batch_size, p.storage_size, p.nb_schedulers, p.nb_executors)),
             _ => todo!()
         }
     }
@@ -309,9 +309,9 @@ impl<const A: usize, const P: usize> VmWrapper<A, P> {
             VmWrapper::ParallelCollect(vm) => vm.init_storage(init),
             VmWrapper::ParallelImmediate(vm) => vm.init_storage(init),
             VmWrapper::Immediate(vm) => vm.init_storage(init),
-            VmWrapper::Collect(vm) => vm.init_storage(init),
+            VmWrapper::BasicPrototype(vm) => vm.init_storage(init),
             VmWrapper::Mixed(vm) => vm.init_storage(init),
-            VmWrapper::NewCollect(vm) => vm.init_storage(init),
+            VmWrapper::AdvancedPrototype(vm) => vm.init_storage(init),
             _ => todo!()
         }
     }
@@ -325,9 +325,9 @@ impl<const A: usize, const P: usize> VmWrapper<A, P> {
                 vm.execute(batch, true)
                 // vm.execute_immediate(batch)
             },
-            VmWrapper::Collect(vm) => { vm.execute(batch, false) },
+            VmWrapper::BasicPrototype(vm) => { vm.execute(batch, false) },
             VmWrapper::Mixed(vm) => { vm.execute(batch).await },
-            VmWrapper::NewCollect(vm) => { vm.execute(batch).await },
+            VmWrapper::AdvancedPrototype(vm) => { vm.execute(batch).await },
             _ => todo!()
         }
     }
@@ -353,7 +353,7 @@ impl<const A: usize, const P: usize> VmWrapper<A, P> {
                 // DHashMap::print_total_size::<P>(&vm.storage.content);
                 vm.terminate()
             },
-            VmWrapper::Collect(vm) => {
+            VmWrapper::BasicPrototype(vm) => {
                 // DHashMap::print_total_size::<P>(&vm.storage.content);
                 vm.terminate()
             },
@@ -361,7 +361,7 @@ impl<const A: usize, const P: usize> VmWrapper<A, P> {
                 // DHashMap::print_total_size::<P>(&vm.storage.content);
                 vm.terminate().await
             },
-            VmWrapper::NewCollect(vm) => {
+            VmWrapper::AdvancedPrototype(vm) => {
                 // DHashMap::print_total_size::<P>(&vm.storage.content);
                 vm.terminate()
             },
@@ -436,8 +436,8 @@ impl TestBench {
             .context("Unable to create benchmark config")?;
 
         let mut results = vec!();
-        let format_latency = |latency: &Duration| {
-            format!("{:.3}", latency.as_secs_f64()*1000.0)
+        let format_throughput = |throughput: f64| {
+            format!("{:.3}", throughput)
         };
 
         eprintln!("Benchmarking... ");
@@ -594,8 +594,8 @@ impl TestBench {
             VmType::Sequential => TestBench::bench_with_parameter_new(params, workload).await,
             // VmType::ParallelCollect | VmType::ParallelImmediate if params.with_details => TestBench::bench_with_parameter_and_details(params),
             VmType::ParallelCollect | VmType::ParallelImmediate |
-            VmType::Immediate | VmType::Collect |
-            VmType::Mixed | VmType::NewCollect
+            VmType::Immediate | VmType::BasicPrototype |
+            VmType::Mixed | VmType::AdvancedPrototype
                 => TestBench::bench_with_parameter_new_and_details(params, workload).await,
             _ => TestBench::bench_with_parameter(params)
         };
@@ -724,6 +724,7 @@ impl TestBench {
         }
 
         vm.init_vm_storage(workload.initialisation(&params, &mut rng));
+        let mut test = Duration::from_secs(0);
         for _ in 0..params.repetitions {
             // let batch = workload.new_batch(&params, &mut rng);
             let batch = batch.clone();
@@ -740,6 +741,7 @@ impl TestBench {
             let start = Instant::now();
             let result = vm.execute(batch).await.unwrap();
             let duration = start.elapsed();
+            // test += duration;
             // eprintln!("Done one iteration=======================");
             latency_reps.push(duration);
             scheduling_latency.push(result.scheduling_duration);
@@ -783,7 +785,7 @@ impl TestBench {
             println!("\t\t\tsending message to executors: {}", mean_ci_str(&executor_msg_sending));
             Some(executor_msg_sending)
         };
-
+//        println!("Throughput ?= {:.3}", ((params.repetitions * params.batch_size as u64) as f64)/(test.as_micros() as f64));
         return BenchmarkResult::from_latency_with_breakdown(params, latency_reps, scheduling_latency, execution_latency);
     }
 }
@@ -989,7 +991,7 @@ struct DHashMapWorkload {
 impl DHashMapWorkload {
     const NAME: &'static str = "DHashMap";
     const PIECED: &'static str = "PieceDHashMap";
-    const PREVIOUS: &'static str = "PreviousDHashMap";
+    const PREVIOUS: &'static str = "Hashmap";
     // "PieceDHashMap(7, 10, 10; 0.2, 0.2, 0.2, 0.2)"
 
     pub fn initial_parser(input: &str) -> IResult<&str, u32> {

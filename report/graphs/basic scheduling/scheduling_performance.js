@@ -9,7 +9,7 @@ let data = {
   {workload: 'Transfer(0.0)', scheduling: 'basic', size: 4097, parallelism: 1.000, latency: 80, iter: 1 },
   {workload: 'Transfer(0.0)', scheduling: 'basic', size: 2731, parallelism: 1.000, latency: 51, iter: 1 },
   {workload: 'Transfer(0.0)', scheduling: 'basic', size: 2049, parallelism: 1.000, latency: 38, iter: 1 },
-
+  
   {workload: 'Transfer(0.0)', scheduling: 'advanced(4)', size: 65537, parallelism: 1.000, latency: 3707, iter: 1 },
   {workload: 'Transfer(0.0)', scheduling: 'advanced(4)', size: 32769, parallelism: 1.000, latency: 1654, iter: 1 },
   {workload: 'Transfer(0.0)', scheduling: 'advanced(4)', size: 16385, parallelism: 1.000, latency: 798, iter: 1 },
@@ -45,8 +45,8 @@ let data = {
   {workload: 'Transfer(0.0)', scheduling: 'advanced(32)', size: 4097, parallelism: 1.000, latency: 180, iter: 1 },
   {workload: 'Transfer(0.0)', scheduling: 'advanced(32)', size: 2731, parallelism: 1.000, latency: 100, iter: 1 },
   {workload: 'Transfer(0.0)', scheduling: 'advanced(32)', size: 2049, parallelism: 1.000, latency: 72, iter: 1 },
-
-
+  
+  
   // Transfer(0.5): =======================================================================
   {workload: 'Transfer(0.5)', scheduling: 'basic', size: 65537, parallelism: 0.721, latency: 2010, iter: 1 },
   {workload: 'Transfer(0.5)', scheduling: 'basic', size: 32769, parallelism: 0.844, latency: 861, iter: 1 },
@@ -69,7 +69,7 @@ let data = {
   {workload: 'Transfer(0.5)', scheduling: 'basic', size: 4097, parallelism: 1.000, latency: 84, iter: 3 },
   {workload: 'Transfer(0.5)', scheduling: 'basic', size: 2731, parallelism: 1.000, latency: 53, iter: 3 },
   {workload: 'Transfer(0.5)', scheduling: 'basic', size: 2049, parallelism: 1.000, latency: 39, iter: 3 },
-
+  
   {workload: 'Transfer(0.5)', scheduling: 'advanced(4)', size: 65537, parallelism: 0.721, latency: 3341, iter: 1 },
   {workload: 'Transfer(0.5)', scheduling: 'advanced(4)', size: 32769, parallelism: 0.844, latency: 1554, iter: 1 },
   {workload: 'Transfer(0.5)', scheduling: 'advanced(4)', size: 16385, parallelism: 0.918, latency: 770, iter: 1 },
@@ -175,7 +175,7 @@ let data = {
   {workload: 'Transfer(0.5)', scheduling: 'advanced(32)', size: 4097, parallelism: 1.000, latency: 184, iter: 3 },
   {workload: 'Transfer(0.5)', scheduling: 'advanced(32)', size: 2731, parallelism: 1.000, latency: 103, iter: 3 },
   {workload: 'Transfer(0.5)', scheduling: 'advanced(32)', size: 2049, parallelism: 1.000, latency: 74, iter: 3 },
-
+  
   // DHashMap: ============================================================================
   {workload: 'DHashMap', scheduling: 'basic', size: 65537, parallelism: 0.513, latency: 1510, iter: 1 },
   {workload: 'DHashMap', scheduling: 'basic', size: 32769, parallelism: 0.532, latency: 760, iter: 1 },
@@ -212,7 +212,7 @@ let data = {
   {workload: 'DHashMap', scheduling: 'basic', size: 4097, parallelism: 0.994, latency: 170, iter: 5 },
   {workload: 'DHashMap', scheduling: 'basic', size: 2731, parallelism: 0.999, latency: 94, iter: 5 },
   {workload: 'DHashMap', scheduling: 'basic', size: 2049, parallelism: 1.000, latency: 63, iter: 5 },
-
+  
   {workload: 'DHashMap', scheduling: 'advanced(4)', size: 65537, parallelism: 1.000, latency: 1775, iter: 1 },
   {workload: 'DHashMap', scheduling: 'advanced(4)', size: 32769, parallelism: 1.000, latency: 901, iter: 1 },
   {workload: 'DHashMap', scheduling: 'advanced(4)', size: 16385, parallelism: 1.000, latency: 436, iter: 1 },
@@ -248,7 +248,7 @@ let data = {
   {workload: 'DHashMap', scheduling: 'advanced(32)', size: 4097, parallelism: 1.000, latency: 123, iter: 1 },
   {workload: 'DHashMap', scheduling: 'advanced(32)', size: 2731, parallelism: 1.000, latency: 81, iter: 1 },
   {workload: 'DHashMap', scheduling: 'advanced(32)', size: 2049, parallelism: 1.000, latency: 59, iter: 1 },
-
+  
   // Fibonacci: ============================================================================
   {workload: 'Fibonacci', scheduling: 'basic', size: 65537, parallelism: 1.000, latency: 155, iter: 1 },
   {workload: 'Fibonacci', scheduling: 'basic', size: 32769, parallelism: 1.000, latency: 77, iter: 1 },
@@ -257,7 +257,7 @@ let data = {
   {workload: 'Fibonacci', scheduling: 'basic', size: 4097, parallelism: 1.000, latency: 9, iter: 1 },
   {workload: 'Fibonacci', scheduling: 'basic', size: 2731, parallelism: 1.000, latency: 6, iter: 1 },
   {workload: 'Fibonacci', scheduling: 'basic', size: 2049, parallelism: 1.000, latency: 4, iter: 1 },
-
+  
   {workload: 'Fibonacci', scheduling: 'advanced(4)', size: 65537, parallelism: 1.000, latency: 127, iter: 1 },
   {workload: 'Fibonacci', scheduling: 'advanced(4)', size: 32769, parallelism: 1.000, latency: 63, iter: 1 },
   {workload: 'Fibonacci', scheduling: 'advanced(4)', size: 16385, parallelism: 1.000, latency: 31, iter: 1 },
@@ -295,7 +295,7 @@ let data = {
   {workload: 'Fibonacci', scheduling: 'advanced(32)', size: 2049, parallelism: 1.000, latency: 3, iter: 1 },
     ]
   };
-
+  
   let make_dataset = (scheduling, iter, size, workload, id) => {
     let transforms = [{
       type: 'filter',
@@ -307,25 +307,25 @@ let data = {
           config: { dimension: 'iter', value: iter }
         })
     }
-
+  
     if (size) {
       transforms.push({
           type: 'filter',
           config: { dimension: 'size', value: size }
         })
     }
-
+  
     transforms.push({
           type: 'filter',
           config: { dimension: 'workload', value: workload }
         })
-
+  
     return {
         id: id,
         transform: transforms
       };
   }
-
+  
   let make_serie = (name, config) => {
     return {
         name: name,
@@ -342,7 +342,7 @@ let data = {
         }
       };
   };
-
+  
   // // Latency vs parallelism (scatter chunk size)
   let config_latency_parallelism_size = {
       encode_y: 'latency',
@@ -363,7 +363,7 @@ let data = {
         },
       }
   };
-
+  
   // // Latency vs parallelism (scatter iter)
   let config_latency_parallelism_iter = {
       encode_y: 'latency',
@@ -384,7 +384,7 @@ let data = {
         },
       }
   }
-
+  
   // // Latency vs chunk size
   let config_latency_size = {
       encode_y: 'latency',
@@ -404,12 +404,12 @@ let data = {
           },
       }
   }
-
+  
   // =====================================================================
   // let config = config_latency_size;
   let config = config_latency_parallelism_iter;
   // let config = config_latency_parallelism_size;
-
+  
   config.datasets = [
     /*
     * The first argument filters the scheduling type:
@@ -422,29 +422,29 @@ let data = {
     make_dataset('basic', config.iter, config.size, 'Transfer(0.5)', 'Transfer 50%'),
     make_dataset('basic', config.iter, config.size, "DHashMap", 'Hashmap 50%'),
     make_dataset('basic', config.iter, config.size, "Fibonacci", 'Fibonacci 20'),
-
+    
     // make_dataset('advanced(8)', config.iter, config.size, "Transfer(0.0)", 'Transfer 0%'),
     // make_dataset('advanced(8)', config.iter, config.size, 'Transfer(0.5)', 'Transfer 50%'),
     // make_dataset('advanced(8)', config.iter, config.size, "DHashMap", 'Hashmap 50%'),
     // make_dataset('advanced(8)', config.iter, config.size, "Fibonacci", 'Fibonacci 20'),
-
+    
     // make_dataset('advanced(16)', config.iter, config.size, "Transfer(0.0)", 'Transfer 0%'),
     // make_dataset('advanced(16)', config.iter, config.size, 'Transfer(0.5)', 'Transfer 50%'),
     // make_dataset('advanced(16)', config.iter, config.size, "DHashMap", 'Hashmap 50%'),
     // make_dataset('advanced(16)', config.iter, config.size, "Fibonacci", 'Fibonacci 20'),
   ];
-
+  
   let series = [
     make_serie('Transfer 0%', config),
     make_serie('Transfer 50%', config),
     make_serie('Hashmap 50%', config),
     make_serie('Fibonacci 20', config),
   ];
-
+  
   option = {
     title: {
-      left: '40%',
-      text: 'Advanced scheduling',
+      left: '42.5%',
+      text: 'Basic scheduling',
       textStyle: { fontSize: 24, },
     },
     toolbox: {
@@ -456,10 +456,10 @@ let data = {
       data,
       ...config.datasets
     ],
-    dataZoom: [
-      { yAxisIndex: 0, },
-      { xAxisIndex: 0, }
-    ],
+    // dataZoom: [
+    //   { yAxisIndex: 0, },
+    //   { xAxisIndex: 0, }
+    // ],
     legend: {
       right: '0%',
       textStyle: { fontSize: 22, },
@@ -474,7 +474,7 @@ let data = {
     },
     xAxis: config.xAxis,
     yAxis: {
-      max: 7000,
+      // max: 5000,
       name: 'Latency',
       type: 'value',
       nameTextStyle: { fontSize: 24, },
