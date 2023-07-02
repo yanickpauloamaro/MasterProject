@@ -11,6 +11,7 @@ The graphs are written in javascript using [Apache ECharts](https://echarts.apac
 ## Quick Start
 To run the benchmark yourself clone the repository and make sure to have both Rust and gcc installed.
 Then you simply run `cargo run --release` to run the benchmark.
+
 The configuration for the benchmark can be found in `benchmark_config.json` and the important parameters are explained below (the other ones are only used for testing):
 - `vm_types`: the list of VM variants to benchmark. The possible values are: `Sequential`, `BasicPrototype` and `AdvancedPrototype`.
 - `nb_schedulers` and `nb_executors`: The number of threads to use for scheduling and executing transactions respectively. They are provided as a list to more easily benchmark multiple configurations. NB: Each thread is pinned to a unique logical core so make sure to have enough logical cores for all scheduling and execution threads.
@@ -23,7 +24,7 @@ The configuration for the benchmark can be found in `benchmark_config.json` and 
 - `Transfer(<conflict>)`: workload for the banking application where `<conflict>` controls the percentage of conflict (0.0 < `<conflict>` < 1.0).
 - `Fibonacci(<n>)`: workload for the synthetic application where `<n>` is the fibonacci number to compute.
 - `Hashmap(<value_size>, <bucket_capacity>, <nb_buckets>; <get>, <insert>, <remove>, <contains>)`: workload for the hashmap application.
-    - `<value_size>`: The size of a value, in words (1 word = 8B). A map entry has one more byte for the key.
+    - `<value_size>`: The size of a value, in words (1 word = 8B). A map entry has one more word for the key.
     - `<bucket_capacity>`: The capacity of the buckets, in entries.
     - `<nb_buckets>`: The initial number of buckets of the hashmap.
     - `<get>`: The percentage of `get` operations in the workload.
