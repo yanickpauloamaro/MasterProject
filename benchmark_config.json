@@ -1,6 +1,6 @@
 {
   "vm_types": [
-    "BasicPrototype", "AdvancedPrototype"
+    "Sequential", "BasicPrototype", "AdvancedPrototype"
   ],
   "nb_schedulers": [
     1, 3
