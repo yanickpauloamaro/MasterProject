@@ -9,7 +9,6 @@ use crate::wip::Word;
 // pub const CHANNEL_CAPACITY: usize = 200;
 
 pub type Jobs = Vec<Transaction>;
-pub type BatchResult = Vec<TransactionOutput>;
 
 #[derive(Debug)]
 pub enum ExecutionResult {

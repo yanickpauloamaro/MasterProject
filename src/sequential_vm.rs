@@ -53,16 +53,6 @@ impl SequentialVM {
             }
         }
 
-        // 'outer: while let Some(mut next_tx) = batch.pop() {
-        //     let mut tx = next_tx;
-        //     while let Another(generated_tx) = unsafe { tx.function.execute(tx, storage) } {
-        //         tx = generated_tx;
-        //     }
-        // }
-
-        // DHashMap::println::<P>(&self.storage);
-        // DHashMap::print_bucket_sizes::<P>(&self.storage);
-        // DHashMap::print_total_size::<P>(&self.storage);
         self.execution_measurements.push(execution_start.elapsed());
 
         return Ok(VmResult::new(vec!(), None, Some(execution_start.elapsed())));

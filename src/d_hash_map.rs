@@ -557,20 +557,6 @@ impl DHashMap {
     }
     //endregion
 }
-/*
-let mut map = ThinMap::<u64, u64>::new();
-let a = map.get(0);
-let c = map.insert(0, 0);
-let h = map.remove(0);
-let e = map.contains_key(0);
-let b = map.len();
-let d = map.capacity();
-let f = map.is_empty();
-let g = map.clear();
-let i = map.entry(0);
-let j = map.keys();
-let h = map.values();
- */
 
 pub enum SearchResult {
     Entry(usize),
@@ -605,6 +591,7 @@ pub enum PiecedOperation {
     GetComputeHash,
     RemoveComputeHash,
     HasComputeHash,
+
     InsertFindBucket,
     GetFindBucket,
     RemoveFindBucket,
@@ -619,8 +606,6 @@ pub enum PiecedOperation {
     Remove,
     Has,
     Insert,
-
-    // RetryInsert,
     Resize,
 }
 

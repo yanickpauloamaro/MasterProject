@@ -9,6 +9,8 @@ pub enum TransactionType {
 
 pub type TransactionAddress = u64;
 
+
+// Transaction for early vm prototypes
 #[derive(Debug, Clone)]
 pub struct Transaction {
     pub from: TransactionAddress,
