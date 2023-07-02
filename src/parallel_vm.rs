@@ -17,8 +17,6 @@ use tokio::time::{Duration};
 
 use crate::contract::{Access, AccessPattern, AccessType, AtomicFunction, FunctionResult, MAX_NB_ADDRESSES, StaticAddress, Transaction};
 use crate::contract::FunctionResult::Another;
-use crate::d_hash_map::DHashMap;
-use crate::key_value::KeyValueOperation;
 use crate::vm::Executor;
 use crate::vm_utils::{AddressSet, Scheduling, VmResult, VmStorage, VmUtils};
 use crate::wip::Word;

@@ -29,7 +29,7 @@ use tokio::task::{JoinHandle as TokioHandle, spawn_blocking};
 use crate::config::RunParameter;
 use crate::contract::{AccessPattern, AccessType, AtomicFunction, FunctionResult, StaticAddress, Transaction, TransactionType};
 use crate::contract::FunctionResult::Another;
-use crate::key_value::KeyValueOperation;
+// use crate::key_value::KeyValueOperation;
 use crate::parallel_vm::Job;
 use crate::utils::mean_ci_str;
 use crate::vm::{Executor, Jobs};
@@ -150,25 +150,12 @@ impl Scheduling {
         // let init_duration = a.elapsed();
         // let mut duration = Duration::from_secs(0);
         'outer: for tx in chunk {
-            if tx.function != AtomicFunction::KeyValue(KeyValueOperation::Scan) {
-                // let start = Instant::now();
-                for addr in tx.addresses.iter() {
-                    if !working_set.insert(*addr) {
-                        // Can't add tx to schedule
-                        postponed.push(tx);
-                        // duration += start.elapsed();
-                        continue 'outer;
-                    }
-                }
-                // duration += start.elapsed();
-            } else {
-                // eprintln!("Processing a scan operation");
-                for addr in tx.addresses[0]..tx.addresses[1] {
-                    if !working_set.insert(addr) {
-                        // Can't add tx to schedule
-                        postponed.push(tx);
-                        continue 'outer;
-                    }
+            // eprintln!("Processing a scan operation");
+            for addr in tx.addresses[0]..tx.addresses[1] {
+                if !working_set.insert(addr) {
+                    // Can't add tx to schedule
+                    postponed.push(tx);
+                    continue 'outer;
                 }
             }
             scheduled.push(tx);

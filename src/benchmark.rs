@@ -24,13 +24,12 @@ use serde::de::Visitor;
 use thincollections::thin_map::ThinMap;
 use thincollections::thin_set::ThinSet;
 
-use crate::applications::Workload;
-use crate::{auction, d_hash_map};
-use crate::auction::SimpleAuction;
+// use crate::applications::Workload;
+use crate::{ d_hash_map};
 use crate::config::{BenchmarkConfig, BenchmarkResult, ConfigFile, RunParameter};
 use crate::contract::{AtomicFunction, FunctionParameter, SenderAddress, SharedMap, StaticAddress, Transaction};
 use crate::d_hash_map::{DHashMap, PiecedOperation};
-use crate::key_value::{Value, KeyValue, KeyValueOperation};
+// use crate::key_value::{Value, KeyValue, KeyValueOperation};
 use crate::micro_benchmark::adapt_unit;
 use crate::parallel_vm::{ParallelVmCollect, ParallelVmImmediate};
 use crate::sequential_vm::SequentialVM;
@@ -39,279 +38,41 @@ use crate::vm::Executor;
 use crate::vm_utils::{AdvancedPrototype, BasicPrototype, CoordinatorMixed, VmFactory, VmResult, VmType};
 use crate::wip::{NONE_WIP, Word};
 
-pub fn benchmarking(path: &str) -> Result<()> {
-
-    eprintln!("/!\\ Using old workload generation with fixed (larger) size transactions, this can lead to slower performance! /!\\");
-
-    let config = BenchmarkConfig::new(path)
-        .context("Unable to create benchmark config")?;
-
-    let mut results = vec!();
-
-    eprintln!("Benchmarking... ");
-    let benchmark_start = Instant::now();
-    for vm_type in config.vm_types.iter() {
-        println!("{:?} {{", vm_type);
-        for nb_schedulers in config.nb_schedulers.iter() {
-            for nb_executors in config.nb_executors.iter() {
-                println!("\t{} schedulers, {} executors {{", nb_schedulers, nb_executors);
-                for batch_size in config.batch_sizes.iter() {
-                    let storage_size = 100 * batch_size;    // TODO
-                    for workload in config.workloads.iter() {
-                        let parameter = RunParameter::new(
-                            *vm_type,
-                            *nb_schedulers,
-                            *nb_executors,
-                            *batch_size,
-                            storage_size,
-                            workload.clone(),
-                            config.repetitions,
-                            config.warmup,
-                            config.seed,
-                            config.graph,
-                            config.mapping.clone()
-                        );
-
-                        let result = if vm_type.new() {
-                            if *vm_type == VmType::Sequential {
-                                bench_with_parameter_new(parameter)
-                            } else {
-                                bench_with_parameter_and_details(parameter)
-                            }
-                        } else {
-                            bench_with_parameter(parameter)
-                        };
-                        println!("\t\t{} {{", workload);
-
-                        println!("\t\t\t{:.2} ± {:.2} tx/µs", result.throughput_micro, result.throughput_ci);
-                        print!("\t\t\t{:?} ± {:?}", result.latency, result.latency_ci);
-                        if let Some((scheduling, execution)) = &result.latency_breakdown {
-                            // print!("\t({}, {})", scheduling, execution);
-                            print!("\t(scheduling: {}, execution: {})", scheduling, execution);
-                        }
-                        println!();
-                        println!("\t\t}}");
-
-                        results.push(result);
-                    }
-                }
-                println!("\t}}");
-            }
-        }
-        println!("}}");
-    }
-
-    println!("Done. Took {:.2?}", benchmark_start.elapsed());
-    println!();
-    // for result in results {
-    //     println!("{}", result);
-    // }
-
-    Ok(())
-}
-
-fn bench_with_parameter(run: RunParameter) -> BenchmarkResult {
-
-    let vm = RefCell::new(VmFactory::from(&run));
-
-    let mut latency_reps = Vec::with_capacity(run.repetitions as usize);
-
-    let mut rng = match run.seed {
-        Some(seed) => StdRng::seed_from_u64(seed),
-        None => StdRng::seed_from_u64(rand::random())
-    };
-
-    let batch = batch_with_conflicts_new_impl(
-        run.storage_size,
-        run.batch_size,
-        0.0,//run.workload,// TODO adapt to new contracts
-        &mut rng
-    );
-
-    for _ in 0..run.warmup {
-        let batch = batch.clone();
-        vm.borrow_mut().set_storage(200);
-        let _vm_output = vm.borrow_mut().execute(batch);
-    }
-
-    for _ in 0..run.repetitions {
-        let batch = batch.clone();
-        // let batch = batch_with_conflicts_new_impl(
-        //     run.storage_size,
-        //     run.batch_size,
-        //     run.conflict_rate,
-        //     &mut rng
-        // );
-        vm.borrow_mut().set_storage(200);
-
-        let start = Instant::now();
-        let _vm_output = vm.borrow_mut().execute(batch);
-        let duration = start.elapsed();
-
-        latency_reps.push(duration);
-    }
-
-    return BenchmarkResult::from_latency(run, latency_reps);
-}
-
-fn bench_with_parameter_new(run: RunParameter) -> BenchmarkResult {
-
-    let mut vm = Bench::from(&run);
-
-    let workload = Workload::from_str(run.workload.as_str()).unwrap();
-
-    let mut latency_reps = Vec::with_capacity(run.repetitions as usize);
-
-    let mut rng = match run.seed {
-        Some(seed) => StdRng::seed_from_u64(seed),
-        None => StdRng::seed_from_u64(rand::random())
-    };
-
-    let batch = workload.new_batch(&run, &mut rng);
-    for _ in 0..run.warmup {
-        let batch = batch.clone();
-        vm.init_vm_storage(&run);
-        let _vm_output = vm.execute(batch);
-    }
-
-    for _ in 0..run.repetitions {
-        // let batch = Bench::next_batch(&run, &mut rng);
-        let batch = batch.clone();
-        vm.init_vm_storage(&run);
-
-        let start = Instant::now();
-        let _vm_output = vm.execute(batch);
-        let duration = start.elapsed();
-
-        latency_reps.push(duration);
-    }
-
-    return BenchmarkResult::from_latency(run, latency_reps);
-}
-
-fn bench_with_parameter_and_details(run: RunParameter) -> BenchmarkResult {
-
-    let mut vm = Bench::from(&run);
-    let workload = Workload::from_str(run.workload.as_str()).unwrap();
-
-    let mut latency_reps = Vec::with_capacity(run.repetitions as usize);
-    let mut scheduling_latency = Vec::with_capacity(run.repetitions as usize);
-    let mut execution_latency = Vec::with_capacity(run.repetitions as usize);
-
-    let mut rng = match run.seed {
-        Some(seed) => StdRng::seed_from_u64(seed),
-        None => StdRng::seed_from_u64(rand::random())
-    };
-
-    let batch = workload.new_batch(&run, &mut rng);
-    for _ in 0..run.warmup {
-        let batch = batch.clone();
-        vm.init_vm_storage(&run);
-        let _vm_output = vm.execute(batch);
-    }
-
-    for _ in 0..run.repetitions {
-        // let batch = run.workload.new_batch(&run, &mut rng);
-        let batch = batch.clone();
-
-        vm.init_vm_storage(&run);
-        // let start = Instant::now();
-        // let (scheduling, execution) = vm.execute(batch).unwrap();
-        // let duration = start.elapsed();
-        //
-        // latency_reps.push(duration);
-        // scheduling_latency.push(scheduling);
-        // execution_latency.push(execution);
-
-        let start = Instant::now();
-        let result = vm.execute(batch).unwrap();
-        let duration = start.elapsed();
-        // eprintln!("Done one iteration=======================");
-        latency_reps.push(duration);
-        scheduling_latency.push(result.scheduling_duration);
-        execution_latency.push(result.execution_duration);
-    }
-
-    return BenchmarkResult::from_latency_with_breakdown(run, latency_reps, scheduling_latency, execution_latency);
-}
-
-enum Bench {
-    Sequential(SequentialVM),
-    ParallelCollect(ParallelVmCollect),
-    ParallelImmediate(ParallelVmImmediate),
-}
-
-impl Bench {
-    pub fn from(p: &RunParameter) -> Self {
-        match p.vm_type {
-            VmType::Sequential => Bench::Sequential(SequentialVM::new(p.storage_size).unwrap()),
-            VmType::ParallelCollect => Bench::ParallelCollect(ParallelVmCollect::new(p.storage_size, p.nb_schedulers, p.nb_executors).unwrap()),
-            VmType::ParallelImmediate => Bench::ParallelImmediate(ParallelVmImmediate::new(p.storage_size, p.nb_schedulers, p.nb_executors).unwrap()),
-            _ => todo!()
-        }
-    }
-
-    pub fn set_storage(&mut self, value: Word) {
-        match self {
-            Bench::Sequential(vm) => vm.set_storage(value),
-            Bench::ParallelCollect(vm) => vm.set_storage(value),
-            Bench::ParallelImmediate(vm) => vm.set_storage(value),
-            _ => todo!()
-        }
-    }
-
-    pub fn init_vm_storage(&mut self, run: &RunParameter) {
-        match self {
-            Bench::Sequential(vm) => vm.set_storage(200),
-            Bench::ParallelCollect(vm) => vm.set_storage(200),
-            Bench::ParallelImmediate(vm) => vm.set_storage(200),
-            _ => todo!()
-        }
-    }
-
-    pub fn execute<const A: usize, const P: usize>(&mut self, batch: Vec<Transaction<A, P>>) -> Result<VmResult<A, P>>{
-        match self {
-            Bench::Sequential(vm) => { vm.execute(batch) },
-            // Bench::Sequential(vm) => { vm.execute_with_results(batch); Ok((Duration::from_secs(0), Duration::from_secs(0))) },
-            Bench::ParallelCollect(vm) => { vm.execute(batch) },
-            Bench::ParallelImmediate(vm) => { vm.execute(batch) },
-            _ => todo!()
-        }
-    }
-}
-
-//region vm wrapper ================================================================================
+//region VM wrapper ================================================================================
 enum VmWrapper<const A: usize, const P: usize> {
     Sequential(SequentialVM),
+    BasicPrototype(BasicPrototype<A, P>),
+    AdvancedPrototype(AdvancedPrototype<A, P>),
+
     ParallelCollect(ParallelVmCollect),
     ParallelImmediate(ParallelVmImmediate),
     Immediate(BasicPrototype<A, P>),
-    BasicPrototype(BasicPrototype<A, P>),
     Mixed(CoordinatorMixed<A, P>),
-    AdvancedPrototype(AdvancedPrototype<A, P>)
 }
 impl<const A: usize, const P: usize> VmWrapper<A, P> {
     pub fn new(p: &RunParameter) -> Self {
         match p.vm_type {
             VmType::Sequential => VmWrapper::Sequential(SequentialVM::new(p.storage_size).unwrap()),
+            VmType::BasicPrototype => VmWrapper::BasicPrototype(BasicPrototype::new(p.batch_size, p.storage_size, p.nb_schedulers, p.nb_executors, p.mapping.clone())),
+            VmType::AdvancedPrototype => VmWrapper::AdvancedPrototype(AdvancedPrototype::new(p.batch_size, p.storage_size, p.nb_schedulers, p.nb_executors)),
+
             VmType::ParallelCollect => VmWrapper::ParallelCollect(ParallelVmCollect::new(p.storage_size, p.nb_schedulers, p.nb_executors).unwrap()),
             VmType::ParallelImmediate => VmWrapper::ParallelImmediate(ParallelVmImmediate::new(p.storage_size, p.nb_schedulers, p.nb_executors).unwrap()),
             VmType::Immediate => VmWrapper::Immediate(BasicPrototype::new(p.batch_size, p.storage_size, p.nb_schedulers, p.nb_executors, p.mapping.clone())),
-            VmType::BasicPrototype => VmWrapper::BasicPrototype(BasicPrototype::new(p.batch_size, p.storage_size, p.nb_schedulers, p.nb_executors, p.mapping.clone())),
             VmType::Mixed => VmWrapper::Mixed(CoordinatorMixed::new(p.batch_size, p.storage_size, p.nb_schedulers, p.nb_executors)),
-            VmType::AdvancedPrototype => VmWrapper::AdvancedPrototype(AdvancedPrototype::new(p.batch_size, p.storage_size, p.nb_schedulers, p.nb_executors)),
             _ => todo!()
         }
     }
     pub fn init_vm_storage(&mut self, init: Box<dyn Fn(&mut Vec<Word>)>) {
         match self {
             VmWrapper::Sequential(vm) =>  vm.init_storage(init),
+            VmWrapper::BasicPrototype(vm) => vm.init_storage(init),
+            VmWrapper::AdvancedPrototype(vm) => vm.init_storage(init),
+
             VmWrapper::ParallelCollect(vm) => vm.init_storage(init),
             VmWrapper::ParallelImmediate(vm) => vm.init_storage(init),
             VmWrapper::Immediate(vm) => vm.init_storage(init),
-            VmWrapper::BasicPrototype(vm) => vm.init_storage(init),
             VmWrapper::Mixed(vm) => vm.init_storage(init),
-            VmWrapper::AdvancedPrototype(vm) => vm.init_storage(init),
             _ => todo!()
         }
     }
@@ -319,52 +80,30 @@ impl<const A: usize, const P: usize> VmWrapper<A, P> {
     pub async fn execute(&mut self, batch: Vec<Transaction<A, P>>) -> Result<VmResult<A, P>> {
         match self {
             VmWrapper::Sequential(vm) => { vm.execute_with_results(batch) },
+            VmWrapper::BasicPrototype(vm) => { vm.execute(batch, false) },
+            VmWrapper::AdvancedPrototype(vm) => { vm.execute(batch).await },
+
             VmWrapper::ParallelCollect(vm) => { vm.execute(batch) },
             VmWrapper::ParallelImmediate(vm) => { vm.execute(batch) },
             VmWrapper::Immediate(vm) => {
                 vm.execute(batch, true)
                 // vm.execute_immediate(batch)
             },
-            VmWrapper::BasicPrototype(vm) => { vm.execute(batch, false) },
             VmWrapper::Mixed(vm) => { vm.execute(batch).await },
-            VmWrapper::AdvancedPrototype(vm) => { vm.execute(batch).await },
             _ => todo!()
         }
     }
 
     pub async fn terminate(&mut self) -> (Vec<Duration>, Vec<Duration>) {
         match self {
-            VmWrapper::Sequential(vm) => {
-                // DHashMap::println::<P>(&vm.storage);
-                // DHashMap::print_total_size::<P>(&vm.storage);
-                vm.terminate()
-            },
-            VmWrapper::ParallelCollect(vm) => {
-                // DHashMap::print_total_size::<P>(&vm.vm.storage.content);
-                vm.terminate()
-            },
-            VmWrapper::ParallelImmediate(vm) => {
-                // DHashMap::println::<P>(&vm.vm.storage.content);
-                // DHashMap::print_total_size::<P>(&vm.vm.storage.content);
-                vm.terminate()
-            },
-            VmWrapper::Immediate(vm) => {
-                // DHashMap::println::<P>(&vm.storage.content);
-                // DHashMap::print_total_size::<P>(&vm.storage.content);
-                vm.terminate()
-            },
-            VmWrapper::BasicPrototype(vm) => {
-                // DHashMap::print_total_size::<P>(&vm.storage.content);
-                vm.terminate()
-            },
-            VmWrapper::Mixed(vm) => {
-                // DHashMap::print_total_size::<P>(&vm.storage.content);
-                vm.terminate().await
-            },
-            VmWrapper::AdvancedPrototype(vm) => {
-                // DHashMap::print_total_size::<P>(&vm.storage.content);
-                vm.terminate()
-            },
+            VmWrapper::Sequential(vm) => vm.terminate(),
+            VmWrapper::BasicPrototype(vm) => vm.terminate(),
+            VmWrapper::AdvancedPrototype(vm) => vm.terminate(),
+
+            VmWrapper::ParallelCollect(vm) => vm.terminate(),
+            VmWrapper::ParallelImmediate(vm) => vm.terminate(),
+            VmWrapper::Immediate(vm) => vm.terminate(),
+            VmWrapper::Mixed(vm) => vm.terminate().await,
             _ => (vec!(), vec!())
         }
     }
@@ -539,21 +278,9 @@ impl TestBench {
                 let workload = Transfer::new_boxed(&params, args);
                 TestBench::dispatch(params, workload).await
             },
-            Ok(("", (TransferPieces::NAME, args))) => {
-                let workload = TransferPieces::new_boxed(&params, args);
-                TestBench::dispatch(params, workload).await
-            },
-            Ok(("", (KeyValueWorkload::NAME, args))) => {
-                let workload = KeyValueWorkload::new_boxed(&params, args);
-                TestBench::dispatch(params, workload).await
-            },
-            Ok(("", (AuctionWorkload::NAME, args))) => {
-                let workload = AuctionWorkload::new_boxed(&params, args);
-                TestBench::dispatch(params, workload).await
-            },
-            Ok(("", (name, args))) if name == DHashMapWorkload::NAME ||
+            Ok(("", (name, args))) if name == DHashMapWorkload::SINGLE_PIECE ||
                     name == DHashMapWorkload::PIECED ||
-                    name == DHashMapWorkload::PREVIOUS =>
+                    name == DHashMapWorkload::NAME =>
                 {
                 let parse_result = DHashMapWorkload::initial_parser(args);
                 if let Ok((other_args, value_size)) = parse_result {
@@ -569,7 +296,18 @@ impl TestBench {
                     panic!("Unable to parse argument to DHashMapWorkload workload. Parse result: {:?}", parse_result)
                 }
             },
-
+            Ok(("", (TransferPieces::NAME, args))) => {
+                let workload = TransferPieces::new_boxed(&params, args);
+                TestBench::dispatch(params, workload).await
+            },
+            Ok(("", (KeyValueWorkload::NAME, args))) => {
+                let workload = KeyValueWorkload::new_boxed(&params, args);
+                TestBench::dispatch(params, workload).await
+            },
+            Ok(("", (AuctionWorkload::NAME, args))) => {
+                let workload = AuctionWorkload::new_boxed(&params, args);
+                TestBench::dispatch(params, workload).await
+            },
             Ok(("", (TransferTest::NAME, args))) => {
                 let workload = TransferTest::new_boxed(&params, args);
                 TestBench::dispatch(params, workload).await
@@ -592,11 +330,9 @@ impl TestBench {
 
         let result = match params.vm_type {
             VmType::Sequential => TestBench::bench_with_parameter_new(params, workload).await,
-            // VmType::ParallelCollect | VmType::ParallelImmediate if params.with_details => TestBench::bench_with_parameter_and_details(params),
+            VmType::BasicPrototype | VmType::AdvancedPrototype => TestBench::bench_with_parameter_new_and_details(params, workload).await,
             VmType::ParallelCollect | VmType::ParallelImmediate |
-            VmType::Immediate | VmType::BasicPrototype |
-            VmType::Mixed | VmType::AdvancedPrototype
-                => TestBench::bench_with_parameter_new_and_details(params, workload).await,
+            VmType::Immediate | VmType::Mixed => TestBench::bench_with_parameter_new_and_details(params, workload).await,
             _ => TestBench::bench_with_parameter(params)
         };
 
@@ -705,12 +441,6 @@ impl TestBench {
         let mut scheduling_latency = Vec::with_capacity(params.repetitions as usize);
         let mut execution_latency = Vec::with_capacity(params.repetitions as usize);
 
-        let mut coordinator_wait = Vec::with_capacity(params.repetitions as usize);
-        let mut scheduler_msg_allocation = Vec::with_capacity(params.repetitions as usize);
-        let mut scheduler_msg_sending = Vec::with_capacity(params.repetitions as usize);
-        let mut executor_msg_allocation = Vec::with_capacity(params.repetitions as usize);
-        let mut executor_msg_sending = Vec::with_capacity(params.repetitions as usize);
-
         let mut rng = match params.seed {
             Some(seed) => StdRng::seed_from_u64(seed),
             None => StdRng::seed_from_u64(rand::random())
@@ -724,68 +454,21 @@ impl TestBench {
         }
 
         vm.init_vm_storage(workload.initialisation(&params, &mut rng));
-        let mut test = Duration::from_secs(0);
         for _ in 0..params.repetitions {
             // let batch = workload.new_batch(&params, &mut rng);
             let batch = batch.clone();
             // vm.init_vm_storage(workload.initialisation(&params, &mut rng));
 
-            // let start = Instant::now();
-            // let (scheduling, execution) = vm.execute(batch).unwrap();
-            // let duration = start.elapsed();
-            //
-            // latency_reps.push(duration);
-            // scheduling_latency.push(scheduling);
-            // execution_latency.push(execution);
-
             let start = Instant::now();
             let result = vm.execute(batch).await.unwrap();
             let duration = start.elapsed();
-            // test += duration;
-            // eprintln!("Done one iteration=======================");
+
             latency_reps.push(duration);
             scheduling_latency.push(result.scheduling_duration);
             execution_latency.push(result.execution_duration);
-            if let Some(wait) = result.coordinator_wait_duration {
-                coordinator_wait.push(wait);
-            }
-
-            if let Some(wait) = result.scheduler_msg_allocation {
-                scheduler_msg_allocation.push(wait);
-            }
-            if let Some(wait) = result.scheduler_msg_sending {
-                scheduler_msg_sending.push(wait);
-            }
-            if let Some(wait) = result.executor_msg_allocation {
-                executor_msg_allocation.push(wait);
-            }
-            if let Some(wait) = result.executor_msg_sending {
-                executor_msg_sending.push(wait);
-            }
         }
 
         let _ = vm.terminate().await;
-        let wait = if coordinator_wait.is_empty() { None } else {
-            println!("\t\t\twaiting for schedules: {}", mean_ci_str(&coordinator_wait));
-            Some(coordinator_wait)
-        };
-        let wait = if scheduler_msg_allocation.is_empty() { None } else {
-            println!("\t\t\tallocating msg (to schedulers): {}", mean_ci_str(&scheduler_msg_allocation));
-            Some(scheduler_msg_allocation)
-        };
-        let wait = if scheduler_msg_sending.is_empty() { None } else {
-            println!("\t\t\tsending message to schedulers: {}", mean_ci_str(&scheduler_msg_sending));
-            Some(scheduler_msg_sending)
-        };
-        let wait = if executor_msg_allocation.is_empty() { None } else {
-            println!("\t\t\tallocating msg (to executors): {}", mean_ci_str(&executor_msg_allocation));
-            Some(executor_msg_allocation)
-        };
-        let wait = if executor_msg_sending.is_empty() { None } else {
-            println!("\t\t\tsending message to executors: {}", mean_ci_str(&executor_msg_sending));
-            Some(executor_msg_sending)
-        };
-//        println!("Throughput ?= {:.3}", ((params.repetitions * params.batch_size as u64) as f64)/(test.as_micros() as f64));
         return BenchmarkResult::from_latency_with_breakdown(params, latency_reps, scheduling_latency, execution_latency);
     }
 }
@@ -878,101 +561,6 @@ impl ApplicationWorkload<2, 1> for Transfer {
 }
 //endregion
 
-//region TransferTest workload -------------------------------------------------------------------------
-struct TransferTest {
-    conflict_rate: f64,
-}
-impl TransferTest {
-    const NAME: &'static str = "TransferTest";
-
-    fn new_boxed(params: &RunParameter, args: &str) -> Box<Self> {
-        match f64::from_str(args) {
-            Ok(conflict_rate) => Box::new(TransferTest{ conflict_rate }),
-            _ => panic!("Unable to parse argument to TransferTest workload")
-        }
-    }
-}
-
-impl ApplicationWorkload<2, 1> for TransferTest {
-    fn next_batch(&mut self, params: &RunParameter, rng: &mut StdRng) -> Vec<Transaction<2, 1>> {
-        WorkloadUtils::transfer_pairs(50 * params.batch_size, params.batch_size, self.conflict_rate, rng)
-            .iter()
-            .enumerate()
-            .map(|(tx_index, pair)| {
-                Transaction {
-                    sender: pair.0 as SenderAddress,
-                    function: AtomicFunction::TransferTest,
-                    tx_index,
-                    addresses: [pair.0, pair.1],
-                    params: [2],
-                }
-            }).collect()
-    }
-
-    fn initialisation(&self, params: &RunParameter, rng: &mut StdRng) -> Box<dyn Fn(&mut Vec<Word>)> {
-
-        let nb_repetitions = params.repetitions;
-        let nb_accounts = 50 * params.batch_size;
-        let capacity = params.storage_size * mem::size_of::<Word>();
-        // eprintln!("max account = {}", nb_accounts);
-        // println!("capacity = {}, storage_size = {}", capacity, storage_size);
-
-        Box::new(move |storage: &mut Vec<Word>| unsafe {
-            storage[0] = nb_accounts as Word;
-            let map_start = (storage.as_mut_ptr().add(1)) as *mut Option<Word>;
-            let mut shared_map = SharedMap::new(
-                Cell::new(map_start),
-                nb_accounts,
-                capacity);
-
-            for key in 0..nb_accounts {
-                unsafe {
-                    shared_map.insert(key as StaticAddress, 20 * nb_repetitions as Word);
-                }
-            }
-        })
-    }
-}
-//endregion
-
-//region TransferPieces workload -------------------------------------------------------------------
-struct TransferPieces {
-    conflict_rate: f64,
-}
-impl TransferPieces {
-    const NAME: &'static str = "TransferPiece";
-
-    fn new_boxed(params: &RunParameter, args: &str) -> Box<Self> {
-        match f64::from_str(args) {
-            Ok(conflict_rate) => Box::new(TransferPieces{ conflict_rate }),
-            _ => panic!("Unable to parse argument to Transfer workload")
-        }
-    }
-}
-
-impl ApplicationWorkload<1, 2> for TransferPieces {
-    fn next_batch(&mut self, params: &RunParameter, rng: &mut StdRng) -> Vec<Transaction<1, 2>> {
-        WorkloadUtils::transfer_pairs(params.storage_size, params.batch_size, self.conflict_rate, rng)
-            .iter()
-            .enumerate()
-            .map(|(tx_index, pair)| {
-                Transaction {
-                    sender: pair.0 as SenderAddress,
-                    function: AtomicFunction::TransferDecrement,
-                    tx_index,
-                    addresses: [pair.0],
-                    params: [2, pair.1],
-                }
-            }).collect()
-    }
-
-    fn initialisation(&self, params: &RunParameter, rng: &mut StdRng) -> Box<dyn Fn(&mut Vec<Word>)> {
-        let nb_repetitions = params.repetitions;
-        Box::new(move |storage: &mut Vec<Word>| { storage.fill(20 * nb_repetitions as Word) })
-    }
-}
-//endregion
-
 //region DHashMap workload -------------------------------------------------------------------------
 struct DHashMapWorkload {
     bucket_capacity_elems: u32,
@@ -989,9 +577,9 @@ struct DHashMapWorkload {
 }
 
 impl DHashMapWorkload {
-    const NAME: &'static str = "DHashMap";
+    const NAME: &'static str = "Hashmap";
+    const SINGLE_PIECE: &'static str = "DHashMap";
     const PIECED: &'static str = "PieceDHashMap";
-    const PREVIOUS: &'static str = "Hashmap";
     // "PieceDHashMap(7, 10, 10; 0.2, 0.2, 0.2, 0.2)"
 
     pub fn initial_parser(input: &str) -> IResult<&str, u32> {
@@ -1023,25 +611,10 @@ impl DHashMapWorkload {
                 let map_size = |nb_buckets: usize, bucket_capacity_elems: usize, entry_size: usize| {
                     (2 + nb_buckets + nb_buckets * (1 + (bucket_capacity_elems as usize) * entry_size))
                 };
-                // let mut max_nb_buckets = nb_buckets as usize;
-                // while map_size(2 * max_nb_buckets, bucket_capacity_elems as usize, entry_size) < params.storage_size {
-                //     max_nb_buckets *= 2;
-                // }
-                // println!("max nb of buckets: {}", max_nb_buckets);
-                // println!("nb of buckets after 4 resize: {}", nb_buckets << 4);
                 let max_nb_buckets = (nb_buckets << 4) as usize;
 
                 let max_nb_keys = max_nb_buckets * bucket_capacity_elems as usize;
-                // eprintln!("Can store at most {} buckets => {} unique keys", max_nb_buckets, max_nb_keys);
-                // eprintln!("\ttakes {}", adapt_unit(mem::size_of::<Word>() * map_size(max_nb_keys)));
                 let nb_keys = (2 * max_nb_keys) / 3;
-                // eprintln!("-> using {} keys to avoid last resize", nb_keys);
-                // eprintln!("\ttakes {}", adapt_unit(mem::size_of::<Word>() * map_size(nb_keys)));
-
-                // println!("Initial map takes {} words (storage has {} words, too much? {})",
-                //          map_size(nb_buckets as usize, bucket_capacity_elems as usize, entry_size),
-                //          params.storage_size,
-                //          map_size(nb_buckets as usize, bucket_capacity_elems as usize, entry_size) > params.storage_size);
                 let key_space = (0..nb_keys).map(|key| key as FunctionParameter).collect_vec();
 
                 Box::new(DHashMapWorkload {
@@ -1142,8 +715,7 @@ impl<const ENTRY_SIZE: usize> ApplicationWorkload<5, ENTRY_SIZE> for DHashMapWor
 
         // TODO Use a parameter to decide between the two types?
         let (addresses, operations) = match &params.workload {
-            name if name.starts_with(Self::NAME) => {
-                // println!("Using monolithic version version");
+            name if name.starts_with(Self::SINGLE_PIECE) => {
                 let addresses = [0, 0, 0, 0, 0];
                 let operations = [
                     DHashMap(Operation::Get),
@@ -1154,7 +726,6 @@ impl<const ENTRY_SIZE: usize> ApplicationWorkload<5, ENTRY_SIZE> for DHashMapWor
                 (addresses, operations)
             },
             name if name.starts_with(Self::PIECED) => {
-                // println!("Using pieced version");
                 let addresses = [0, 0, 0, 0, 0];
                 let operations = [
                     PieceDHashMap(PiecedOperation::GetComputeHash),
@@ -1164,8 +735,7 @@ impl<const ENTRY_SIZE: usize> ApplicationWorkload<5, ENTRY_SIZE> for DHashMapWor
                 ];
                 (addresses, operations)
             },
-            name if name.starts_with(Self::PREVIOUS) => {
-                // println!("Using previous pieced version");
+            name if name.starts_with(Self::NAME) => {
                 let addresses = [0, 0, 0, 0, 0];
                 let operations = [
                     PieceDHashMap(PiecedOperation::GetComputeAndFind),
@@ -1180,16 +750,10 @@ impl<const ENTRY_SIZE: usize> ApplicationWorkload<5, ENTRY_SIZE> for DHashMapWor
 
         let dist2 = WeightedIndex::new(weights).unwrap();
 
-        // let mut set = ThinSet::new();
         let mut tx_params = [0 as FunctionParameter; ENTRY_SIZE];
-        // let mut __nb_inserts = 0;
         let batch = (0..params.batch_size).map(|tx_index| {
             let op = operations[dist2.sample(rng)];
             let key = *self.key_space.choose(rng).unwrap_or(&0);
-            // if op == PieceDHashMap(PiecedOperation::InsertComputeHash) && !set.contains((&key)) {
-            //     __nb_inserts += 1;
-            //     set.insert(key);
-            // }
 
             for i in 0..ENTRY_SIZE { tx_params[i] = (ENTRY_SIZE - i) as FunctionParameter; }
             tx_params[0] = key;
@@ -1202,7 +766,6 @@ impl<const ENTRY_SIZE: usize> ApplicationWorkload<5, ENTRY_SIZE> for DHashMapWor
                 params: tx_params,
             }
         }).collect();
-        // println!("Nb to insert = {}", __nb_inserts);
 
         batch
     }
@@ -1224,6 +787,8 @@ impl<const ENTRY_SIZE: usize> ApplicationWorkload<5, ENTRY_SIZE> for DHashMapWor
     }
 }
 //endregion
+
+//region Other workloads (work in progress) --------------------------------------------------------
 
 //region KeyValue workload -------------------------------------------------------------------------
 struct KeyValueWorkload {
@@ -1274,156 +839,11 @@ impl KeyValueWorkload {
 impl ApplicationWorkload<2, 1> for KeyValueWorkload {
 
     fn next_batch(&mut self, params: &RunParameter, rng: &mut StdRng) -> Vec<Transaction<2, 1>> {
-        /*
-            ---- Create batch (all on the same address to force conflict?)
-            ---- Implement AtomicFunction (monolithic version)
-            ---- Proper test batch
-            TODO Create batch (pieced version) -> /!\ addresses Transaction<?, ?>
-            TODO Implement AtomicFunction (pieced version)
-            ---- Add params
-         */
-        use AtomicFunction::KeyValue;
-        let items = [
-            (self.read_proportion, KeyValue(KeyValueOperation::Read)),
-            (self.write_proportion, KeyValue(KeyValueOperation::Write)),
-            (self.read_modify_write_proportion, KeyValue(KeyValueOperation::ReadModifyWrite)),
-            (self.scan_proportion, KeyValue(KeyValueOperation::Scan)),
-            (self.insert_proportion, KeyValue(KeyValueOperation::Insert)),
-        ];
-        let dist2 = WeightedIndex::new(items.iter().map(|item| item.0)).unwrap();
-
-        let scan_width = 4;
-        let write_value = 33;
-        let insert_value = 42;
-        let unused_parameter = 0 as FunctionParameter;
-
-        let keys: Vec<StaticAddress> = (0..self.key_space * params.batch_size).map(|i| i as StaticAddress).collect();
-
-        let batch = (0..params.batch_size).map(|mut tx_index| {
-            let mut key = *keys.choose(rng).unwrap_or(&(tx_index as StaticAddress));
-            let unique_addr = (params.storage_size + tx_index) as StaticAddress;
-            match items[dist2.sample(rng)].1 {
-                KeyValue(KeyValueOperation::Read) => {
-                    Transaction {
-                        sender: key as SenderAddress,
-                        function: KeyValue(KeyValueOperation::Read),
-                        tx_index,
-                        addresses: [key, unique_addr],
-                        params: [unused_parameter],
-                    }
-                },
-                KeyValue(KeyValueOperation::Write) => {
-                    Transaction {
-                        sender: key as SenderAddress,
-                        function: KeyValue(KeyValueOperation::Write),
-                        tx_index,
-                        addresses: [key, unique_addr],
-                        params: [write_value],
-                    }
-                },
-                KeyValue(KeyValueOperation::ReadModifyWrite) => {
-                    // todo!(How to represent different read-modify-write operations?)
-                    Transaction {
-                        sender: key as SenderAddress,
-                        function: KeyValue(KeyValueOperation::ReadModifyWrite),
-                        tx_index,
-                        addresses: [key, unique_addr],
-                        params: [unused_parameter],
-                    }
-                },
-                KeyValue(KeyValueOperation::Scan) => {
-                    // TODO Requires scheduling to be aware of the operation it is scheduling
-                    // TODO Add address ranges support
-                    // TODO Requires all addresses to have been inserted already
-
-                    if key + scan_width >= params.storage_size as StaticAddress {
-                        // Ensure we don't scan over the limit
-                        // TODO scan implementation should prevent that themselves...
-                        key -= scan_width;
-                    }
-                    Transaction {
-                        sender: key as SenderAddress,
-                        function: KeyValue(KeyValueOperation::Scan),
-                        tx_index,
-                        addresses: [key, key + scan_width],
-                        params: [unused_parameter],
-                    }
-                },
-                KeyValue(KeyValueOperation::Insert) => {
-                    Transaction {
-                        sender: key as SenderAddress,
-                        function: KeyValue(KeyValueOperation::Insert),
-                        tx_index,
-                        addresses: [key, unique_addr],
-                        params: [insert_value],
-                    }
-                },
-                _ => { todo!() }
-            }
-        }).collect();
-
-        // // Debug batches
-        // Read only
-        // TODO Requires all addresses to have been inserted already
-        // let mut batch: Vec<_> = (0..params.batch_size).map(|tx_index| {
-        //     let address_to_read = tx_index;
-        //     let unused_parameter = 0 as FunctionParameter;
-        //     Transaction {
-        //         sender: tx_index as SenderAddress,
-        //         function: AtomicFunction::KeyValue(KeyValueOperation::Read),
-        //         tx_index,
-        //         addresses: [0],
-        //         params: [address_to_read as FunctionParameter, unused_parameter],
-        //     }
-        // }).collect();
-
-        // // Write
-        // // TODO Requires all addresses to have been inserted already
-        // let mut batch: Vec<_> = (0..params.batch_size/2).flat_map(|tx_index| {
-        //     let address_to_write = tx_index;
-        //     let value_to_write = 42 as FunctionParameter;
-        //     let write = Transaction {
-        //         sender: tx_index as SenderAddress,
-        //         function: AtomicFunction::KeyValue(KeyValueOperation::Write),
-        //         tx_index,
-        //         addresses: [0],
-        //         params: [address_to_write as FunctionParameter, value_to_write],
-        //     };
-        //
-        //     let unused_parameter = 0 as FunctionParameter;
-        //     let read = Transaction {
-        //         sender: tx_index as SenderAddress,
-        //         function: AtomicFunction::KeyValue(KeyValueOperation::Read),
-        //         tx_index,
-        //         addresses: [0],
-        //         params: [address_to_write as FunctionParameter, unused_parameter],
-        //     };
-        //     [read, write]
-        // }).collect();
-
-        batch
+        todo!()
     }
 
     fn initialisation(&self, params: &RunParameter, rng: &mut StdRng) -> Box<dyn Fn(&mut Vec<Word>)> {
-        // TODO determine key space based on storage_size
-        let key_space = self.key_space * params.batch_size;
-
-        Box::new(move |storage: &mut Vec<Word>| unsafe {
-            storage[0] = key_space as Word;
-            let nb_elem_in_map = storage[0] as usize;
-            let map_start = (storage.as_mut_ptr().add(1)) as *mut Option<Value>;
-            let _shared_map = SharedMap::new(
-                Cell::new(map_start),
-                nb_elem_in_map,
-                storage.len() * mem::size_of::<Word>(),
-            );
-            let mut key_value = KeyValue { inner_map: _shared_map };
-            for key in 0..key_space {
-                let big_value = Value::new(key as u64);
-                key_value.insert(key as StaticAddress, big_value);
-                // key_value.insert(key as StaticAddress, key as Word);
-            }
-        })
+        todo!()
     }
 
     fn storage_size(&self, params: &RunParameter) -> usize {
@@ -1455,111 +875,11 @@ impl AuctionWorkload {
 
 impl ApplicationWorkload<2, 2> for AuctionWorkload {
     fn next_batch(&mut self, params: &RunParameter, rng: &mut StdRng) -> Vec<Transaction<2, 2>> {
-        /*
-            Assume auctions have already started
-            TODO Create batch (all on the same address to force conflict? (the address of the subject))
-            ---- Implement AtomicFunction (monolithic version)
-            TODO Create batch (pieced version) -> /!\ addresses Transaction<?, ?>
-            TODO Implement AtomicFunction (pieced version)
-            ---- Add params (for now we just have one auction with batch_size bidders and no withdraws)
-         */
-        let max_bid = 20 * params.batch_size;
-        let auction_address = params.batch_size + 2;
-
-        let beneficiary = params.batch_size as StaticAddress;
-        let unique_addr = params.storage_size as StaticAddress + beneficiary;
-        let mut batch = vec![
-            // // This is the last tx executed by the sequential version -> can check that the result is correct
-            // Transaction {
-            //     sender: beneficiary as SenderAddress,
-            //     function: AtomicFunction::Auction(auction::Operation::Close),
-            //     tx_index,
-            //     addresses: [beneficiary, unique_addr],
-            //     params: [0, auction_address as FunctionParameter],
-            // }
-        ];
-
-        // let nb_withdraw = todo!();
-        // batch.extend((0..nb_withdraw).map(|tx_index| {
-        //     let bidder = tx_index as StaticAddress;
-        //     let unique_addr = 2 * params.storage_size as StaticAddress + bidder;
-        //     Transaction {
-        //         sender: bidder as SenderAddress,
-        //         function: AtomicFunction::Auction(auction::Operation::Withdraw),
-        //         tx_index,
-        //         // addresses: [bidder, unique_addr],
-        //         addresses: [bidder, beneficiary],   // Ensure they all conflict
-        //         params: [0, auction_address as FunctionParameter],
-        //     }
-        // }));
-        batch.extend((0..params.batch_size).map(|tx_index| {
-            let bidder = tx_index as StaticAddress;
-            // let bid = max_bid - tx_index;
-            let bid = (0..max_bid+1).choose(rng).unwrap_or(0);
-            let unique_addr = params.storage_size as StaticAddress + bidder;
-            Transaction {
-                sender: bidder as SenderAddress,
-                function: AtomicFunction::Auction(auction::Operation::Bid),
-                tx_index,
-                // addresses: [bidder, unique_addr],
-                addresses: [bidder, beneficiary],   // Ensure they all conflict
-                params: [bid as FunctionParameter, auction_address as FunctionParameter],
-            }
-        }));
-
-        batch
+        todo!();
     }
 
     fn initialisation(&self, params: &RunParameter, rng: &mut StdRng) -> Box<dyn Fn(&mut Vec<Word>)> {
-        // let nb_repetitions = params.repetitions;
-        let storage_size = params.storage_size;
-        let bidder_balance = 20 * params.batch_size;
-
-        let nb_bidders = params.batch_size;
-        let beneficiary = nb_bidders as StaticAddress;
-        let auction_balance_address = beneficiary + 1;
-        let auction_address = beneficiary + 2;
-
-        // Create auctions and bidders
-        Box::new(move |storage: &mut Vec<Word>| unsafe {
-
-            for account in 0..nb_bidders {
-                storage[account] = bidder_balance as Word;
-            }
-            storage[beneficiary as usize] = 0;
-            storage[auction_balance_address as usize] = 0;
-
-            let auction_obj_start = storage.as_mut_ptr().add(auction_address as usize);
-            auction_obj_start.write(beneficiary as Word);
-            auction_obj_start.add(1).write(auction_balance_address as Word);
-            auction_obj_start.add(2).write(0); // end_time
-            auction_obj_start.add(3).write(2); // ended == 0 <-> true
-            auction_obj_start.add(4).write(beneficiary as Word);  // highest_bidder
-            auction_obj_start.add(5).write(0); // highest_bid
-
-            auction_obj_start.add(6).write(nb_bidders as Word);
-            let map_start = auction_obj_start.add(7) as *mut Option<Word>;
-
-            // Initializes the all entries to None
-            let pending_returns = SharedMap::from_ptr(
-                Cell::new(map_start),
-                nb_bidders,
-                (storage_size - 7) * mem::size_of::<Word>(),
-            );
-
-            let mut auction = SimpleAuction {
-                beneficiary,
-                auction_balance_address,
-                end_time: 0,
-                ended: false,
-                highest_bidder: beneficiary,
-                highest_bid: 0,
-                pending_returns,
-            };
-
-            // println!("Initial auction object: {:?}", auction);
-            // println!()
-        })
+        todo!();
     }
 }
 //endregion
@@ -1644,6 +964,101 @@ impl ApplicationWorkload<2, 1> for BestFitWorkload {
 }
 //endregion
 
+//region TransferPieces workload -------------------------------------------------------------------
+struct TransferPieces {
+    conflict_rate: f64,
+}
+impl TransferPieces {
+    const NAME: &'static str = "TransferPiece";
+
+    fn new_boxed(params: &RunParameter, args: &str) -> Box<Self> {
+        match f64::from_str(args) {
+            Ok(conflict_rate) => Box::new(TransferPieces{ conflict_rate }),
+            _ => panic!("Unable to parse argument to Transfer workload")
+        }
+    }
+}
+
+impl ApplicationWorkload<1, 2> for TransferPieces {
+    fn next_batch(&mut self, params: &RunParameter, rng: &mut StdRng) -> Vec<Transaction<1, 2>> {
+        WorkloadUtils::transfer_pairs(params.storage_size, params.batch_size, self.conflict_rate, rng)
+            .iter()
+            .enumerate()
+            .map(|(tx_index, pair)| {
+                Transaction {
+                    sender: pair.0 as SenderAddress,
+                    function: AtomicFunction::TransferDecrement,
+                    tx_index,
+                    addresses: [pair.0],
+                    params: [2, pair.1],
+                }
+            }).collect()
+    }
+
+    fn initialisation(&self, params: &RunParameter, rng: &mut StdRng) -> Box<dyn Fn(&mut Vec<Word>)> {
+        let nb_repetitions = params.repetitions;
+        Box::new(move |storage: &mut Vec<Word>| { storage.fill(20 * nb_repetitions as Word) })
+    }
+}
+//endregion
+
+//region TransferTest workload -------------------------------------------------------------------------
+struct TransferTest {
+    conflict_rate: f64,
+}
+impl TransferTest {
+    const NAME: &'static str = "TransferTest";
+
+    fn new_boxed(params: &RunParameter, args: &str) -> Box<Self> {
+        match f64::from_str(args) {
+            Ok(conflict_rate) => Box::new(TransferTest{ conflict_rate }),
+            _ => panic!("Unable to parse argument to TransferTest workload")
+        }
+    }
+}
+
+impl ApplicationWorkload<2, 1> for TransferTest {
+    fn next_batch(&mut self, params: &RunParameter, rng: &mut StdRng) -> Vec<Transaction<2, 1>> {
+        WorkloadUtils::transfer_pairs(50 * params.batch_size, params.batch_size, self.conflict_rate, rng)
+            .iter()
+            .enumerate()
+            .map(|(tx_index, pair)| {
+                Transaction {
+                    sender: pair.0 as SenderAddress,
+                    function: AtomicFunction::TransferTest,
+                    tx_index,
+                    addresses: [pair.0, pair.1],
+                    params: [2],
+                }
+            }).collect()
+    }
+
+    fn initialisation(&self, params: &RunParameter, rng: &mut StdRng) -> Box<dyn Fn(&mut Vec<Word>)> {
+
+        let nb_repetitions = params.repetitions;
+        let nb_accounts = 50 * params.batch_size;
+        let capacity = params.storage_size * mem::size_of::<Word>();
+        // eprintln!("max account = {}", nb_accounts);
+        // println!("capacity = {}, storage_size = {}", capacity, storage_size);
+
+        Box::new(move |storage: &mut Vec<Word>| unsafe {
+            storage[0] = nb_accounts as Word;
+            let map_start = (storage.as_mut_ptr().add(1)) as *mut Option<Word>;
+            let mut shared_map = SharedMap::new(
+                Cell::new(map_start),
+                nb_accounts,
+                capacity);
+
+            for key in 0..nb_accounts {
+                unsafe {
+                    shared_map.insert(key as StaticAddress, 20 * nb_repetitions as Word);
+                }
+            }
+        })
+    }
+}
+//endregion
+//endregion
 //endregion ========================================================================================
 
 //region workload utils ============================================================================
@@ -1773,3 +1188,5 @@ impl WorkloadUtils {
     }
 }
 //endregion ========================================================================================
+
+//endregion

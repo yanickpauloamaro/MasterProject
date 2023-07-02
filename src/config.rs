@@ -6,7 +6,6 @@ use std::time::Duration;
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use serde::de::DeserializeOwned;
-use crate::applications::Workload;
 use crate::utils::{mean_ci, mean_ci_str};
 
 use crate::vm_utils::VmType;
