@@ -1,0 +1,51 @@
+BasicPrototype {
+	2 schedulers, 8 executors {
+		Hashmap(7, 64, 1024; 0.7, 0.05, 0.05, 0.2) {
+			13.65 ± 0.43 tx/µs
+			1.2ms ± 37µs	(scheduling: 247µs ± 8µs, execution: 442µs ± 2µs)
+		}
+		Hashmap(7, 64, 1024; 0.7, 0.05, 0.05, 0.2) {
+			11.16 ± 0.19 tx/µs
+			2.937ms ± 49µs	(scheduling: 544µs ± 11µs, execution: 818µs ± 5µs)
+		}
+		Hashmap(7, 64, 1024; 0.7, 0.05, 0.05, 0.2) {
+			13.27 ± 0.42 tx/µs
+			4.937ms ± 152µs	(scheduling: 1.172ms ± 28µs, execution: 1.599ms ± 11µs)
+		}
+		Hashmap(7, 64, 1024; 0.7, 0.05, 0.05, 0.2) {
+			19.22 ± 0.63 tx/µs
+			6.818ms ± 215µs	(scheduling: 2.662ms ± 40µs, execution: 3.385ms ± 27µs)
+		}
+		Hashmap(7, 64, 1024; 0.7, 0.05, 0.05, 0.2) {
+			14.79 ± 0.58 tx/µs
+			17.729ms ± 671µs	(scheduling: 8.552ms ± 229µs, execution: 6.642ms ± 50µs)
+		}
+	}
+}
+Sequential {
+	2 schedulers, 8 executors {
+		Hashmap(7, 64, 1024; 0.7, 0.05, 0.05, 0.2) {
+			6.54 ± 0.01 tx/µs
+			2.504ms ± 4µs
+		}
+		Hashmap(7, 64, 1024; 0.7, 0.05, 0.05, 0.2) {
+			6.30 ± 0.01 tx/µs
+			5.204ms ± 7µs
+		}
+		Hashmap(7, 64, 1024; 0.7, 0.05, 0.05, 0.2) {
+			6.17 ± 0.01 tx/µs
+			10.618ms ± 12µs
+		}
+		Hashmap(7, 64, 1024; 0.7, 0.05, 0.05, 0.2) {
+			5.91 ± 0.01 tx/µs
+			22.179ms ± 26µs
+		}
+		Hashmap(7, 64, 1024; 0.7, 0.05, 0.05, 0.2) {
+			5.69 ± 0.00 tx/µs
+			46.075ms ± 26µs
+		}
+	}
+}
+Done. Took 17.11s
+
+main took 17.11s

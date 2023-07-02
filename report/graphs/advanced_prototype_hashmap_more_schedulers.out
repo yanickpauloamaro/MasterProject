@@ -1,0 +1,111 @@
+let dimensions = ['...', '2 exec', '4 exec', '8 exec', '12 exec', '16 exec'];
+Workload: PreviousDHashMap(7, 64, 1024; 0.7, 0.05, 0.05, 0.2) ====================================================
+let title = 'AdvancedPrototype: PreviousDHashMap(7, 64, 1024; 0.7, 0.05, 0.05, 0.2)'; // --------------------
+let sequential_throughput = 6.091;
+let data = [
+	['12 schedulers', 7.728, 11.292, 14.328, 15.427, 15.634],
+	['16 schedulers', 7.553, 11.123, 14.073, 14.744, 14.577],
+];
+
+Workload: PreviousDHashMap(7, 64, 1024; 0.25, 0.25, 0.25, 0.25) ====================================================
+let title = 'AdvancedPrototype: PreviousDHashMap(7, 64, 1024; 0.25, 0.25, 0.25, 0.25)'; // --------------------
+let sequential_throughput = 5.338;
+let data = [
+	['12 schedulers', 6.684, 9.915, 12.469, 13.908, 14.445],
+	['16 schedulers', 6.550, 9.682, 12.502, 13.736, 12.679],
+];
+
+Done. Took 162.60s
+
+==================================================================================
+==================================================================================
+==================================================================================
+Sequential 1 sch, 1 exec: PreviousDHashMap(7, 64, 1024; 0.7, 0.05, 0.05, 0.2) {
+	6.09 ± 0.00 tx/µs
+	10.76ms ± 5µs
+}
+AdvancedPrototype 12 sch, 2 exec: PreviousDHashMap(7, 64, 1024; 0.7, 0.05, 0.05, 0.2) {
+	7.73 ± 0.01 tx/µs
+	8.48ms ± 14µs	(scheduling: 89µs ± 0ns, execution: 5.721ms ± 9µs)
+}
+AdvancedPrototype 12 sch, 4 exec: PreviousDHashMap(7, 64, 1024; 0.7, 0.05, 0.05, 0.2) {
+	11.29 ± 0.03 tx/µs
+	5.804ms ± 15µs	(scheduling: 77µs ± 0ns, execution: 3.024ms ± 4µs)
+}
+AdvancedPrototype 12 sch, 8 exec: PreviousDHashMap(7, 64, 1024; 0.7, 0.05, 0.05, 0.2) {
+	14.33 ± 0.03 tx/µs
+	4.574ms ± 8µs	(scheduling: 83µs ± 0ns, execution: 1.73ms ± 3µs)
+}
+AdvancedPrototype 12 sch, 12 exec: PreviousDHashMap(7, 64, 1024; 0.7, 0.05, 0.05, 0.2) {
+	15.43 ± 0.03 tx/µs
+	4.248ms ± 9µs	(scheduling: 83µs ± 0ns, execution: 1.245ms ± 2µs)
+}
+AdvancedPrototype 12 sch, 16 exec: PreviousDHashMap(7, 64, 1024; 0.7, 0.05, 0.05, 0.2) {
+	15.63 ± 0.03 tx/µs
+	4.192ms ± 8µs	(scheduling: 88µs ± 0ns, execution: 974µs ± 0ns)
+}
+AdvancedPrototype 16 sch, 2 exec: PreviousDHashMap(7, 64, 1024; 0.7, 0.05, 0.05, 0.2) {
+	7.55 ± 0.01 tx/µs
+	8.677ms ± 12µs	(scheduling: 67µs ± 0ns, execution: 5.814ms ± 4µs)
+}
+AdvancedPrototype 16 sch, 4 exec: PreviousDHashMap(7, 64, 1024; 0.7, 0.05, 0.05, 0.2) {
+	11.12 ± 0.03 tx/µs
+	5.892ms ± 14µs	(scheduling: 69µs ± 0ns, execution: 3.005ms ± 4µs)
+}
+AdvancedPrototype 16 sch, 8 exec: PreviousDHashMap(7, 64, 1024; 0.7, 0.05, 0.05, 0.2) {
+	14.07 ± 0.03 tx/µs
+	4.657ms ± 9µs	(scheduling: 67µs ± 0ns, execution: 1.686ms ± 3µs)
+}
+AdvancedPrototype 16 sch, 12 exec: PreviousDHashMap(7, 64, 1024; 0.7, 0.05, 0.05, 0.2) {
+	14.74 ± 0.03 tx/µs
+	4.445ms ± 10µs	(scheduling: 68µs ± 0ns, execution: 1.211ms ± 3µs)
+}
+AdvancedPrototype 16 sch, 16 exec: PreviousDHashMap(7, 64, 1024; 0.7, 0.05, 0.05, 0.2) {
+	14.58 ± 0.05 tx/µs
+	4.496ms ± 14µs	(scheduling: 68µs ± 0ns, execution: 973µs ± 2µs)
+}
+Sequential 1 sch, 1 exec: PreviousDHashMap(7, 64, 1024; 0.25, 0.25, 0.25, 0.25) {
+	5.34 ± 0.00 tx/µs
+	12.278ms ± 7µs
+}
+AdvancedPrototype 12 sch, 2 exec: PreviousDHashMap(7, 64, 1024; 0.25, 0.25, 0.25, 0.25) {
+	6.68 ± 0.01 tx/µs
+	9.805ms ± 14µs	(scheduling: 245µs ± 0ns, execution: 6.949ms ± 7µs)
+}
+AdvancedPrototype 12 sch, 4 exec: PreviousDHashMap(7, 64, 1024; 0.25, 0.25, 0.25, 0.25) {
+	9.91 ± 0.02 tx/µs
+	6.61ms ± 11µs	(scheduling: 243µs ± 0ns, execution: 3.741ms ± 5µs)
+}
+AdvancedPrototype 12 sch, 8 exec: PreviousDHashMap(7, 64, 1024; 0.25, 0.25, 0.25, 0.25) {
+	12.47 ± 0.06 tx/µs
+	5.256ms ± 24µs	(scheduling: 239µs ± 1µs, execution: 2.066ms ± 3µs)
+}
+AdvancedPrototype 12 sch, 12 exec: PreviousDHashMap(7, 64, 1024; 0.25, 0.25, 0.25, 0.25) {
+	13.91 ± 0.04 tx/µs
+	4.712ms ± 13µs	(scheduling: 209µs ± 0ns, execution: 1.585ms ± 1µs)
+}
+AdvancedPrototype 12 sch, 16 exec: PreviousDHashMap(7, 64, 1024; 0.25, 0.25, 0.25, 0.25) {
+	14.44 ± 0.03 tx/µs
+	4.537ms ± 9µs	(scheduling: 224µs ± 0ns, execution: 1.268ms ± 1µs)
+}
+AdvancedPrototype 16 sch, 2 exec: PreviousDHashMap(7, 64, 1024; 0.25, 0.25, 0.25, 0.25) {
+	6.55 ± 0.01 tx/µs
+	10.005ms ± 12µs	(scheduling: 181µs ± 0ns, execution: 7.107ms ± 7µs)
+}
+AdvancedPrototype 16 sch, 4 exec: PreviousDHashMap(7, 64, 1024; 0.25, 0.25, 0.25, 0.25) {
+	9.68 ± 0.02 tx/µs
+	6.769ms ± 13µs	(scheduling: 181µs ± 0ns, execution: 3.855ms ± 3µs)
+}
+AdvancedPrototype 16 sch, 8 exec: PreviousDHashMap(7, 64, 1024; 0.25, 0.25, 0.25, 0.25) {
+	12.50 ± 0.04 tx/µs
+	5.242ms ± 15µs	(scheduling: 204µs ± 0ns, execution: 2.101ms ± 3µs)
+}
+AdvancedPrototype 16 sch, 12 exec: PreviousDHashMap(7, 64, 1024; 0.25, 0.25, 0.25, 0.25) {
+	13.74 ± 0.03 tx/µs
+	4.771ms ± 11µs	(scheduling: 187µs ± 0ns, execution: 1.471ms ± 2µs)
+}
+AdvancedPrototype 16 sch, 16 exec: PreviousDHashMap(7, 64, 1024; 0.25, 0.25, 0.25, 0.25) {
+	12.68 ± 0.07 tx/µs
+	5.169ms ± 27µs	(scheduling: 196µs ± 1µs, execution: 1.242ms ± 3µs)
+}
+main took 162.60s

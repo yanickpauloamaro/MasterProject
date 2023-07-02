@@ -1,0 +1,227 @@
+let dimensions = ['...', '2 exec', '4 exec', '8 exec', '12 exec', '16 exec', '20 exec'];
+Workload: Transfer(0.0) ====================================================
+let title = 'BasicPrototype: Transfer(0.0)'; // --------------------
+let sequential_throughput = 39.961;
+let data = [
+	['1 schedulers', 22.141, 23.910, 25.431, 25.421, 25.167, 25.274],
+	['2 schedulers', 34.348, 42.309, 46.878, 46.711, 45.733, 46.512],
+	['4 schedulers', 50.685, 63.751, 71.860, 73.802, 72.496, 71.235],
+	['8 schedulers', 52.471, 71.235, 79.534, 89.286, 78.864, 68.338],
+];
+
+Workload: Transfer(0.5) ====================================================
+let title = 'BasicPrototype: Transfer(0.5)'; // --------------------
+let sequential_throughput = 40.034;
+let data = [
+	['1 schedulers', 20.227, 20.739, 19.974, 19.775, 18.393, 18.316],
+	['2 schedulers', 32.508, 36.268, 37.664, 36.429, 33.066, 31.372],
+	['4 schedulers', 45.322, 51.522, 47.977, 44.431, 39.815, 37.152],
+	['8 schedulers', 47.802, 52.387, 51.807, 45.073, 35.368, 30.826],
+];
+
+Done. Took 116.19s
+
+==================================================================================
+==================================================================================
+==================================================================================
+Sequential 1 sch, 1 exec: Transfer(0.0) {
+	39.96 ± 0.29 tx/µs
+	1.64ms ± 12µs
+}
+BasicPrototype 1 sch, 2 exec: Transfer(0.0) {
+	22.14 ± 0.04 tx/µs
+	2.96ms ± 6µs	(scheduling: 2.125ms ± 3µs, execution: 670µs ± 3µs)
+}
+BasicPrototype 1 sch, 4 exec: Transfer(0.0) {
+	23.91 ± 0.05 tx/µs
+	2.741ms ± 6µs	(scheduling: 2.146ms ± 3µs, execution: 405µs ± 2µs)
+}
+BasicPrototype 1 sch, 8 exec: Transfer(0.0) {
+	25.43 ± 0.03 tx/µs
+	2.577ms ± 3µs	(scheduling: 2.167ms ± 2µs, execution: 246µs ± 0ns)
+}
+BasicPrototype 1 sch, 12 exec: Transfer(0.0) {
+	25.42 ± 0.03 tx/µs
+	2.578ms ± 3µs	(scheduling: 2.216ms ± 2µs, execution: 198µs ± 0ns)
+}
+BasicPrototype 1 sch, 16 exec: Transfer(0.0) {
+	25.17 ± 0.03 tx/µs
+	2.604ms ± 3µs	(scheduling: 2.258ms ± 2µs, execution: 191µs ± 0ns)
+}
+BasicPrototype 1 sch, 20 exec: Transfer(0.0) {
+	25.27 ± 0.03 tx/µs
+	2.593ms ± 3µs	(scheduling: 2.25ms ± 2µs, execution: 128µs ± 0ns)
+}
+BasicPrototype 2 sch, 2 exec: Transfer(0.0) {
+	34.35 ± 0.07 tx/µs
+	1.908ms ± 4µs	(scheduling: 947µs ± 1µs, execution: 757µs ± 3µs)
+}
+BasicPrototype 2 sch, 4 exec: Transfer(0.0) {
+	42.31 ± 0.08 tx/µs
+	1.549ms ± 3µs	(scheduling: 940µs ± 1µs, execution: 396µs ± 1µs)
+}
+BasicPrototype 2 sch, 8 exec: Transfer(0.0) {
+	46.88 ± 0.07 tx/µs
+	1.398ms ± 2µs	(scheduling: 949µs ± 1µs, execution: 303µs ± 0ns)
+}
+BasicPrototype 2 sch, 12 exec: Transfer(0.0) {
+	46.71 ± 0.07 tx/µs
+	1.403ms ± 2µs	(scheduling: 962µs ± 1µs, execution: 252µs ± 0ns)
+}
+BasicPrototype 2 sch, 16 exec: Transfer(0.0) {
+	45.73 ± 0.42 tx/µs
+	1.433ms ± 13µs	(scheduling: 1.004ms ± 1µs, execution: 208µs ± 0ns)
+}
+BasicPrototype 2 sch, 20 exec: Transfer(0.0) {
+	46.51 ± 0.07 tx/µs
+	1.409ms ± 2µs	(scheduling: 996µs ± 1µs, execution: 182µs ± 0ns)
+}
+BasicPrototype 4 sch, 2 exec: Transfer(0.0) {
+	50.69 ± 0.12 tx/µs
+	1.293ms ± 3µs	(scheduling: 388µs ± 1µs, execution: 676µs ± 2µs)
+}
+BasicPrototype 4 sch, 4 exec: Transfer(0.0) {
+	63.75 ± 0.12 tx/µs
+	1.028ms ± 2µs	(scheduling: 387µs ± 1µs, execution: 397µs ± 1µs)
+}
+BasicPrototype 4 sch, 8 exec: Transfer(0.0) {
+	71.86 ± 0.08 tx/µs
+	912µs ± 1µs	(scheduling: 392µs ± 1µs, execution: 326µs ± 0ns)
+}
+BasicPrototype 4 sch, 12 exec: Transfer(0.0) {
+	73.80 ± 0.08 tx/µs
+	888µs ± 1µs	(scheduling: 389µs ± 1µs, execution: 257µs ± 0ns)
+}
+BasicPrototype 4 sch, 16 exec: Transfer(0.0) {
+	72.50 ± 0.08 tx/µs
+	904µs ± 1µs	(scheduling: 445µs ± 1µs, execution: 209µs ± 0ns)
+}
+BasicPrototype 4 sch, 20 exec: Transfer(0.0) {
+	71.23 ± 0.08 tx/µs
+	920µs ± 1µs	(scheduling: 435µs ± 1µs, execution: 149µs ± 0ns)
+}
+BasicPrototype 8 sch, 2 exec: Transfer(0.0) {
+	52.47 ± 0.08 tx/µs
+	1.249ms ± 2µs	(scheduling: 184µs ± 0ns, execution: 791µs ± 2µs)
+}
+BasicPrototype 8 sch, 4 exec: Transfer(0.0) {
+	71.23 ± 0.08 tx/µs
+	920µs ± 1µs	(scheduling: 185µs ± 0ns, execution: 449µs ± 1µs)
+}
+BasicPrototype 8 sch, 8 exec: Transfer(0.0) {
+	79.53 ± 0.10 tx/µs
+	824µs ± 1µs	(scheduling: 186µs ± 0ns, execution: 331µs ± 0ns)
+}
+BasicPrototype 8 sch, 12 exec: Transfer(0.0) {
+	89.29 ± 0.12 tx/µs
+	734µs ± 1µs	(scheduling: 196µs ± 0ns, execution: 235µs ± 0ns)
+}
+BasicPrototype 8 sch, 16 exec: Transfer(0.0) {
+	78.86 ± 0.00 tx/µs
+	831µs ± 0ns	(scheduling: 193µs ± 0ns, execution: 182µs ± 0ns)
+}
+BasicPrototype 8 sch, 20 exec: Transfer(0.0) {
+	68.34 ± 0.21 tx/µs
+	959µs ± 3µs	(scheduling: 195µs ± 0ns, execution: 158µs ± 0ns)
+}
+Sequential 1 sch, 1 exec: Transfer(0.5) {
+	40.03 ± 0.22 tx/µs
+	1.637ms ± 9µs
+}
+BasicPrototype 1 sch, 2 exec: Transfer(0.5) {
+	20.23 ± 0.04 tx/µs
+	3.24ms ± 6µs	(scheduling: 3.058ms ± 3µs, execution: 735µs ± 3µs)
+}
+BasicPrototype 1 sch, 4 exec: Transfer(0.5) {
+	20.74 ± 0.03 tx/µs
+	3.16ms ± 4µs	(scheduling: 3.066ms ± 4µs, execution: 410µs ± 1µs)
+}
+BasicPrototype 1 sch, 8 exec: Transfer(0.5) {
+	19.97 ± 0.02 tx/µs
+	3.281ms ± 4µs	(scheduling: 3.127ms ± 4µs, execution: 323µs ± 1µs)
+}
+BasicPrototype 1 sch, 12 exec: Transfer(0.5) {
+	19.78 ± 0.02 tx/µs
+	3.314ms ± 4µs	(scheduling: 3.124ms ± 4µs, execution: 265µs ± 1µs)
+}
+BasicPrototype 1 sch, 16 exec: Transfer(0.5) {
+	18.39 ± 0.02 tx/µs
+	3.563ms ± 3µs	(scheduling: 3.314ms ± 3µs, execution: 237µs ± 0ns)
+}
+BasicPrototype 1 sch, 20 exec: Transfer(0.5) {
+	18.32 ± 0.02 tx/µs
+	3.578ms ± 3µs	(scheduling: 3.273ms ± 3µs, execution: 189µs ± 0ns)
+}
+BasicPrototype 2 sch, 2 exec: Transfer(0.5) {
+	32.51 ± 0.08 tx/µs
+	2.016ms ± 5µs	(scheduling: 1.177ms ± 2µs, execution: 777µs ± 3µs)
+}
+BasicPrototype 2 sch, 4 exec: Transfer(0.5) {
+	36.27 ± 0.06 tx/µs
+	1.807ms ± 3µs	(scheduling: 1.189ms ± 2µs, execution: 500µs ± 1µs)
+}
+BasicPrototype 2 sch, 8 exec: Transfer(0.5) {
+	37.66 ± 0.04 tx/µs
+	1.74ms ± 2µs	(scheduling: 1.197ms ± 2µs, execution: 339µs ± 0ns)
+}
+BasicPrototype 2 sch, 12 exec: Transfer(0.5) {
+	36.43 ± 0.04 tx/µs
+	1.799ms ± 2µs	(scheduling: 1.202ms ± 2µs, execution: 270µs ± 0ns)
+}
+BasicPrototype 2 sch, 16 exec: Transfer(0.5) {
+	33.07 ± 0.03 tx/µs
+	1.982ms ± 2µs	(scheduling: 1.307ms ± 2µs, execution: 228µs ± 0ns)
+}
+BasicPrototype 2 sch, 20 exec: Transfer(0.5) {
+	31.37 ± 0.20 tx/µs
+	2.089ms ± 13µs	(scheduling: 1.296ms ± 2µs, execution: 222µs ± 0ns)
+}
+BasicPrototype 4 sch, 2 exec: Transfer(0.5) {
+	45.32 ± 0.09 tx/µs
+	1.446ms ± 3µs	(scheduling: 448µs ± 0ns, execution: 729µs ± 2µs)
+}
+BasicPrototype 4 sch, 4 exec: Transfer(0.5) {
+	51.52 ± 0.08 tx/µs
+	1.272ms ± 2µs	(scheduling: 446µs ± 1µs, execution: 434µs ± 1µs)
+}
+BasicPrototype 4 sch, 8 exec: Transfer(0.5) {
+	47.98 ± 0.07 tx/µs
+	1.366ms ± 2µs	(scheduling: 449µs ± 1µs, execution: 417µs ± 1µs)
+}
+BasicPrototype 4 sch, 12 exec: Transfer(0.5) {
+	44.43 ± 0.03 tx/µs
+	1.475ms ± 1µs	(scheduling: 452µs ± 0ns, execution: 325µs ± 0ns)
+}
+BasicPrototype 4 sch, 16 exec: Transfer(0.5) {
+	39.82 ± 0.02 tx/µs
+	1.646ms ± 1µs	(scheduling: 501µs ± 1µs, execution: 274µs ± 0ns)
+}
+BasicPrototype 4 sch, 20 exec: Transfer(0.5) {
+	37.15 ± 0.02 tx/µs
+	1.764ms ± 1µs	(scheduling: 508µs ± 1µs, execution: 196µs ± 0ns)
+}
+BasicPrototype 8 sch, 2 exec: Transfer(0.5) {
+	47.80 ± 0.07 tx/µs
+	1.371ms ± 2µs	(scheduling: 201µs ± 0ns, execution: 767µs ± 2µs)
+}
+BasicPrototype 8 sch, 4 exec: Transfer(0.5) {
+	52.39 ± 0.13 tx/µs
+	1.251ms ± 3µs	(scheduling: 215µs ± 0ns, execution: 498µs ± 4µs)
+}
+BasicPrototype 8 sch, 8 exec: Transfer(0.5) {
+	51.81 ± 0.04 tx/µs
+	1.265ms ± 1µs	(scheduling: 246µs ± 0ns, execution: 274µs ± 0ns)
+}
+BasicPrototype 8 sch, 12 exec: Transfer(0.5) {
+	45.07 ± 0.09 tx/µs
+	1.454ms ± 3µs	(scheduling: 226µs ± 0ns, execution: 201µs ± 1µs)
+}
+BasicPrototype 8 sch, 16 exec: Transfer(0.5) {
+	35.37 ± 0.06 tx/µs
+	1.853ms ± 3µs	(scheduling: 224µs ± 1µs, execution: 239µs ± 2µs)
+}
+BasicPrototype 8 sch, 20 exec: Transfer(0.5) {
+	30.83 ± 0.32 tx/µs
+	2.126ms ± 22µs	(scheduling: 210µs ± 1µs, execution: 184µs ± 2µs)
+}
+main took 116.19s

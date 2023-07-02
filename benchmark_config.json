@@ -1,0 +1,27 @@
+{
+  "vm_types": [
+    "Sequential", "BasicPrototype", "AdvancedPrototype"
+  ],
+  "nb_schedulers": [
+    1, 3
+  ],
+  "nb_executors": [
+    3
+  ],
+  "batch_sizes": [
+    65536
+  ],
+  "workloads": [
+    "Transfer(0.0)", "Transfer(0.5)",
+    "Fibonacci(10)",
+    "Hashmap(7, 64, 1024; 0.7, 0.05, 0.05, 0.2)",
+    "Hashmap(7, 64, 64; 0.7, 0.05, 0.05, 0.2)",
+    "Hashmap(7, 64, 1024; 0.25, 0.25, 0.25, 0.25)",
+    "Hashmap(7, 64, 64; 0.25, 0.25, 0.25, 0.25)"
+  ],
+  "repetitions": 10,
+  "warmup": 0,
+  "seed": 10,
+  "graph": false,
+  "mapping": "c"
+}

@@ -1,0 +1,117 @@
+let dimensions = ['...', '2 exec', '4 exec', '8 exec', '12 exec', '16 exec', '20 exec'];
+Workload: Fibonacci(20) ====================================================
+let title = 'AdvancedPrototype: Fibonacci(20)'; // --------------------
+let sequential_throughput = 0.046;
+let data = [
+	['1 schedulers', 0.093, 0.185, 0.368, 0.551, 0.731, 0.522],
+	['2 schedulers', 0.093, 0.185, 0.369, 0.551, 0.732, 0.523],
+	['4 schedulers', 0.093, 0.185, 0.369, 0.551, 0.732, 0.523],
+	['8 schedulers', 0.093, 0.185, 0.369, 0.551, 0.732, 0.523],
+];
+
+Done. Took 771.04s
+
+==================================================================================
+==================================================================================
+==================================================================================
+Sequential 1 sch, 1 exec: Fibonacci(20) {
+	0.05 ± 0.00 tx/µs
+	1.410627s ± 44µs
+}
+AdvancedPrototype 1 sch, 2 exec: Fibonacci(20) {
+	0.09 ± 0.00 tx/µs
+	707.375ms ± 40µs	(scheduling: 162µs ± 3µs, execution: 706.139ms ± 32µs)
+}
+AdvancedPrototype 1 sch, 4 exec: Fibonacci(20) {
+	0.18 ± 0.00 tx/µs
+	354.467ms ± 25µs	(scheduling: 154µs ± 1µs, execution: 353.171ms ± 16µs)
+}
+AdvancedPrototype 1 sch, 8 exec: Fibonacci(20) {
+	0.37 ± 0.00 tx/µs
+	177.863ms ± 24µs	(scheduling: 147µs ± 3µs, execution: 176.591ms ± 8µs)
+}
+AdvancedPrototype 1 sch, 12 exec: Fibonacci(20) {
+	0.55 ± 0.00 tx/µs
+	118.94ms ± 22µs	(scheduling: 142µs ± 2µs, execution: 117.753ms ± 12µs)
+}
+AdvancedPrototype 1 sch, 16 exec: Fibonacci(20) {
+	0.73 ± 0.00 tx/µs
+	89.608ms ± 22µs	(scheduling: 141µs ± 2µs, execution: 88.375ms ± 4µs)
+}
+AdvancedPrototype 1 sch, 20 exec: Fibonacci(20) {
+	0.52 ± 0.00 tx/µs
+	125.492ms ± 27µs	(scheduling: 144µs ± 2µs, execution: 124.201ms ± 4µs)
+}
+AdvancedPrototype 2 sch, 2 exec: Fibonacci(20) {
+	0.09 ± 0.00 tx/µs
+	707.195ms ± 28µs	(scheduling: 91µs ± 2µs, execution: 706.024ms ± 23µs)
+}
+AdvancedPrototype 2 sch, 4 exec: Fibonacci(20) {
+	0.18 ± 0.00 tx/µs
+	354.382ms ± 26µs	(scheduling: 87µs ± 1µs, execution: 353.147ms ± 18µs)
+}
+AdvancedPrototype 2 sch, 8 exec: Fibonacci(20) {
+	0.37 ± 0.00 tx/µs
+	177.806ms ± 27µs	(scheduling: 77µs ± 2µs, execution: 176.593ms ± 12µs)
+}
+AdvancedPrototype 2 sch, 12 exec: Fibonacci(20) {
+	0.55 ± 0.00 tx/µs
+	118.937ms ± 24µs	(scheduling: 77µs ± 3µs, execution: 117.737ms ± 5µs)
+}
+AdvancedPrototype 2 sch, 16 exec: Fibonacci(20) {
+	0.73 ± 0.00 tx/µs
+	89.58ms ± 74µs	(scheduling: 75µs ± 1µs, execution: 88.4ms ± 69µs)
+}
+AdvancedPrototype 2 sch, 20 exec: Fibonacci(20) {
+	0.52 ± 0.00 tx/µs
+	125.34ms ± 23µs	(scheduling: 77µs ± 3µs, execution: 124.177ms ± 2µs)
+}
+AdvancedPrototype 4 sch, 2 exec: Fibonacci(20) {
+	0.09 ± 0.00 tx/µs
+	707.191ms ± 36µs	(scheduling: 47µs ± 1µs, execution: 706.054ms ± 29µs)
+}
+AdvancedPrototype 4 sch, 4 exec: Fibonacci(20) {
+	0.18 ± 0.00 tx/µs
+	354.363ms ± 13µs	(scheduling: 43µs ± 1µs, execution: 353.189ms ± 6µs)
+}
+AdvancedPrototype 4 sch, 8 exec: Fibonacci(20) {
+	0.37 ± 0.00 tx/µs
+	177.732ms ± 22µs	(scheduling: 43µs ± 1µs, execution: 176.592ms ± 8µs)
+}
+AdvancedPrototype 4 sch, 12 exec: Fibonacci(20) {
+	0.55 ± 0.00 tx/µs
+	118.959ms ± 26µs	(scheduling: 44µs ± 1µs, execution: 117.765ms ± 5µs)
+}
+AdvancedPrototype 4 sch, 16 exec: Fibonacci(20) {
+	0.73 ± 0.00 tx/µs
+	89.579ms ± 30µs	(scheduling: 43µs ± 1µs, execution: 88.366ms ± 5µs)
+}
+AdvancedPrototype 4 sch, 20 exec: Fibonacci(20) {
+	0.52 ± 0.00 tx/µs
+	125.377ms ± 18µs	(scheduling: 43µs ± 1µs, execution: 124.178ms ± 2µs)
+}
+AdvancedPrototype 8 sch, 2 exec: Fibonacci(20) {
+	0.09 ± 0.00 tx/µs
+	707.123ms ± 26µs	(scheduling: 27µs ± 0ns, execution: 705.99ms ± 24µs)
+}
+AdvancedPrototype 8 sch, 4 exec: Fibonacci(20) {
+	0.18 ± 0.00 tx/µs
+	354.27ms ± 18µs	(scheduling: 26µs ± 0ns, execution: 353.073ms ± 10µs)
+}
+AdvancedPrototype 8 sch, 8 exec: Fibonacci(20) {
+	0.37 ± 0.00 tx/µs
+	177.775ms ± 20µs	(scheduling: 23µs ± 0ns, execution: 176.588ms ± 12µs)
+}
+AdvancedPrototype 8 sch, 12 exec: Fibonacci(20) {
+	0.55 ± 0.00 tx/µs
+	118.99ms ± 22µs	(scheduling: 24µs ± 0ns, execution: 117.824ms ± 5µs)
+}
+AdvancedPrototype 8 sch, 16 exec: Fibonacci(20) {
+	0.73 ± 0.00 tx/µs
+	89.539ms ± 25µs	(scheduling: 25µs ± 0ns, execution: 88.365ms ± 4µs)
+}
+AdvancedPrototype 8 sch, 20 exec: Fibonacci(20) {
+	0.52 ± 0.00 tx/µs
+	125.355ms ± 19µs	(scheduling: 25µs ± 1µs, execution: 124.188ms ± 4µs)
+}
+main took 771.04s

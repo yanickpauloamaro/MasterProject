@@ -1,0 +1,78 @@
+profile_schedule_backlog_single_pass (parallel, separate into chunks)
+    n = 65536,
+    set size = 2 * 65536
+schedulers = 1 -> 2.666 ms => overhead = 0.1 ms
+schedulers = 2 -> 1.233 ms => overhead = 0.5 ms
+schedulers = 4 -> 1.377 ms => overhead = 0.9 ms
+schedulers = 8 -> 1.963 ms => overhead = 1.7 ms <- this is bad
+    Apparently scheduling of a chunk if size n/8 takes 2ms-2.4ms...
+    ref + clone => still 2m-2.4ms
+------------------------------------------------------
+    sleep 300 µs instead of doing computation
+    n = 65536,
+    set size = 2 * 65536
+schedulers = 1 -> 2.99 ms => overhead = 0.9 ms
+schedulers = 2 -> 1.57 ms => overhead = 0.8 ms
+schedulers = 4 -> 1.2 ms => overhead = 0.8 ms
+schedulers = 8 -> 1.09 ms => overhead = 0.8 ms
+
+
+profile_schedule_chunk (sequential)
+    set size = 2 * 65536
+chunk_size = 65536    -> 2.071 ms
+chunk_size = 65536/2  -> 0.750 ms
+chunk_size = 65536/4  -> 0.408 ms, 0.595 ms, 0.391 ms = 0.430 ms
+chunk_size = 65536/8  -> 0.299 ms, 0.258 ms, 0.217 ms = 0.250 ms <- target
+chunk_size = 65536/16 -> 0.096 ms, 0.187 ms, 0.152 ms = 0.160 ms
+------------------------------------------------------
+    set size = 65536
+chunk_size = 65536    -> 2.322 ms
+chunk_size = 65536/2  -> 0.860 ms
+chunk_size = 65536/4  -> 0.409 ms, 0.638 ms, 0.422 ms
+chunk_size = 65536/8  -> 0.220 ms, 0.247 ms, 0.254 ms
+chunk_size = 65536/16 -> 0.102 ms, 0.121 ms, 0.113 ms
+------------------------------------------------------
+    set size = 2 * chunk_size
+chunk_size = 65536    -> 1.939 ms
+chunk_size = 65536/2  -> 0.738 ms
+chunk_size = 65536/4  -> 9.862 ms, 10.011 ms, 10.014 ms
+chunk_size = 65536/8  -> 19.894 ms, 20.499 ms, 10.998 ms
+chunk_size = 65536/16 -> 7.127 ms, 7.232 ms, 7.196 ms
+
+
+profile_rayon_latency
+    task latency = 300 µs, par_drain.chunks.enumerate.for_each
+nb_tasks = 1 -> 300 + 219 = 520
+nb_tasks = 2 -> 300 + 213 = 515
+nb_tasks = 4 -> 300 + 253 = 555
+nb_tasks = 8 -> 300 + 239 = 540
+------------------------------------------------------
+    task latency = 300 µs, par_drain.chunks.enumerate.map
+nb_tasks = 1 -> 300 + 225 = 525
+nb_tasks = 2 -> 300 + 288 = 590
+nb_tasks = 4 -> 300 + 358 = 660
+nb_tasks = 8 -> 300 + 590 = 890 ~~~
+------------------------------------------------------
+    task latency = 300 µs, par_drain.chunks.enumerate.flat_map
+nb_tasks = 1 -> 300 + 193 = 500
+nb_tasks = 2 -> 300 + 327 = 630
+nb_tasks = 4 -> 300 + 390 = 690
+nb_tasks = 8 -> 300 + 563 = 860
+
+
+
+
+other method
+------------------------------------------------------
+nb_schedulers = 1 -> 2 ms
+nb_schedulers = 2 -> 1.85 ms
+nb_schedulers = 4 -> 2.2 ms
+nb_schedulers = 8 -> 3 ms
+
+
+
+Send to aws:
+scp -i ~/.ssh/yanick_laptop.pem ./backup_3.zip ubuntu@13.37.241.2:/home/ubuntu/
+
+Receive from aws:
+scp -i ~/.ssh/yanick_laptop.pem -r ubuntu@35.180.242.56:/home/ubuntu/PATH ./aws_report

@@ -1,0 +1,27 @@
+BasicPrototype {
+	8 schedulers, 8 executors {
+		Transfer(0.0) {
+			48.33 ± 0.14 tx/µs
+			339µs ± 1µs	(scheduling: 69µs ± 0ns, execution: 56µs ± 0ns)
+		}
+		Transfer(0.0) {
+			72.98 ± 0.16 tx/µs
+			449µs ± 1µs	(scheduling: 121µs ± 0ns, execution: 114µs ± 0ns)
+		}
+		Transfer(0.0) {
+			89.41 ± 0.12 tx/µs
+			733µs ± 1µs	(scheduling: 227µs ± 0ns, execution: 233µs ± 0ns)
+		}
+		Transfer(0.0) {
+			92.43 ± 0.20 tx/µs
+			1.418ms ± 3µs	(scheduling: 527µs ± 1µs, execution: 510µs ± 1µs)
+		}
+		Transfer(0.0) {
+			64.86 ± 0.18 tx/µs
+			4.042ms ± 11µs	(scheduling: 1.298ms ± 3µs, execution: 1.962ms ± 2µs)
+		}
+	}
+}
+Done. Took 10.30s
+
+main took 10.30s

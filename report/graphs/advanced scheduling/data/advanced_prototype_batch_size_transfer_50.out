@@ -1,0 +1,51 @@
+AdvancedPrototype {
+	8 schedulers, 8 executors {
+		Transfer(0.5) {
+			15.63 ± 0.01 tx/µs
+			1.048ms ± 1µs	(scheduling: 153µs ± 0ns, execution: 75µs ± 0ns)
+		}
+		Transfer(0.5) {
+			24.08 ± 0.02 tx/µs
+			1.361ms ± 1µs	(scheduling: 298µs ± 0ns, execution: 148µs ± 0ns)
+		}
+		Transfer(0.5) {
+			28.67 ± 0.03 tx/µs
+			2.286ms ± 2µs	(scheduling: 553µs ± 1µs, execution: 294µs ± 0ns)
+		}
+		Transfer(0.5) {
+			32.58 ± 0.08 tx/µs
+			4.023ms ± 10µs	(scheduling: 1.18ms ± 6µs, execution: 786µs ± 4µs)
+		}
+		Transfer(0.5) {
+			25.76 ± 0.07 tx/µs
+			10.175ms ± 29µs	(scheduling: 3.935ms ± 14µs, execution: 2.502ms ± 5µs)
+		}
+	}
+}
+Sequential {
+	8 schedulers, 8 executors {
+		Transfer(0.5) {
+			51.68 ± 0.00 tx/µs
+			317µs ± 0ns
+		}
+		Transfer(0.5) {
+			48.76 ± 0.07 tx/µs
+			672µs ± 1µs
+		}
+		Transfer(0.5) {
+			40.66 ± 0.23 tx/µs
+			1.612ms ± 9µs
+		}
+		Transfer(0.5) {
+			25.19 ± 0.14 tx/µs
+			5.203ms ± 29µs
+		}
+		Transfer(0.5) {
+			16.32 ± 0.02 tx/µs
+			16.063ms ± 22µs
+		}
+	}
+}
+Done. Took 81.37s
+
+main took 81.37s
