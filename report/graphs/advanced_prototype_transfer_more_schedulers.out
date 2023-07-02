@@ -1,6 +1,6 @@
 let dimensions = ['...', '2 exec', '4 exec', '8 exec', '12 exec', '16 exec'];
 Workload: Transfer(0.0) ====================================================
-let title = 'NewCollect: Transfer(0.0)'; // --------------------
+let title = 'AdvancedPrototype: Transfer(0.0)'; // --------------------
 let sequential_throughput = 38.802;
 let data = [
 	['12 schedulers', 28.395, 37.643, 37.817, 34.080, 34.584],
@@ -8,7 +8,7 @@ let data = [
 ];
 
 Workload: Transfer(0.5) ====================================================
-let title = 'NewCollect: Transfer(0.5)'; // --------------------
+let title = 'AdvancedPrototype: Transfer(0.5)'; // --------------------
 let sequential_throughput = 40.909;
 let data = [
 	['12 schedulers', 25.741, 28.371, 25.620, 22.498, 20.109],
@@ -24,43 +24,43 @@ Sequential 1 sch, 1 exec: Transfer(0.0) {
 	38.80 ± 0.23 tx/µs
 	1.689ms ± 10µs
 }
-NewCollect 12 sch, 2 exec: Transfer(0.0) {
+AdvancedPrototype 12 sch, 2 exec: Transfer(0.0) {
 	28.40 ± 0.09 tx/µs
 	2.308ms ± 7µs	(scheduling: 847µs ± 2µs, execution: 815µs ± 3µs)
 }
-NewCollect 12 sch, 4 exec: Transfer(0.0) {
+AdvancedPrototype 12 sch, 4 exec: Transfer(0.0) {
 	37.64 ± 0.04 tx/µs
 	1.741ms ± 2µs	(scheduling: 369µs ± 0ns, execution: 424µs ± 1µs)
 }
-NewCollect 12 sch, 8 exec: Transfer(0.0) {
+AdvancedPrototype 12 sch, 8 exec: Transfer(0.0) {
 	37.82 ± 0.04 tx/µs
 	1.733ms ± 2µs	(scheduling: 415µs ± 1µs, execution: 252µs ± 1µs)
 }
-NewCollect 12 sch, 12 exec: Transfer(0.0) {
+AdvancedPrototype 12 sch, 12 exec: Transfer(0.0) {
 	34.08 ± 0.21 tx/µs
 	1.923ms ± 12µs	(scheduling: 367µs ± 3µs, execution: 191µs ± 1µs)
 }
-NewCollect 12 sch, 16 exec: Transfer(0.0) {
+AdvancedPrototype 12 sch, 16 exec: Transfer(0.0) {
 	34.58 ± 0.05 tx/µs
 	1.895ms ± 3µs	(scheduling: 280µs ± 1µs, execution: 196µs ± 0ns)
 }
-NewCollect 16 sch, 2 exec: Transfer(0.0) {
+AdvancedPrototype 16 sch, 2 exec: Transfer(0.0) {
 	29.28 ± 0.09 tx/µs
 	2.238ms ± 7µs	(scheduling: 211µs ± 0ns, execution: 911µs ± 7µs)
 }
-NewCollect 16 sch, 4 exec: Transfer(0.0) {
+AdvancedPrototype 16 sch, 4 exec: Transfer(0.0) {
 	35.99 ± 0.08 tx/µs
 	1.821ms ± 4µs	(scheduling: 253µs ± 0ns, execution: 481µs ± 3µs)
 }
-NewCollect 16 sch, 8 exec: Transfer(0.0) {
+AdvancedPrototype 16 sch, 8 exec: Transfer(0.0) {
 	35.44 ± 0.06 tx/µs
 	1.849ms ± 3µs	(scheduling: 303µs ± 1µs, execution: 262µs ± 1µs)
 }
-NewCollect 16 sch, 12 exec: Transfer(0.0) {
+AdvancedPrototype 16 sch, 12 exec: Transfer(0.0) {
 	34.60 ± 0.02 tx/µs
 	1.894ms ± 1µs	(scheduling: 289µs ± 0ns, execution: 183µs ± 0ns)
 }
-NewCollect 16 sch, 16 exec: Transfer(0.0) {
+AdvancedPrototype 16 sch, 16 exec: Transfer(0.0) {
 	28.22 ± 0.05 tx/µs
 	2.322ms ± 4µs	(scheduling: 259µs ± 3µs, execution: 177µs ± 1µs)
 }
@@ -68,43 +68,43 @@ Sequential 1 sch, 1 exec: Transfer(0.5) {
 	40.91 ± 0.18 tx/µs
 	1.602ms ± 7µs
 }
-NewCollect 12 sch, 2 exec: Transfer(0.5) {
+AdvancedPrototype 12 sch, 2 exec: Transfer(0.5) {
 	25.74 ± 0.04 tx/µs
 	2.546ms ± 4µs	(scheduling: 393µs ± 0ns, execution: 833µs ± 3µs)
 }
-NewCollect 12 sch, 4 exec: Transfer(0.5) {
+AdvancedPrototype 12 sch, 4 exec: Transfer(0.5) {
 	28.37 ± 0.02 tx/µs
 	2.31ms ± 2µs	(scheduling: 397µs ± 0ns, execution: 460µs ± 1µs)
 }
-NewCollect 12 sch, 8 exec: Transfer(0.5) {
+AdvancedPrototype 12 sch, 8 exec: Transfer(0.5) {
 	25.62 ± 0.02 tx/µs
 	2.558ms ± 2µs	(scheduling: 400µs ± 0ns, execution: 281µs ± 1µs)
 }
-NewCollect 12 sch, 12 exec: Transfer(0.5) {
+AdvancedPrototype 12 sch, 12 exec: Transfer(0.5) {
 	22.50 ± 0.06 tx/µs
 	2.913ms ± 8µs	(scheduling: 310µs ± 4µs, execution: 272µs ± 2µs)
 }
-NewCollect 12 sch, 16 exec: Transfer(0.5) {
+AdvancedPrototype 12 sch, 16 exec: Transfer(0.5) {
 	20.11 ± 0.01 tx/µs
 	3.259ms ± 1µs	(scheduling: 297µs ± 1µs, execution: 244µs ± 0ns)
 }
-NewCollect 16 sch, 2 exec: Transfer(0.5) {
+AdvancedPrototype 16 sch, 2 exec: Transfer(0.5) {
 	25.00 ± 0.04 tx/µs
 	2.621ms ± 4µs	(scheduling: 245µs ± 0ns, execution: 875µs ± 3µs)
 }
-NewCollect 16 sch, 4 exec: Transfer(0.5) {
+AdvancedPrototype 16 sch, 4 exec: Transfer(0.5) {
 	26.58 ± 0.03 tx/µs
 	2.466ms ± 3µs	(scheduling: 269µs ± 0ns, execution: 483µs ± 1µs)
 }
-NewCollect 16 sch, 8 exec: Transfer(0.5) {
+AdvancedPrototype 16 sch, 8 exec: Transfer(0.5) {
 	24.23 ± 0.02 tx/µs
 	2.705ms ± 2µs	(scheduling: 309µs ± 1µs, execution: 291µs ± 1µs)
 }
-NewCollect 16 sch, 12 exec: Transfer(0.5) {
+AdvancedPrototype 16 sch, 12 exec: Transfer(0.5) {
 	21.37 ± 0.01 tx/µs
 	3.067ms ± 1µs	(scheduling: 296µs ± 0ns, execution: 211µs ± 0ns)
 }
-NewCollect 16 sch, 16 exec: Transfer(0.5) {
+AdvancedPrototype 16 sch, 16 exec: Transfer(0.5) {
 	16.39 ± 0.07 tx/µs
 	3.998ms ± 16µs	(scheduling: 256µs ± 2µs, execution: 211µs ± 2µs)
 }
